@@ -47,19 +47,39 @@ added here:
   single-device one.
 - Bearer tokens carry explicit tool **and tenant** scopes.
 
-## API research discipline
+## The API surface is pinned — read it, don't re-derive it
 
-The SDC API reference is thin on public detail; several pages return
-navigation-only content to fetchers. Do not write endpoint paths, header names,
-or pagination behavior from memory or inference. Verify against:
+**`docs/sdc-api/README.md` is the authority.** It is written entirely from
+Juniper's OpenAPI 3 export, which is vendored alongside it. Read it before
+writing any client code, and never restate an endpoint, header, or parameter
+from memory.
 
-- https://www.juniper.net/documentation/us/en/software/sd-cloud/api/http/getting-started/how-to-get-started
-- https://www.juniper.net/documentation/us/en/software/sd-cloud/sd-cloud-user-guide/user-guide/topics/concept/about-api-access.html
+Do not try to scrape the HTML reference — the portal is client-rendered
+(APIMatic) and fetching pages returns only the shell. That is a dead end
+someone will otherwise rediscover. The spec comes from the portal's export
+route; `docs/sdc-api/fetch-spec.sh` refreshes it and
+`scripts/gen-endpoint-inventory.py` regenerates `docs/sdc-api/endpoints.md`.
+`endpoints.md` is generated — never hand-edit it.
 
-Verified so far: API-key auth (per user or service account, portal-minted,
-default one-year expiry, per-key roles/privileges) and OAuth 2.0 via customer
-IdP (Okta, Entra ID). Everything else — base URLs, versioning, resource groups
-— is unverified. Record findings in `docs/` as they are confirmed.
+Load-bearing facts, all verified in the spec:
+
+- Base URL `https://api.sdcloud.juniperclouds.net/`, single server.
+- Auth is a header — `x-api-key` or `x-oauth2-token` — declared at the document
+  root, and **no operation overrides it** (0 of 368).
+- Path versioning is **mixed**: `/api/v1/` for policies/devices/templates,
+  `/api/v2/` for IAM/site/tunnels. Never assume one version.
+- Bulk mutations are **async**: `POST` → job id, then status and per-device
+  result `GET`s. Same shape for `preview`/`deploy`/`selective_deploy`/`cleanup`
+  and for device `sync`/`reboot`/`rollback`.
+- Preview and deploy are separate endpoints — bind `mecmcp-changeset` to that
+  boundary and digest the *preview output*, never a re-render at apply time.
+- `size=0` on a list call means "return as many as possible". Never emit it.
+- `429` means rate-limited **or** payload-too-large; the remedies differ.
+
+`docs/sdc-api/README.md` ends with a **Still unverified** list (rate-limit
+numbers, retry headers, OAuth token format, polling intervals, `409`
+retryability, regional hosts). Treat those as open questions requiring a live
+tenant — do not close them by inference.
 
 ## Conventions inherited from the family
 

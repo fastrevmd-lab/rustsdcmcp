@@ -52,11 +52,27 @@ it belongs in `mecmcp` instead.
 
 ## The API
 
-Security Director Cloud publishes a REST API with API-key and OAuth 2.0
-authentication, where API keys are minted per user or service account from the
-portal and carry an expiry (one year by default). Roles and access privileges
-are configured per key, and OAuth 2.0 allows organizations to authenticate
-through an existing IdP (Okta, Entra ID).
+The API surface is **pinned from Juniper's own OpenAPI 3 export**, vendored in
+[`docs/sdc-api/`](docs/sdc-api/README.md) — 227 paths, 368 operations, 61 groups,
+804 schemas, against `https://api.sdcloud.juniperclouds.net/`.
+
+Authentication is a header, one of two schemes, applied to every operation
+(no operation overrides it): `x-api-key`, or `x-oauth2-token` for the OAuth 2.0
+path that federates to a customer IdP. Path versioning is mixed — `/api/v1/…`
+for policies, devices, and templates; `/api/v2/…` for IAM, sites, and tunnels.
+
+Three facts shape everything this server does:
+
+- **Bulk mutations are asynchronous.** `POST` returns a job id; status and
+  per-device results are separate `GET`s. Treating them as synchronous reports
+  success for work that has not happened.
+- **Preview and deploy are already separate endpoints.** The API hands us a
+  native change-control boundary; `mecmcp-changeset` binds to it directly.
+- **`429` means two different things** — rate limited *or* response payload too
+  large — so it is not unconditionally retry-after-sleep.
+
+Details, the full endpoint inventory, and an explicit list of what the spec does
+**not** answer: [`docs/sdc-api/README.md`](docs/sdc-api/README.md).
 
 Primary references:
 
@@ -64,19 +80,17 @@ Primary references:
 - [API Security Overview](https://www.juniper.net/documentation/us/en/software/sd-cloud/sd-cloud-user-guide/user-guide/topics/concept/about-api-access.html)
 - [Security Director Cloud documentation portal](https://www.juniper.net/documentation/product/us/en/juniper-security-director-cloud/)
 
-The concrete endpoint map, resource groups, and pagination/versioning semantics
-are being vetted directly against the live API reference before any client code
-lands — this README will not restate an endpoint surface it has not verified.
-
 ## Status
 
-**Scaffold.** Repository, license, and branding only. No crates, no binary, no
-tool surface yet. Nothing here is usable against a real tenant.
+**Scaffold + pinned API surface.** No crates, no binary, no tool surface yet —
+nothing here is usable against a real tenant. What exists is the verified
+groundwork: the vendored OpenAPI spec, a generated endpoint inventory, and the
+structural constraints the client must honour.
 
 Next, in order:
 
-1. Pin the verified SDC API surface (auth flow, base URLs, versioning, the
-   resource groups worth exposing) into `docs/`.
+1. ~~Pin the verified SDC API surface into `docs/`.~~ Done —
+   [`docs/sdc-api/`](docs/sdc-api/README.md).
 2. Stand up the Cargo workspace against the `mecmcp` crates as they publish.
 3. Read-only tools first — inventory, policy read, device state — under bearer
    auth with per-token scopes.
