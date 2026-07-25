@@ -1,0 +1,14 @@
+/target
+**/*.rs.bk
+
+# Never commit real authentication material, even hashed.
+tokens.json
+*.tokens.json
+!crates/*/tests/fixtures/*-tokens.json
+
+# SDC API keys and OAuth client secrets.
+.env
+*.pem
+*.key
+
+.DS_Store
