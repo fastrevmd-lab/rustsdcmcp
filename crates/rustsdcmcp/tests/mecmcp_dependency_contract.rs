@@ -18,10 +18,10 @@ const REPOSITORY: &str = "https://github.com/fastrevmd-lab/mecmcp";
 fn all_mecmcp_crates_use_one_released_tag_and_commit() {
     let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace_root = crate_root.join("../..");
-    let manifest = fs::read_to_string(workspace_root.join("Cargo.toml"))
-        .expect("read workspace manifest");
-    let lock = fs::read_to_string(workspace_root.join("Cargo.lock"))
-        .expect("read workspace lockfile");
+    let manifest =
+        fs::read_to_string(workspace_root.join("Cargo.toml")).expect("read workspace manifest");
+    let lock =
+        fs::read_to_string(workspace_root.join("Cargo.lock")).expect("read workspace lockfile");
 
     for package in PACKAGES {
         let declaration = format!(

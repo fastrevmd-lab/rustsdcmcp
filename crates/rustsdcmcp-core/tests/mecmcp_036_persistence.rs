@@ -12,8 +12,7 @@ const FIXTURE: &[u8] = include_bytes!("fixtures/mecmcp-0.3.6-state.json");
 #[cfg(unix)]
 fn secure(path: &std::path::Path) {
     use std::os::unix::fs::PermissionsExt as _;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-        .expect("secure copied fixture");
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).expect("secure copied fixture");
 }
 
 #[cfg(not(unix))]
@@ -44,9 +43,8 @@ async fn released_coordinator_reads_036_state_without_rewriting_or_waiver_output
             "preview_digest": format!("sha256:{}", "b".repeat(64))
         }])
     );
-    let policy_signature = mutation_policy_signature(
-        "sdc-policy-deploy-v1:fixture-tenant:https://fixture.invalid",
-    );
+    let policy_signature =
+        mutation_policy_signature("sdc-policy-deploy-v1:fixture-tenant:https://fixture.invalid");
     assert_eq!(
         policy_signature,
         "sha256:60de6b705166a8c38449ce419e1ff954f8651f9dbb7bc64fbcaf0944d9e1ded5"
@@ -90,5 +88,8 @@ async fn released_coordinator_reads_036_state_without_rewriting_or_waiver_output
     );
 
     let after = fs::read(&state_path).expect("read fixture after status");
-    assert_eq!(after, before, "loading and reading must not rewrite 0.3.6 state");
+    assert_eq!(
+        after, before,
+        "loading and reading must not rewrite 0.3.6 state"
+    );
 }
