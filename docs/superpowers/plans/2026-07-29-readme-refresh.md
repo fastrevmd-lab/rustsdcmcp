@@ -80,7 +80,7 @@ sha256sum rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz
 Immediately below it, state that the final command must print:
 
 ```text
-f3497192cb6fe8c83cfad8014fadc787ff16de7bca89a2302b565331e4f21848
+f3497192cb6fe8c83cfad8014fadc787ff16de7bca89a2302b565331e4f21848  rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz
 ```
 
 Link the release name to:

@@ -24,6 +24,10 @@ individual SRX devices and
 [`rustpanosmcp`](https://github.com/fastrevmd-lab/rustpanosmcp) talks XML-API to
 individual PAN-OS firewalls, this server talks to the management plane.
 
+That distinction has a large blast radius: one SDC action can affect many
+managed devices. Strict approval, credential-safe attribution, and bounded I/O
+therefore protect the management plane rather than merely decorate it.
+
 ## Current status
 
 `rustsdcmcp` is available to repository collaborators as the private
@@ -57,32 +61,38 @@ sha256sum rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz
 The final command must print:
 
 ```text
-f3497192cb6fe8c83cfad8014fadc787ff16de7bca89a2302b565331e4f21848
+f3497192cb6fe8c83cfad8014fadc787ff16de7bca89a2302b565331e4f21848  rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz
 ```
 
 ## Build from approved source
 
-Rust 1.88 is pinned by `rust-toolchain.toml`. Operators building from approved
-source can build and test locally, then copy the example configuration:
+Rust 1.88 is pinned by `rust-toolchain.toml`. In an approved clone containing
+the authorized commit, operators must first bind their detached checkout to
+that commit before building, testing, or packaging:
 
 ```console
+approved_commit=65135e29484be4487f5ba58bdf70ec0ef7518288
+git checkout --detach "$approved_commit"
+test "$(git rev-parse HEAD)" = "$approved_commit"
 cargo build --release --locked
 cargo test --workspace --locked
+scripts/build-lab-package.sh
 cp examples/sdc.example.json /secure/operator/path/sdc.json
 ```
 
 In that configuration, `credential_env` names the external process variable;
 the credential itself never belongs in JSON. For a local commit-addressed
-package, select the approved full source commit explicitly and verify from its
-directory—never glob across `dist/` because the checksum records only the
-archive basename:
+package, verify the newly built archive and its embedded `BUILD-INFO` from the
+approved commit directory—never glob across `dist/` because the checksum
+records only the archive basename:
 
 ```console
-source_commit=65135e29484be4487f5ba58bdf70ec0ef7518288
-artifact_dir="dist/$source_commit"
-mapfile -t archives < <(find "$artifact_dir" -maxdepth 1 -type f -name 'rustsdcmcp_*_amd64.tar.gz' -print)
-test "${#archives[@]}" -eq 1
-(cd "$artifact_dir" && sha256sum -c "$(basename "${archives[0]}").sha256")
+artifact_dir="dist/$approved_commit"
+archive="$artifact_dir/rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz"
+(cd "$artifact_dir" && sha256sum -c "$(basename "$archive").sha256")
+package_root=$(tar -tzf "$archive" | sed -n '1s#/.*##p')
+test -n "$package_root"
+tar -xOf "$archive" "$package_root/BUILD-INFO" | grep -Fx "git_commit=$approved_commit"
 ```
 
 ## Debian 13 LXC quick start
@@ -166,8 +176,9 @@ in [`docs/operations.md`](docs/operations.md).
 
 ## Completed lab work
 
-The qualified lab deployment runs on VMID 606 on `pve2`, with Debian 13 and DNS
-`rustsdcmcp.mechub.org`. It uses a loopback-only endpoint, the private
+The qualified Debian lab package deployment runs on VMID 606 on `pve2`, with
+Debian 13 and DNS `rustsdcmcp.mechub.org`; VMID 606 runs under the packaged
+`rustsdcmcp.service` systemd unit. It uses a loopback-only endpoint, the private
 prerelease and SBOM, and the qualified live read-only results described above.
 The detailed acceptance record is
 [`docs/lab-deployment-606.md`](docs/lab-deployment-606.md). It intentionally
@@ -189,7 +200,8 @@ or runtime state.
 
 [`mecmcp`](https://github.com/fastrevmd-lab/mecmcp) is the vendor-neutral Rust
 foundation shared by the mechub MCP server family. This repository consumes it,
-rather than forking it. The temporary compatibility declarations are tracked
+rather than forking it. The lab package pins `mecmcp` to `changeset-v0.3.6`
+before the 59 temporary compatibility declarations tracked
 in the [`mecmcp compatibility ledger`](docs/mecmcp-compatibility.md); public
 `v0.1.0` remains blocked until all 59 are replaced by one coherent upstream
 release.
