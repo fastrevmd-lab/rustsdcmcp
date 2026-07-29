@@ -110,6 +110,9 @@ fi
 if ! grep -Fq 's#/var/lib/sdcmcp/changeset-state.json#/var/lib/rustsdcmcp/changeset-state.json#' scripts/build-lab-package.sh; then
     fail 'builder does not package the canonical state path'
 fi
+require_contains 'mecmcp_ref=changeset-v0.3.7' scripts/build-lab-package.sh
+require_contains 'mecmcp_ref=changeset-v0.3.7' packaging/lxc/install.sh
+require_contains 'mecmcp_ref=changeset-v0.3.7' packaging/tests/package-smoke.sh
 
 assert_builder_preserves_unsafe_output_entries() {
     local fixture fake_bin commit archive checksum outside extra

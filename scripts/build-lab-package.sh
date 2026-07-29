@@ -121,7 +121,7 @@ version=0.1.0
 git_commit=$git_commit
 source_date_epoch=$source_date_epoch
 target=x86_64-unknown-linux-gnu
-mecmcp_ref=changeset-v0.3.6
+mecmcp_ref=changeset-v0.3.7
 glibc_floor=$glibc_floor
 rustc=$rustc_metadata
 EOF

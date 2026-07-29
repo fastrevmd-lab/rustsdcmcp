@@ -200,11 +200,13 @@ or runtime state.
 
 [`mecmcp`](https://github.com/fastrevmd-lab/mecmcp) is the vendor-neutral Rust
 foundation shared by the mechub MCP server family. This repository consumes it,
-rather than forking it. The lab package pins `mecmcp` to `changeset-v0.3.6`
-before the 59 temporary compatibility declarations tracked
-in the [`mecmcp compatibility ledger`](docs/mecmcp-compatibility.md); public
-`v0.1.0` remains blocked until all 59 are replaced by one coherent upstream
-release.
+rather than forking it. Current source and the next lab-package build pin all
+five shared crates to `changeset-v0.3.7`. The existing private
+`v0.1.0-lab.1` prerelease and VMID 606 were built with `changeset-v0.3.6`, as
+recorded in [`docs/lab-deployment-606.md`](docs/lab-deployment-606.md).
+The 59 temporary compatibility declarations remain tracked in the
+[`mecmcp compatibility ledger`](docs/mecmcp-compatibility.md); public `v0.1.0`
+remains blocked until all 59 are replaced by one coherent upstream release.
 
 ## API provenance
 

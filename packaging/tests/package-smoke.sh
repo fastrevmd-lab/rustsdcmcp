@@ -108,6 +108,13 @@ done <"$members_file"
     exit 1
 }
 
+build_info="$work_dir/BUILD-INFO"
+tar -xOf "$archive" "$package_root/BUILD-INFO" >"$build_info"
+grep -Fqx 'mecmcp_ref=changeset-v0.3.7' "$build_info" || {
+    printf '%s\n' 'archive BUILD-INFO has the wrong mecmcp ref' >&2
+    exit 1
+}
+
 sbom="$work_dir/SBOM.cdx.json"
 tar -xOf "$archive" "$package_root/SBOM.cdx.json" >"$sbom"
 jq -e '
