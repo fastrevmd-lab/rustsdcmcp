@@ -27,9 +27,11 @@ individual PAN-OS firewalls, this server talks to the management plane.
 ## Current status
 
 `rustsdcmcp` is available to repository collaborators as the private
-[`v0.1.0-lab.1` prerelease](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.1.0-lab.1).
-It exposes 17 MCP tools: 14 bounded read tools and three write tools that can
-be used only through prepare → independent approval → apply.
+[`v0.1.0-lab.1` prerelease](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.1.0-lab.1),
+which targets `65135e29484be4487f5ba58bdf70ec0ef7518288`. It exposes 17 MCP
+tools: 14 bounded read tools and three write tools—`prepare_sdc_policy_deploy`,
+`approve_sdc_change_set`, and `apply_sdc_change_set`—that can be used only
+through prepare → independent approval → apply.
 
 Live, read-only validation against SDC has verified credential-based startup
 tenant validation, `get_sdc_tenant_scope`, and `list_sdc_devices` with
