@@ -9,13 +9,11 @@ fail() {
     exit 1
 }
 require() {
-    local needle=$1
-    local file=$2
+    local needle=$1 file=$2
     grep -Fqx -- "$needle" "$file" || fail "missing '$needle' in $file"
 }
 require_contains() {
-    local needle=$1
-    local file=$2
+    local needle=$1 file=$2
     grep -Fq -- "$needle" "$file" || fail "missing '$needle' in $file"
 }
 
@@ -35,35 +33,49 @@ installer=packaging/lxc/install.sh
 tmpfiles=packaging/systemd/rustsdcmcp.tmpfiles
 sysusers=packaging/systemd/rustsdcmcp.sysusers
 journal=packaging/journald/mecmcp.conf
+expected_exec='/usr/local/bin/rustsdcmcp --device-mapping /etc/rustsdcmcp/sdc.json --transport streamable-http --host 127.0.0.1 --port 30032 --tokens-file /etc/rustsdcmcp/tokens.json --audit-format json --audit-journald --audit-redact devices=hmac --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key'
+
+exec_start=$(awk '
+    /^ExecStart=/ {
+        if (found++) exit 2
+        line = $0
+        sub(/^ExecStart=/, "", line)
+        while (line ~ /\\$/) {
+            sub(/\\$/, "", line)
+            if (getline continuation <= 0) exit 2
+            sub(/^[[:space:]]+/, "", continuation)
+            line = line " " continuation
+        }
+        print line
+    }
+    END { if (found != 1) exit 2 }
+' "$service" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//') || fail 'unit must contain one complete ExecStart'
+[[ "$exec_start" == "$expected_exec" ]] || fail 'active ExecStart conflicts with loopback/token/audit policy'
+[[ $(grep -Fxc 'EnvironmentFile=/etc/rustsdcmcp/credentials.env' "$service") -eq 1 ]] || fail 'unit credential path conflicts'
+require 'ReadOnlyPaths=/etc/rustsdcmcp' "$service"
+require 'ReadWritePaths=/var/lib/rustsdcmcp' "$service"
 require 'u rustsdcmcp - "rustsdcmcp service" /var/lib/rustsdcmcp /usr/sbin/nologin' "$sysusers"
 require 'd /etc/rustsdcmcp 0750 root rustsdcmcp -' "$tmpfiles"
 require 'd /var/lib/rustsdcmcp 0700 rustsdcmcp rustsdcmcp -' "$tmpfiles"
 require '[Journal]' "$journal"
 require 'Storage=persistent' "$journal"
 require 'SystemMaxUse=512M' "$journal"
-require_contains '--host 127.0.0.1' "$service"
-require_contains '--port 30032' "$service"
-require_contains '--audit-format json' "$service"
-require_contains '--audit-journald' "$service"
-require_contains '--audit-redact devices=hmac' "$service"
-require_contains '--audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key' "$service"
-
-require_contains '/etc/rustsdcmcp/tokens.json' "$service"
-require_contains '/etc/rustsdcmcp/tokens.json' "$installer"
-require_contains '/var/lib/rustsdcmcp/changeset-state.json' scripts/build-lab-package.sh
-require_contains 'config/sdc.json.example' "$installer"
-require_contains 'systemd-sysusers' "$installer"
-require_contains 'systemd-tmpfiles' "$installer"
-require_contains 'curl ca-certificates' "$installer"
+require_contains 'install -o root -g rustsdcmcp -m 0640 "$package_dir/config/sdc.json.example" "$config_dir/sdc.json.example"' "$installer"
+require_contains 'install_root=$(realpath -m -- "$install_root")' "$installer"
+require_contains '[[ "$install_root" != / ]] || die '\''SDCMCP_INSTALL_ROOT must not resolve to /'\''' "$installer"
+require_contains 'systemd-sysusers "$package_dir/packaging/systemd/rustsdcmcp.sysusers"' "$installer"
+require_contains 'systemd-tmpfiles --create "$package_dir/packaging/systemd/rustsdcmcp.tmpfiles"' "$installer"
+require_contains 'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates' "$installer"
 require_contains 'systemctl daemon-reload' "$installer"
 if rg -n 'systemctl (enable|start|restart|try-restart)' "$installer"; then
     fail 'installer must not enable or start the nonbootable service'
 fi
 
-if rg -n 'credentials\.env|config/sdc\.json$|/sdc\.json$' packaging scripts \
-    -g '!packaging/lxc/install.sh' -g '!packaging/systemd/rustsdcmcp.service' \
-    -g '!packaging/tests/package-smoke.sh' -g '!scripts/verify-packaging.sh'; then
-    fail 'packaging inputs must not contain a live config or credentials'
+if find packaging -type f \( -name 'sdc.json' -o -name 'credentials.env' \) -print -quit | grep -q .; then
+    fail 'live config or credentials are present in packaging inputs'
+fi
+if ! grep -Fq 's#/var/lib/sdcmcp/changeset-state.json#/var/lib/rustsdcmcp/changeset-state.json#' scripts/build-lab-package.sh; then
+    fail 'builder does not package the canonical state path'
 fi
 
 verification_root=$(mktemp -d)
@@ -75,4 +87,11 @@ install -m 0755 /bin/true "$verification_root/usr/local/bin/rustsdcmcp"
 install -m 0755 /bin/true "$verification_root/bin/kill"
 printf '%s\n' '[Unit]' >"$verification_root/usr/lib/systemd/system/sysinit.target"
 systemd-analyze --root="$verification_root" verify /etc/systemd/system/rustsdcmcp.service
+
+git_commit=$(git rev-parse HEAD)
+package_date=$(date -u -d "@$(git show -s --format=%ct HEAD)" +%Y%m%d)
+archive="dist/rustsdcmcp_0.1.0-lab.${package_date}.${git_commit:0:12}_amd64.tar.gz"
+if [[ -f "$archive" ]]; then
+    packaging/tests/package-smoke.sh "$archive"
+fi
 printf '%s\n' 'packaging policy verification passed'

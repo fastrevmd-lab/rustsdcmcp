@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-# Install a rustsdcmcp lab package. Run from an extracted package, never from a
-# source checkout: the payload is validated before the target is changed.
+# Install a validated rustsdcmcp lab package. It deliberately never enables the
+# service: an operator must first install real configuration and credentials.
 set -euo pipefail
 
+die() {
+    printf '%s\n' "installer validation failed: $*" >&2
+    exit 1
+}
+
+[[ ! -L "$0" ]] || die 'installer must not be invoked through a symlink'
 install_root=${SDCMCP_INSTALL_ROOT:-}
 skip_user=${SDCMCP_INSTALL_SKIP_USER:-0}
 skip_reload=${SDCMCP_INSTALL_SKIP_SYSTEMD_RELOAD:-0}
@@ -10,18 +16,13 @@ skip_runtime_deps=${SDCMCP_INSTALL_SKIP_RUNTIME_DEPS:-0}
 force_unit=${SDCMCP_FORCE_UNIT:-0}
 
 for flag in "$skip_user" "$skip_reload" "$skip_runtime_deps" "$force_unit"; do
-    [[ "$flag" == 0 || "$flag" == 1 ]] || {
-        printf '%s\n' "installer flags must be 0 or 1" >&2
-        exit 2
-    }
+    [[ "$flag" == 0 || "$flag" == 1 ]] || die 'installer flags must be 0 or 1'
 done
-
 if [[ -n "$install_root" ]]; then
-    [[ "$install_root" == /* ]] || {
-        printf '%s\n' "SDCMCP_INSTALL_ROOT must be absolute" >&2
-        exit 2
-    }
-    install_root=${install_root%/}
+    [[ "$install_root" == /* ]] || die 'SDCMCP_INSTALL_ROOT must be absolute'
+    command -v realpath >/dev/null || die 'realpath is required to validate SDCMCP_INSTALL_ROOT'
+    install_root=$(realpath -m -- "$install_root")
+    [[ "$install_root" != / ]] || die 'SDCMCP_INSTALL_ROOT must not resolve to /'
 fi
 
 package_dir=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
@@ -33,39 +34,131 @@ target_path() {
     fi
 }
 
-require_file() {
-    [[ -f "$package_dir/$1" ]] || {
-        printf '%s\n' "package payload missing: $1" >&2
-        exit 1
-    }
+required_files=(
+    bin/rustsdcmcp config/sdc.json.example packaging/lxc/install.sh
+    packaging/systemd/rustsdcmcp.service packaging/systemd/rustsdcmcp.sysusers
+    packaging/systemd/rustsdcmcp.tmpfiles packaging/journald/mecmcp.conf
+    BUILD-INFO SBOM.cdx.json README.md LICENSE SECURITY.md docs/operations.md
+)
+required_dirs=(bin config packaging packaging/lxc packaging/systemd packaging/journald docs)
+
+validate_layout() {
+    local entry type file_count=0 dir_count=0
+    declare -A files=() dirs=()
+    for entry in "${required_files[@]}"; do files["$entry"]=1; done
+    for entry in "${required_dirs[@]}"; do dirs["$entry"]=1; done
+    [[ -d "$package_dir" && ! -L "$package_dir" ]] || die 'package root is not a real directory'
+    while IFS=$'\t' read -r entry type; do
+        [[ -n "$entry" ]] || die 'package contains an empty member name'
+        case "$type" in
+            f)
+                [[ ${files[$entry]+yes} ]] || die "unexpected package file: $entry"
+                ((file_count += 1))
+                ;;
+            d)
+                [[ ${dirs[$entry]+yes} ]] || die "unexpected package directory: $entry"
+                ((dir_count += 1))
+                ;;
+            *) die "package contains non-regular member: $entry" ;;
+        esac
+    done < <(find -P "$package_dir" -mindepth 1 -printf '%P\t%y\n')
+    [[ $file_count -eq ${#required_files[@]} ]] || die 'package payload files are incomplete'
+    [[ $dir_count -eq ${#required_dirs[@]} ]] || die 'package payload directories are incomplete'
+    for entry in "${required_files[@]}"; do
+        [[ -f "$package_dir/$entry" && ! -L "$package_dir/$entry" ]] || die "missing regular payload file: $entry"
+    done
+    [[ -x "$package_dir/bin/rustsdcmcp" ]] || die 'package binary is not executable'
 }
 
-# Validate every required package member before creating a target directory.
-for member in \
-    bin/rustsdcmcp \
-    config/sdc.json.example \
-    packaging/lxc/install.sh \
-    packaging/systemd/rustsdcmcp.service \
-    packaging/systemd/rustsdcmcp.sysusers \
-    packaging/systemd/rustsdcmcp.tmpfiles \
-    packaging/journald/mecmcp.conf \
-    BUILD-INFO SBOM.cdx.json README.md LICENSE SECURITY.md docs/operations.md; do
-    require_file "$member"
-done
-[[ -x "$package_dir/bin/rustsdcmcp" ]] || {
-    printf '%s\n' "package binary is not executable" >&2
-    exit 1
+validate_build_info() {
+    local build_info="$package_dir/BUILD-INFO"
+    grep -Fqx 'release_status=lab-only' "$build_info" || die 'BUILD-INFO release status is invalid'
+    grep -Fqx 'version=0.1.0' "$build_info" || die 'BUILD-INFO version is invalid'
+    grep -Eq '^git_commit=[0-9a-f]{40}$' "$build_info" || die 'BUILD-INFO commit is invalid'
+    grep -Eq '^source_date_epoch=[0-9]+$' "$build_info" || die 'BUILD-INFO epoch is invalid'
+    grep -Fqx 'target=x86_64-unknown-linux-gnu' "$build_info" || die 'BUILD-INFO target is invalid'
+    grep -Fqx 'mecmcp_ref=changeset-v0.3.6' "$build_info" || die 'BUILD-INFO mecmcp ref is invalid'
+    grep -Eq '^glibc_floor=[0-9]+(\.[0-9]+)+$' "$build_info" || die 'BUILD-INFO GLIBC floor is invalid'
+    grep -Eq '^rustc=rustc ' "$build_info" || die 'BUILD-INFO rustc metadata is invalid'
 }
+
+validate_sbom() {
+    local sbom="$package_dir/SBOM.cdx.json"
+    if command -v jq >/dev/null; then
+        jq -e '.bomFormat == "CycloneDX"' "$sbom" >/dev/null || die 'SBOM is not CycloneDX JSON'
+    else
+        grep -Eq '"bomFormat"[[:space:]]*:[[:space:]]*"CycloneDX"' "$sbom" \
+            || die 'SBOM does not identify as CycloneDX'
+    fi
+}
+
+validate_config() {
+    local config="$package_dir/config/sdc.json.example"
+    if command -v jq >/dev/null; then
+        jq -e '
+            .version == 1
+            and (.tenant | type == "string" and length > 0)
+            and (.credential_env | type == "string" and length > 0)
+            and (.endpoint | type == "string" and startswith("https://"))
+            and .changeset_state_file == "/var/lib/rustsdcmcp/changeset-state.json"
+        ' "$config" >/dev/null || die 'config example is not operationally valid JSON'
+    else
+        grep -Fq '"version": 1' "$config" \
+            && grep -Fq '"changeset_state_file": "/var/lib/rustsdcmcp/changeset-state.json"' "$config" \
+            && grep -Fq '"endpoint": "https://' "$config" \
+            || die 'config example fails dependency-free validation'
+    fi
+}
+
+extract_exec_start() {
+    awk '
+        /^ExecStart=/ {
+            if (found++) exit 2
+            line = $0
+            sub(/^ExecStart=/, "", line)
+            while (line ~ /\\$/) {
+                sub(/\\$/, "", line)
+                if (getline continuation <= 0) exit 2
+                sub(/^[[:space:]]+/, "", continuation)
+                line = line " " continuation
+            }
+            print line
+        }
+        END { if (found != 1) exit 2 }
+    ' "$package_dir/packaging/systemd/rustsdcmcp.service"
+}
+
+validate_service() {
+    local service="$package_dir/packaging/systemd/rustsdcmcp.service"
+    local expected exec_start
+    expected='/usr/local/bin/rustsdcmcp --device-mapping /etc/rustsdcmcp/sdc.json --transport streamable-http --host 127.0.0.1 --port 30032 --tokens-file /etc/rustsdcmcp/tokens.json --audit-format json --audit-journald --audit-redact devices=hmac --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key'
+    exec_start=$(extract_exec_start | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//') || die 'unit has invalid ExecStart'
+    [[ "$exec_start" == "$expected" ]] || die 'unit ExecStart does not match the package policy'
+    [[ $(grep -Fxc 'EnvironmentFile=/etc/rustsdcmcp/credentials.env' "$service") -eq 1 ]] || die 'unit credential path is invalid'
+    grep -Fqx 'ReadOnlyPaths=/etc/rustsdcmcp' "$service" || die 'unit config path is invalid'
+    grep -Fqx 'ReadWritePaths=/var/lib/rustsdcmcp' "$service" || die 'unit state path is invalid'
+}
+
+validate_package() {
+    validate_layout
+    bash -n "$package_dir/packaging/lxc/install.sh"
+    validate_build_info
+    validate_sbom
+    validate_config
+    validate_service
+    grep -Fqx 'u rustsdcmcp - "rustsdcmcp service" /var/lib/rustsdcmcp /usr/sbin/nologin' "$package_dir/packaging/systemd/rustsdcmcp.sysusers" || die 'sysusers declaration is invalid'
+    grep -Fqx 'd /etc/rustsdcmcp 0750 root rustsdcmcp -' "$package_dir/packaging/systemd/rustsdcmcp.tmpfiles" || die 'config tmpfiles declaration is invalid'
+    grep -Fqx 'd /var/lib/rustsdcmcp 0700 rustsdcmcp rustsdcmcp -' "$package_dir/packaging/systemd/rustsdcmcp.tmpfiles" || die 'state tmpfiles declaration is invalid'
+}
+
+# This is deliberately before apt, sysusers, tmpfiles, or any target mutation.
+validate_package
 
 live_install=0
 [[ -z "$install_root" ]] && live_install=1
-
 if (( live_install )); then
     if [[ "$skip_runtime_deps" != 1 ]]; then
-        [[ -f /etc/debian_version ]] || {
-            printf '%s\n' "live installation requires Debian" >&2
-            exit 1
-        }
+        [[ -f /etc/debian_version ]] || die 'live installation requires Debian'
         apt-get update
         DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates
     fi
@@ -81,6 +174,8 @@ sysusers_path=$(target_path /usr/lib/sysusers.d/rustsdcmcp.conf)
 tmpfiles_path=$(target_path /usr/lib/tmpfiles.d/rustsdcmcp.conf)
 journal_path=$(target_path /etc/systemd/journald.conf.d/mecmcp.conf)
 unit_path=$(target_path /etc/systemd/system/rustsdcmcp.service)
+tokens_path=$(target_path /etc/rustsdcmcp/tokens.json)
+hmac_path=$(target_path /etc/rustsdcmcp/audit-hmac.key)
 
 install -d -m 0750 "$config_dir"
 install -d -m 0700 "$state_dir"
@@ -90,14 +185,15 @@ install -m 0755 "$package_dir/bin/rustsdcmcp" "$bin_path"
 install -m 0644 "$package_dir/packaging/systemd/rustsdcmcp.sysusers" "$sysusers_path"
 install -m 0644 "$package_dir/packaging/systemd/rustsdcmcp.tmpfiles" "$tmpfiles_path"
 install -m 0644 "$package_dir/packaging/journald/mecmcp.conf" "$journal_path"
-install -m 0640 "$package_dir/config/sdc.json.example" "$config_dir/sdc.json.example"
+if (( live_install )) && getent group rustsdcmcp >/dev/null; then
+    install -o root -g rustsdcmcp -m 0640 "$package_dir/config/sdc.json.example" "$config_dir/sdc.json.example"
+else
+    install -m 0640 "$package_dir/config/sdc.json.example" "$config_dir/sdc.json.example"
+fi
 
 if (( live_install )) && [[ "$skip_user" != 1 ]]; then
     systemd-tmpfiles --create "$package_dir/packaging/systemd/rustsdcmcp.tmpfiles"
 fi
-
-tokens_path=$(target_path /etc/rustsdcmcp/tokens.json)
-hmac_path=$(target_path /etc/rustsdcmcp/audit-hmac.key)
 if [[ ! -e "$tokens_path" ]]; then
     printf '%s\n' '{"version":1,"tokens":[]}' >"$tokens_path"
 fi
@@ -106,7 +202,6 @@ if [[ ! -e "$hmac_path" ]]; then
     head -c 32 /dev/urandom >"$hmac_path"
 fi
 chmod 0600 "$tokens_path" "$hmac_path"
-
 if (( live_install )); then
     chown rustsdcmcp:rustsdcmcp "$tokens_path" "$hmac_path"
 fi
@@ -116,15 +211,14 @@ if [[ -e "$unit_path" ]] && ! cmp -s "$unit_path" "$package_dir/packaging/system
 else
     install -m 0644 "$package_dir/packaging/systemd/rustsdcmcp.service" "$unit_path"
 fi
-
 if (( live_install )) && [[ "$skip_reload" != 1 ]]; then
     systemctl daemon-reload
 fi
 
 printf '%s\n' \
     'Installation complete. Next steps:' \
-    '1. Copy and edit /etc/rustsdcmcp/sdc.json.example as /etc/rustsdcmcp/sdc.json.' \
+    '1. Create config: install -o root -g rustsdcmcp -m 0640 /etc/rustsdcmcp/sdc.json.example /etc/rustsdcmcp/sdc.json, then edit /etc/rustsdcmcp/sdc.json.' \
     '2. Install /etc/rustsdcmcp/credentials.env with mode 0600; do not put credentials in JSON.' \
-    '3. Mint a least-privilege token, then start rustsdcmcp manually after configuration.' \
+    '3. Mint a least-privilege token as root, then start rustsdcmcp manually after configuration.' \
     '4. Configure remote journal forwarding before handling production traffic.' \
     'MCP endpoint: http://127.0.0.1:30032/mcp'
