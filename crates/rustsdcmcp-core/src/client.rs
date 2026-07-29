@@ -641,7 +641,7 @@ fn classify_api_error(status: StatusCode, body: &[u8]) -> SdcError {
 }
 
 fn bound_text(value: &str) -> String {
-    mecmcp_server::bounded_text(value, 512).text
+    crate::compat::bounded_text(value, 512).text
 }
 
 /// Stable, credential-free SDC client failure.

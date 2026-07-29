@@ -10,6 +10,7 @@ repository.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true
+http.workspace = true
 rmcp.workspace = true
 rustls.workspace = true
 schemars.workspace = true
@@ -25,7 +26,6 @@ mecmcp-audit.workspace = true
 mecmcp-auth.workspace = true
 mecmcp-changeset.workspace = true
 mecmcp-runtime.workspace = true
-mecmcp-server.workspace = true
 mecmcp-transport.workspace = true
 
 [lints]

@@ -44,14 +44,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 zeroize = "1"
 
-# All shared crates intentionally use one immutable revision. Mixing revisions
-# creates distinct CallerCtx TypeIds and silently disables request extensions.
-mecmcp-audit = { version = "0.3.8", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "75a1e9db10a21a85876f337313ba47bc0329d74d" }
-mecmcp-auth = { version = "0.3.8", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "75a1e9db10a21a85876f337313ba47bc0329d74d" }
-mecmcp-changeset = { version = "0.3.8", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "75a1e9db10a21a85876f337313ba47bc0329d74d" }
-mecmcp-runtime = { version = "0.3.8", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "75a1e9db10a21a85876f337313ba47bc0329d74d" }
-mecmcp-server = { version = "0.3.8", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "75a1e9db10a21a85876f337313ba47bc0329d74d" }
-mecmcp-transport = { version = "0.3.8", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "75a1e9db10a21a85876f337313ba47bc0329d74d" }
+mecmcp-audit = { version = "0.3.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.6" }
+mecmcp-auth = { version = "0.3.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.6" }
+mecmcp-changeset = { version = "0.3.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.6" }
+mecmcp-runtime = { version = "0.3.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.6" }
+mecmcp-transport = { version = "0.3.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.6" }
 
 [profile.release]
 lto = "thin"
