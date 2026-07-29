@@ -1,3 +1,5 @@
+//! Enforces the coherent released mecmcp dependency pin.
+
 use std::{fs, path::Path};
 
 const PACKAGES: [&str; 5] = [
