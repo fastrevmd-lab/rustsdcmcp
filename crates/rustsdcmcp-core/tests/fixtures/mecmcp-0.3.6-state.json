@@ -1,0 +1,28 @@
+{
+  "version": 2,
+  "state": {
+    "operations": {},
+    "change_sets": {
+      "5f23c70c64194d77734bab6b974c5f6a0e148c7c68e48d6396f61542bc85dffd": {
+        "id": "5f23c70c64194d77734bab6b974c5f6a0e148c7c68e48d6396f61542bc85dffd",
+        "owner": "fixture-owner",
+        "device": "fixture-tenant",
+        "expected_candidate_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "actions": [
+          {
+            "operation": "policy_deploy",
+            "policy_ids": [
+              "fixture-policy"
+            ],
+            "preview_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        ],
+        "digest": "sha256:369bf273fae62daace7e32e09e255f6dde9b9abd14c1d97c3439e6287d4645a5",
+        "state": "planned",
+        "expires_at_unix": 4938968022,
+        "operation_id": null,
+        "policy_signature": "sha256:60de6b705166a8c38449ce419e1ff954f8651f9dbb7bc64fbcaf0944d9e1ded5"
+      }
+    }
+  }
+}
