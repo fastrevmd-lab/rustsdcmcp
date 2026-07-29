@@ -1,4 +1,5 @@
 /target
+/.worktrees/
 **/*.rs.bk
 
 # Never commit real authentication material, even hashed.
