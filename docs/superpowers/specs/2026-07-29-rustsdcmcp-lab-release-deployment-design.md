@@ -131,6 +131,13 @@ The currently known reusable supporting-type inventory is:
 15. `BearerSyntax`
 16. `BearerHeaderError`
 
+Implementation-plan analysis expanded the complete production compatibility
+surface to 59 symbols: 37 functions or methods and 22 types. That exhaustive
+classification, including private helpers and the four released preflight
+symbols that must be reused instead of copied, is recorded in
+`docs/superpowers/plans/2026-07-29-rustsdcmcp-lab-package-deployment.md`.
+The one-to-one issue contract applies to all 59 temporary symbols.
+
 Before any compatibility implementation is written:
 
 1. Each function or method above receives a dedicated mecmcp issue.
@@ -182,7 +189,7 @@ available. It will not vendor or modify the mecmcp repository.
 The lab artifact name will identify its status, date, and exact source commit:
 
 ```text
-rustsdcmcp_0.1.0-lab.20260729.<commit>_amd64.tar.gz
+rustsdcmcp_0.1.0-lab.20260729.${GIT_SHA12}_amd64.tar.gz
 ```
 
 The package will contain:
