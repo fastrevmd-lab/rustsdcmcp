@@ -160,7 +160,11 @@ Each temporary implementation will include a doc comment in this form:
 /// Remove after: first coherent mecmcp release containing the upstream issue
 ```
 
-The repository will contain a compatibility ledger mapping:
+The repository contains the machine-readable compatibility ledger at
+`docs/mecmcp-compatibility.tsv` and the migration guide at
+`docs/mecmcp-compatibility.md`. The ledger has exactly 59 rows (37 functions or
+methods and 22 types), with one unique numeric mecmcp issue URL per symbol.
+It maps:
 
 | Local symbol | Dedicated issue | Target crate and symbol | Removal condition |
 | --- | --- | --- | --- |
