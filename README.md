@@ -128,9 +128,9 @@ loopback-only no-auth mode is selected:
 
 ```console
 cargo run -p rustsdcmcp -- \
-  -f /etc/sdcmcp/sdc.json \
+  -f /etc/rustsdcmcp/sdc.json \
   --transport streamable-http \
-  --tokens-file /etc/sdcmcp/tokens.json
+  --tokens-file /etc/rustsdcmcp/tokens.json
 ```
 
 Use the shared `token` subcommand to mint scoped credentials. Until
