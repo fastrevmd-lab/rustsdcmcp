@@ -5,7 +5,10 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-use syn::{Attribute, Expr, ExprLit, ImplItem, Item, Lit, Meta, Type};
+use syn::{
+    Attribute, Expr, ExprLit, ImplItem, Item, Lit, Meta, Token, TraitItem, Type, parse::Parser,
+    punctuated::Punctuated,
+};
 
 type LedgerEntry = (String, String, String);
 
@@ -44,9 +47,38 @@ fn marker(remainder: &str) -> Result<LedgerEntry, String> {
 
 fn cfg_test(attributes: &[Attribute]) -> bool {
     attributes.iter().any(|attribute| {
-        attribute.path().is_ident("cfg")
-            && matches!(&attribute.meta, Meta::List(list) if list.tokens.to_string().contains("test"))
+        let Meta::List(list) = &attribute.meta else {
+            return false;
+        };
+        if !list.path.is_ident("cfg") {
+            return false;
+        }
+        Punctuated::<Meta, Token![,]>::parse_terminated
+            .parse2(list.tokens.clone())
+            .ok()
+            .is_some_and(|predicates| {
+                predicates.len() == 1 && predicates.first().is_some_and(test_only_cfg_predicate)
+            })
     })
+}
+
+fn test_only_cfg_predicate(predicate: &Meta) -> bool {
+    match predicate {
+        Meta::Path(path) => path.is_ident("test"),
+        Meta::List(list) if list.path.is_ident("all") || list.path.is_ident("any") => {
+            let Ok(predicates) =
+                Punctuated::<Meta, Token![,]>::parse_terminated.parse2(list.tokens.clone())
+            else {
+                return false;
+            };
+            if list.path.is_ident("all") {
+                predicates.iter().any(test_only_cfg_predicate)
+            } else {
+                !predicates.is_empty() && predicates.iter().all(test_only_cfg_predicate)
+            }
+        }
+        _ => false,
+    }
 }
 
 fn marker_attribute(attributes: &[Attribute]) -> Result<Option<LedgerEntry>, String> {
@@ -110,6 +142,17 @@ fn impl_item_attributes(item: &ImplItem) -> Option<&[Attribute]> {
     }
 }
 
+fn trait_item_attributes(item: &TraitItem) -> Option<&[Attribute]> {
+    match item {
+        TraitItem::Const(item) => Some(&item.attrs),
+        TraitItem::Fn(item) => Some(&item.attrs),
+        TraitItem::Type(item) => Some(&item.attrs),
+        TraitItem::Macro(item) => Some(&item.attrs),
+        TraitItem::Verbatim(_) => None,
+        _ => None,
+    }
+}
+
 fn count_markers(items: &[Item]) -> Result<usize, String> {
     let mut count = 0;
     for item in items {
@@ -124,6 +167,16 @@ fn count_markers(items: &[Item]) -> Result<usize, String> {
             Item::Impl(item) => {
                 for item in &item.items {
                     let Some(attributes) = impl_item_attributes(item) else {
+                        continue;
+                    };
+                    if !cfg_test(attributes) {
+                        count += usize::from(marker_attribute(attributes)?.is_some());
+                    }
+                }
+            }
+            Item::Trait(item) => {
+                for item in &item.items {
+                    let Some(attributes) = trait_item_attributes(item) else {
                         continue;
                     };
                     if !cfg_test(attributes) {
@@ -173,7 +226,7 @@ fn require_marker(
             path.display()
         ));
     }
-    let symbol_matches = if kind == "method" {
+    let symbol_matches = if kind == "method" || !symbol_suffix.starts_with("::") {
         let mut marker_parts = marker.1.rsplit("::");
         let mut declaration_parts = symbol_suffix.rsplit("::");
         marker_parts.next() == declaration_parts.next()
@@ -216,13 +269,33 @@ fn scan_items(items: &[Item], path: &Path, markers: &mut Vec<LedgerEntry>) -> Re
                 path,
                 markers,
             )?,
-            Item::Trait(item) if !cfg_test(&item.attrs) => require_marker(
-                &item.attrs,
-                "type",
-                &format!("::{}", item.ident),
-                path,
-                markers,
-            )?,
+            Item::Trait(item) if !cfg_test(&item.attrs) => {
+                let owner = item.ident.to_string();
+                require_marker(&item.attrs, "type", &format!("::{owner}"), path, markers)?;
+                for associated in &item.items {
+                    match associated {
+                        TraitItem::Fn(associated) if !cfg_test(&associated.attrs) => {
+                            require_marker(
+                                &associated.attrs,
+                                "method",
+                                &format!("{owner}::{}", associated.sig.ident),
+                                path,
+                                markers,
+                            )?;
+                        }
+                        TraitItem::Type(associated) if !cfg_test(&associated.attrs) => {
+                            require_marker(
+                                &associated.attrs,
+                                "type",
+                                &format!("{owner}::{}", associated.ident),
+                                path,
+                                markers,
+                            )?;
+                        }
+                        _ => {}
+                    }
+                }
+            }
             Item::Type(item) if !cfg_test(&item.attrs) => require_marker(
                 &item.attrs,
                 "type",
@@ -234,16 +307,26 @@ fn scan_items(items: &[Item], path: &Path, markers: &mut Vec<LedgerEntry>) -> Re
                 let owner = type_name(&item.self_ty)
                     .ok_or_else(|| format!("unsupported impl type in {}", path.display()))?;
                 for method in &item.items {
-                    if let ImplItem::Fn(method) = method
-                        && !cfg_test(&method.attrs)
-                    {
-                        require_marker(
-                            &method.attrs,
-                            "method",
-                            &format!("{owner}::{}", method.sig.ident),
-                            path,
-                            markers,
-                        )?;
+                    match method {
+                        ImplItem::Fn(method) if !cfg_test(&method.attrs) => {
+                            require_marker(
+                                &method.attrs,
+                                "method",
+                                &format!("{owner}::{}", method.sig.ident),
+                                path,
+                                markers,
+                            )?;
+                        }
+                        ImplItem::Type(associated) if !cfg_test(&associated.attrs) => {
+                            require_marker(
+                                &associated.attrs,
+                                "type",
+                                &format!("{owner}::{}", associated.ident),
+                                path,
+                                markers,
+                            )?;
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -403,4 +486,87 @@ pub struct Live;
 "#;
     let markers = scan_source(source, Path::new("fixture.rs")).expect("skip test module");
     assert_eq!(markers.len(), 1);
+}
+
+#[test]
+fn scanner_rejects_production_cfg_predicates_that_mention_test() {
+    let source = r#"
+#[cfg(not(test))]
+pub struct NotTest;
+#[cfg(any(test, feature = "production"))]
+pub struct Mixed;
+#[cfg(feature = "contest")]
+pub struct FeatureNameContainsTest;
+"#;
+    let error = scan_source(source, Path::new("fixture.rs")).expect_err("production cfg items");
+    assert!(
+        error.contains("NotTest")
+            || error.contains("Mixed")
+            || error.contains("FeatureNameContainsTest")
+    );
+}
+
+#[test]
+fn scanner_ignores_only_genuinely_test_only_cfg_all_modules() {
+    let source = r#"
+#[cfg(all(test, feature = "unit"))]
+mod tests {
+    /// mecmcp-compat: type fixture::TestOnly https://github.com/fastrevmd-lab/mecmcp/issues/7
+    pub struct TestOnly;
+}
+/// mecmcp-compat: type fixture::Live https://github.com/fastrevmd-lab/mecmcp/issues/8
+pub struct Live;
+"#;
+    let markers = scan_source(source, Path::new("fixture.rs")).expect("test-only cfg all");
+    assert_eq!(markers.len(), 1);
+}
+
+#[test]
+fn scanner_rejects_unmarked_trait_functions() {
+    let source = r#"
+/// mecmcp-compat: type fixture::Surface https://github.com/fastrevmd-lab/mecmcp/issues/9
+pub trait Surface {
+    fn call(&self);
+}
+"#;
+    let error = scan_source(source, Path::new("fixture.rs")).expect_err("unmarked trait function");
+    assert!(error.contains("Surface::call"));
+}
+
+#[test]
+fn scanner_rejects_unmarked_trait_associated_types() {
+    let source = r#"
+/// mecmcp-compat: type fixture::Surface https://github.com/fastrevmd-lab/mecmcp/issues/10
+pub trait Surface {
+    type Output;
+}
+"#;
+    let error = scan_source(source, Path::new("fixture.rs")).expect_err("unmarked trait type");
+    assert!(error.contains("Surface::Output"));
+}
+
+#[test]
+fn scanner_rejects_unmarked_impl_associated_types() {
+    let source = r#"
+/// mecmcp-compat: type fixture::Worker https://github.com/fastrevmd-lab/mecmcp/issues/11
+pub struct Worker;
+impl Worker {
+    type Output = ();
+}
+"#;
+    let error = scan_source(source, Path::new("fixture.rs")).expect_err("unmarked impl type");
+    assert!(error.contains("Worker::Output"));
+}
+
+#[test]
+fn scanner_rejects_associated_type_markers_bound_to_the_wrong_owner() {
+    let source = r#"
+/// mecmcp-compat: type fixture::Surface https://github.com/fastrevmd-lab/mecmcp/issues/12
+pub trait Surface {
+    /// mecmcp-compat: type fixture::Other::Output https://github.com/fastrevmd-lab/mecmcp/issues/13
+    type Output;
+}
+"#;
+    let error = scan_source(source, Path::new("fixture.rs")).expect_err("wrong associated owner");
+    assert!(error.contains("Other::Output"));
 }
