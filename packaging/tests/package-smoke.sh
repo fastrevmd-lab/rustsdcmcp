@@ -182,4 +182,22 @@ printf '%s\n' token-sentinel | cmp -s - "$sentinel_dir/tokens"
 printf '%s\n' hmac-sentinel | cmp -s - "$sentinel_dir/hmac"
 [[ $(stat -c %a "$sentinel_dir/tokens") == 644 ]] || exit 1
 [[ $(stat -c %a "$sentinel_dir/hmac") == 644 ]] || exit 1
+
+parent_unsafe_root="$work_dir/parent-unsafe-root"
+parent_sentinel_dir="$work_dir/parent-sentinels"
+mkdir -p "$parent_unsafe_root" "$parent_sentinel_dir"
+printf '%s\n' parent-sentinel >"$parent_sentinel_dir/sentinel"
+chmod 0644 "$parent_sentinel_dir/sentinel"
+ln -s "$parent_sentinel_dir" "$parent_unsafe_root/var"
+if SDCMCP_INSTALL_ROOT="$parent_unsafe_root" \
+    SDCMCP_INSTALL_SKIP_USER=1 \
+    SDCMCP_INSTALL_SKIP_SYSTEMD_RELOAD=1 \
+    SDCMCP_INSTALL_SKIP_RUNTIME_DEPS=1 \
+    "$installer" >/dev/null 2>&1; then
+    printf '%s\n' 'installer accepted an unsafe state parent directory' >&2
+    exit 1
+fi
+printf '%s\n' parent-sentinel | cmp -s - "$parent_sentinel_dir/sentinel"
+[[ $(stat -c %a "$parent_sentinel_dir/sentinel") == 644 ]] || exit 1
+[[ ! -e "$parent_sentinel_dir/lib/rustsdcmcp" ]] || exit 1
 printf '%s\n' 'package smoke passed'

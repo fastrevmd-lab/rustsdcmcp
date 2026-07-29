@@ -112,10 +112,12 @@ validate_config() {
 
 extract_exec_start() {
     awk '
-        /^ExecStart=/ {
+        /^\[Service\]$/ { in_service = 1; next }
+        /^\[/ { in_service = 0 }
+        in_service && $0 ~ /^[[:space:]]*ExecStart[[:space:]]*=/ {
             if (found++) exit 2
             line = $0
-            sub(/^ExecStart=/, "", line)
+            sub(/^[[:space:]]*ExecStart[[:space:]]*=[[:space:]]*/, "", line)
             while (line ~ /\\$/) {
                 sub(/\\$/, "", line)
                 if (getline continuation <= 0) exit 2
@@ -136,8 +138,9 @@ service_directive_values() {
         in_service {
             line = $0
             sub(/^[[:space:]]+/, "", line)
-            if (index(line, key "=") == 1) {
-                sub("^" key "=", "", line)
+            if (line ~ ("^" key "[[:space:]]*=")) {
+                sub("^" key "[[:space:]]*=[[:space:]]*", "", line)
+                sub(/[[:space:]]+$/, "", line)
                 print line
             }
         }
@@ -219,6 +222,8 @@ reject_unsafe_parent_dirs() {
 # Validate destination objects before apt, sysusers, tmpfiles, or any write.
 reject_unsafe_directory "$config_dir"
 reject_unsafe_directory "$state_dir"
+reject_unsafe_parent_dirs "$config_dir/.parent-validation"
+reject_unsafe_parent_dirs "$state_dir/.parent-validation"
 managed_destinations=(
     "$bin_path" "$config_dir/sdc.json.example" "$sysusers_path" "$tmpfiles_path"
     "$journal_path" "$unit_path" "$tokens_path" "$hmac_path"

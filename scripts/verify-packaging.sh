@@ -43,8 +43,9 @@ service_directive_values() {
         in_service {
             line = $0
             sub(/^[[:space:]]+/, "", line)
-            if (index(line, key "=") == 1) {
-                sub("^" key "=", "", line)
+            if (line ~ ("^" key "[[:space:]]*=")) {
+                sub("^" key "[[:space:]]*=[[:space:]]*", "", line)
+                sub(/[[:space:]]+$/, "", line)
                 print line
             }
         }
@@ -60,10 +61,12 @@ require_service_directive() {
 }
 
 exec_start=$(awk '
-    /^ExecStart=/ {
+    /^\[Service\]$/ { in_service = 1; next }
+    /^\[/ { in_service = 0 }
+    in_service && $0 ~ /^[[:space:]]*ExecStart[[:space:]]*=/ {
         if (found++) exit 2
         line = $0
-        sub(/^ExecStart=/, "", line)
+        sub(/^[[:space:]]*ExecStart[[:space:]]*=[[:space:]]*/, "", line)
         while (line ~ /\\$/) {
             sub(/\\$/, "", line)
             if (getline continuation <= 0) exit 2
