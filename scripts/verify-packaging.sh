@@ -35,6 +35,30 @@ sysusers=packaging/systemd/rustsdcmcp.sysusers
 journal=packaging/journald/mecmcp.conf
 expected_exec='/usr/local/bin/rustsdcmcp --device-mapping /etc/rustsdcmcp/sdc.json --transport streamable-http --host 127.0.0.1 --port 30032 --tokens-file /etc/rustsdcmcp/tokens.json --audit-format json --audit-journald --audit-redact devices=hmac --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key'
 
+service_directive_values() {
+    local key=$1
+    awk -v key="$key" '
+        /^\[Service\]$/ { in_service = 1; next }
+        /^\[/ { in_service = 0 }
+        in_service {
+            line = $0
+            sub(/^[[:space:]]+/, "", line)
+            if (index(line, key "=") == 1) {
+                sub("^" key "=", "", line)
+                print line
+            }
+        }
+    ' "$service"
+}
+
+require_service_directive() {
+    local key=$1 expected=$2
+    local -a values=()
+    mapfile -t values < <(service_directive_values "$key")
+    [[ ${#values[@]} -eq 1 && ${values[0]} == "$expected" ]] \
+        || fail "active $key directives conflict"
+}
+
 exec_start=$(awk '
     /^ExecStart=/ {
         if (found++) exit 2
@@ -51,9 +75,9 @@ exec_start=$(awk '
     END { if (found != 1) exit 2 }
 ' "$service" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//') || fail 'unit must contain one complete ExecStart'
 [[ "$exec_start" == "$expected_exec" ]] || fail 'active ExecStart conflicts with loopback/token/audit policy'
-[[ $(grep -Fxc 'EnvironmentFile=/etc/rustsdcmcp/credentials.env' "$service") -eq 1 ]] || fail 'unit credential path conflicts'
-require 'ReadOnlyPaths=/etc/rustsdcmcp' "$service"
-require 'ReadWritePaths=/var/lib/rustsdcmcp' "$service"
+require_service_directive EnvironmentFile /etc/rustsdcmcp/credentials.env
+require_service_directive ReadOnlyPaths /etc/rustsdcmcp
+require_service_directive ReadWritePaths /var/lib/rustsdcmcp
 require 'u rustsdcmcp - "rustsdcmcp service" /var/lib/rustsdcmcp /usr/sbin/nologin' "$sysusers"
 require 'd /etc/rustsdcmcp 0750 root rustsdcmcp -' "$tmpfiles"
 require 'd /var/lib/rustsdcmcp 0700 rustsdcmcp rustsdcmcp -' "$tmpfiles"

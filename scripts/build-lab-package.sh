@@ -62,7 +62,8 @@ install -m 0644 README.md LICENSE SECURITY.md "$stage_dir/"
 install -m 0644 docs/operations.md "$stage_dir/docs/operations.md"
 
 glibc_floor=$(objdump -T "$stage_dir/bin/rustsdcmcp" \
-    | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sed 's/GLIBC_//' | sort -Vu | tail -n 1)
+    | { grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' || true; } \
+    | sed 's/GLIBC_//' | sort -Vu | tail -n 1)
 [[ -n "$glibc_floor" ]] || {
     printf '%s\n' 'could not determine GLIBC floor' >&2
     exit 1

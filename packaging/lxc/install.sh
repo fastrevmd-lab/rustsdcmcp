@@ -128,15 +128,39 @@ extract_exec_start() {
     ' "$package_dir/packaging/systemd/rustsdcmcp.service"
 }
 
+service_directive_values() {
+    local key=$1
+    awk -v key="$key" '
+        /^\[Service\]$/ { in_service = 1; next }
+        /^\[/ { in_service = 0 }
+        in_service {
+            line = $0
+            sub(/^[[:space:]]+/, "", line)
+            if (index(line, key "=") == 1) {
+                sub("^" key "=", "", line)
+                print line
+            }
+        }
+    ' "$package_dir/packaging/systemd/rustsdcmcp.service"
+}
+
+require_service_directive() {
+    local key=$1 expected=$2
+    local -a values=()
+    mapfile -t values < <(service_directive_values "$key")
+    [[ ${#values[@]} -eq 1 && ${values[0]} == "$expected" ]] \
+        || die "unit $key directives are invalid"
+}
+
 validate_service() {
     local service="$package_dir/packaging/systemd/rustsdcmcp.service"
     local expected exec_start
     expected='/usr/local/bin/rustsdcmcp --device-mapping /etc/rustsdcmcp/sdc.json --transport streamable-http --host 127.0.0.1 --port 30032 --tokens-file /etc/rustsdcmcp/tokens.json --audit-format json --audit-journald --audit-redact devices=hmac --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key'
     exec_start=$(extract_exec_start | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//') || die 'unit has invalid ExecStart'
     [[ "$exec_start" == "$expected" ]] || die 'unit ExecStart does not match the package policy'
-    [[ $(grep -Fxc 'EnvironmentFile=/etc/rustsdcmcp/credentials.env' "$service") -eq 1 ]] || die 'unit credential path is invalid'
-    grep -Fqx 'ReadOnlyPaths=/etc/rustsdcmcp' "$service" || die 'unit config path is invalid'
-    grep -Fqx 'ReadWritePaths=/var/lib/rustsdcmcp' "$service" || die 'unit state path is invalid'
+    require_service_directive EnvironmentFile /etc/rustsdcmcp/credentials.env
+    require_service_directive ReadOnlyPaths /etc/rustsdcmcp
+    require_service_directive ReadWritePaths /var/lib/rustsdcmcp
 }
 
 validate_package() {
@@ -156,16 +180,6 @@ validate_package
 
 live_install=0
 [[ -z "$install_root" ]] && live_install=1
-if (( live_install )); then
-    if [[ "$skip_runtime_deps" != 1 ]]; then
-        [[ -f /etc/debian_version ]] || die 'live installation requires Debian'
-        apt-get update
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates
-    fi
-    if [[ "$skip_user" != 1 ]]; then
-        systemd-sysusers "$package_dir/packaging/systemd/rustsdcmcp.sysusers"
-    fi
-fi
 
 config_dir=$(target_path /etc/rustsdcmcp)
 state_dir=$(target_path /var/lib/rustsdcmcp)
@@ -176,6 +190,54 @@ journal_path=$(target_path /etc/systemd/journald.conf.d/mecmcp.conf)
 unit_path=$(target_path /etc/systemd/system/rustsdcmcp.service)
 tokens_path=$(target_path /etc/rustsdcmcp/tokens.json)
 hmac_path=$(target_path /etc/rustsdcmcp/audit-hmac.key)
+
+reject_unsafe_directory() {
+    local path=$1
+    if [[ -e "$path" || -L "$path" ]]; then
+        [[ -d "$path" && ! -L "$path" ]] || die "unsafe destination directory: $path"
+    fi
+}
+
+reject_unsafe_file() {
+    local path=$1
+    if [[ -e "$path" || -L "$path" ]]; then
+        [[ -f "$path" && ! -L "$path" ]] || die "unsafe destination file: $path"
+        [[ $(stat -c %h -- "$path") == 1 ]] || die "unsafe hard-linked destination file: $path"
+    fi
+}
+
+reject_unsafe_parent_dirs() {
+    local path=$1 parent
+    parent=$(dirname -- "$path")
+    while [[ "$parent" != / ]]; do
+        reject_unsafe_directory "$parent"
+        parent=$(dirname -- "$parent")
+    done
+    reject_unsafe_directory /
+}
+
+# Validate destination objects before apt, sysusers, tmpfiles, or any write.
+reject_unsafe_directory "$config_dir"
+reject_unsafe_directory "$state_dir"
+managed_destinations=(
+    "$bin_path" "$config_dir/sdc.json.example" "$sysusers_path" "$tmpfiles_path"
+    "$journal_path" "$unit_path" "$tokens_path" "$hmac_path"
+)
+for destination in "${managed_destinations[@]}"; do
+    reject_unsafe_file "$destination"
+    reject_unsafe_parent_dirs "$destination"
+done
+
+if (( live_install )); then
+    if [[ "$skip_runtime_deps" != 1 ]]; then
+        [[ -f /etc/debian_version ]] || die 'live installation requires Debian'
+        apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates
+    fi
+    if [[ "$skip_user" != 1 ]]; then
+        systemd-sysusers "$package_dir/packaging/systemd/rustsdcmcp.sysusers"
+    fi
+fi
 
 install -d -m 0750 "$config_dir"
 install -d -m 0700 "$state_dir"

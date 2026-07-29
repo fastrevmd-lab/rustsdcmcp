@@ -161,4 +161,25 @@ for _ in 1 2; do
         "$installer" >/dev/null
 done
 sha256sum -c "$work_dir/preserved.sha256" >/dev/null
+
+unsafe_root="$work_dir/unsafe-root"
+sentinel_dir="$work_dir/sentinels"
+mkdir -p "$unsafe_root/etc/rustsdcmcp" "$sentinel_dir"
+printf '%s\n' token-sentinel >"$sentinel_dir/tokens"
+printf '%s\n' hmac-sentinel >"$sentinel_dir/hmac"
+chmod 0644 "$sentinel_dir/tokens" "$sentinel_dir/hmac"
+ln -s "$sentinel_dir/tokens" "$unsafe_root/etc/rustsdcmcp/tokens.json"
+ln -s "$sentinel_dir/hmac" "$unsafe_root/etc/rustsdcmcp/audit-hmac.key"
+if SDCMCP_INSTALL_ROOT="$unsafe_root" \
+    SDCMCP_INSTALL_SKIP_USER=1 \
+    SDCMCP_INSTALL_SKIP_SYSTEMD_RELOAD=1 \
+    SDCMCP_INSTALL_SKIP_RUNTIME_DEPS=1 \
+    "$installer" >/dev/null 2>&1; then
+    printf '%s\n' 'installer accepted unsafe token or HMAC destination' >&2
+    exit 1
+fi
+printf '%s\n' token-sentinel | cmp -s - "$sentinel_dir/tokens"
+printf '%s\n' hmac-sentinel | cmp -s - "$sentinel_dir/hmac"
+[[ $(stat -c %a "$sentinel_dir/tokens") == 644 ]] || exit 1
+[[ $(stat -c %a "$sentinel_dir/hmac") == 644 ]] || exit 1
 printf '%s\n' 'package smoke passed'
