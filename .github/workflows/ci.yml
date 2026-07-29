@@ -54,7 +54,7 @@ jobs:
       - name: Install Trivy 0.70.0
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
-          version: 0.70.0
+          version: v0.70.0
       - name: Shellcheck packaging scripts
         run: shellcheck scripts/build-lab-package.sh scripts/verify-packaging.sh packaging/lxc/install.sh packaging/tests/package-smoke.sh
       - name: Verify packaging policy
