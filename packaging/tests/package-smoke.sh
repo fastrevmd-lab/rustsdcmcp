@@ -108,16 +108,22 @@ done <"$members_file"
     exit 1
 }
 
-tar -xOf "$archive" "$package_root/SBOM.cdx.json" \
-    | jq -e '
+sbom="$work_dir/SBOM.cdx.json"
+tar -xOf "$archive" "$package_root/SBOM.cdx.json" >"$sbom"
+jq -e '
         .bomFormat == "CycloneDX"
+        and (.metadata.component.name == "rustsdcmcp")
         and (.components | type == "array" and length > 0)
         and any(.components[]; .name == "serde")
         and any(.components[]; .name == "mecmcp-auth")
-    ' >/dev/null || {
+    ' "$sbom" >/dev/null || {
         printf '%s\n' 'archive SBOM is not a CycloneDX JSON document' >&2
         exit 1
     }
+if grep -Eq '"/(home|workspace|workspaces)/' "$sbom"; then
+    printf '%s\n' 'archive SBOM contains an absolute repository or worktree path' >&2
+    exit 1
+fi
 
 tar -xzf "$archive" -C "$work_dir" --no-same-owner --no-same-permissions
 installer="$work_dir/$package_root/packaging/lxc/install.sh"
@@ -231,6 +237,44 @@ if PATH="$fake_bin:$PATH" \
     exit 1
 fi
 [[ ! -e "$skip_user_root/etc/rustsdcmcp" ]] || exit 1
+
+# The live-install test seam is stage-only.  Every host-facing operation must
+# be disabled before the installer even inspects the package payload.
+strict_live_fake_bin="$work_dir/strict-live-fake-bin"
+mkdir -p "$strict_live_fake_bin"
+for command in apt-get systemctl systemd-sysusers systemd-tmpfiles getent; do
+    cat >"$strict_live_fake_bin/$command" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "${0##*/}" >>"$SDCMCP_STRICT_LIVE_MARKER"
+exit 0
+EOF
+    chmod 0755 "$strict_live_fake_bin/$command"
+done
+for missing_flag in SDCMCP_INSTALL_SKIP_USER SDCMCP_INSTALL_SKIP_RUNTIME_DEPS SDCMCP_INSTALL_SKIP_SYSTEMD_RELOAD; do
+    strict_live_root="$work_dir/strict-live-${missing_flag##*_}"
+    strict_live_marker="$work_dir/strict-live-${missing_flag##*_}.marker"
+    if env \
+        PATH="$strict_live_fake_bin:$PATH" \
+        SDCMCP_STRICT_LIVE_MARKER="$strict_live_marker" \
+        SDCMCP_INSTALL_ROOT="$strict_live_root" \
+        SDCMCP_INSTALL_TEST_LIVE=1 \
+        SDCMCP_INSTALL_SKIP_USER=1 \
+        SDCMCP_INSTALL_SKIP_RUNTIME_DEPS=1 \
+        SDCMCP_INSTALL_SKIP_SYSTEMD_RELOAD=1 \
+        "$missing_flag=0" \
+        "$installer" >/dev/null 2>&1; then
+        printf '%s\n' "installer accepted test-live mode without $missing_flag=1" >&2
+        exit 1
+    fi
+    [[ ! -e "$strict_live_marker" ]] || {
+        printf '%s\n' "test-live mode invoked a host-facing command without $missing_flag=1" >&2
+        exit 1
+    }
+    [[ ! -e "$strict_live_root/etc/rustsdcmcp" ]] || {
+        printf '%s\n' "test-live mode mutated its stage root without $missing_flag=1" >&2
+        exit 1
+    }
+done
 
 conflict_package="$work_dir/repeated-service-conflict"
 cp -a -- "$work_dir/$package_root" "$conflict_package"

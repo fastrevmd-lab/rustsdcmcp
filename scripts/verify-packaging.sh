@@ -105,6 +105,58 @@ if ! grep -Fq 's#/var/lib/sdcmcp/changeset-state.json#/var/lib/rustsdcmcp/change
     fail 'builder does not package the canonical state path'
 fi
 
+assert_builder_preserves_unsafe_output_entries() {
+    local fixture fake_bin commit archive checksum outside extra
+    fixture=$(mktemp -d)
+    fake_bin="$fixture/fake-bin"
+    mkdir -p "$fixture/scripts" "$fake_bin"
+    cp scripts/build-lab-package.sh "$fixture/scripts/build-lab-package.sh"
+    chmod 0755 "$fixture/scripts/build-lab-package.sh"
+    printf '%s\n' 'dist/' 'fake-bin/' 'outside/' >"$fixture/.gitignore"
+    git -C "$fixture" init -q
+    git -C "$fixture" config user.email packaging-test@example.invalid
+    git -C "$fixture" config user.name packaging-test
+    git -C "$fixture" add .gitignore scripts/build-lab-package.sh
+    git -C "$fixture" commit -qm 'test fixture'
+    commit=$(git -C "$fixture" rev-parse HEAD)
+    archive="$fixture/dist/$commit/rustsdcmcp_0.1.0-lab.$(date -u -d "@$(git -C "$fixture" show -s --format=%ct HEAD)" +%Y%m%d).${commit:0:12}_amd64.tar.gz"
+    checksum="${archive}.sha256"
+    cat >"$fake_bin/trivy" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' 'Version: 0.70.0'
+EOF
+    cat >"$fake_bin/cargo" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod 0755 "$fake_bin/trivy" "$fake_bin/cargo"
+
+    outside="$fixture/outside"
+    mkdir -p "$outside" "$fixture/dist"
+    printf '%s\n' sentinel-archive >"$outside/$(basename -- "$archive")"
+    printf '%s\n' sentinel-checksum >"$outside/$(basename -- "$checksum")"
+    ln -s "$outside" "$fixture/dist/$commit"
+    if (cd "$fixture" && PATH="$fake_bin:$PATH" scripts/build-lab-package.sh) >/dev/null 2>&1; then
+        fail 'builder accepted a symlinked commit artifact directory'
+    fi
+    [[ -f "$outside/$(basename -- "$archive")" && -f "$outside/$(basename -- "$checksum")" ]] \
+        || fail 'builder removed artifacts through a symlinked commit directory'
+
+    rm "$fixture/dist/$commit"
+    mkdir -p "$fixture/dist/$commit"
+    printf '%s\n' sentinel-archive >"$archive"
+    printf '%s\n' sentinel-checksum >"$checksum"
+    extra="$fixture/dist/$commit/unexpected-artifact"
+    printf '%s\n' sentinel-extra >"$extra"
+    if (cd "$fixture" && PATH="$fake_bin:$PATH" scripts/build-lab-package.sh) >/dev/null 2>&1; then
+        fail 'builder accepted an artifact directory with an extra entry'
+    fi
+    [[ -f "$archive" && -f "$checksum" && -f "$extra" ]] \
+        || fail 'builder removed stale artifacts before rejecting an extra entry'
+    rm -rf -- "$fixture"
+}
+assert_builder_preserves_unsafe_output_entries
+
 verification_root=$(mktemp -d)
 trap 'rm -rf -- "$verification_root"' EXIT
 install -d "$verification_root/etc/systemd/system" "$verification_root/usr/local/bin" \

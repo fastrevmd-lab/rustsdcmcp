@@ -25,7 +25,12 @@ if [[ -n "$install_root" ]]; then
     install_root=$(realpath -m -- "$install_root")
     [[ "$install_root" != / ]] || die 'SDCMCP_INSTALL_ROOT must not resolve to /'
 fi
-[[ "$test_live" != 1 || -n "$install_root" ]] || die 'SDCMCP_INSTALL_TEST_LIVE requires a stage root'
+if [[ "$test_live" == 1 ]]; then
+    [[ -n "$install_root" ]] || die 'SDCMCP_INSTALL_TEST_LIVE requires a stage root'
+    [[ "$skip_user" == 1 ]] || die 'SDCMCP_INSTALL_TEST_LIVE requires SDCMCP_INSTALL_SKIP_USER=1'
+    [[ "$skip_runtime_deps" == 1 ]] || die 'SDCMCP_INSTALL_TEST_LIVE requires SDCMCP_INSTALL_SKIP_RUNTIME_DEPS=1'
+    [[ "$skip_reload" == 1 ]] || die 'SDCMCP_INSTALL_TEST_LIVE requires SDCMCP_INSTALL_SKIP_SYSTEMD_RELOAD=1'
+fi
 
 package_dir=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
 target_path() {
@@ -89,16 +94,20 @@ validate_sbom() {
     if command -v jq >/dev/null; then
         jq -e '
             .bomFormat == "CycloneDX"
+            and (.metadata.component.name == "rustsdcmcp")
             and (.components | type == "array" and length > 0)
             and any(.components[]; .name == "serde")
             and any(.components[]; .name == "mecmcp-auth")
-        ' "$sbom" >/dev/null || die 'SBOM lacks required CycloneDX components'
+        ' "$sbom" >/dev/null || die 'SBOM lacks required CycloneDX metadata or components'
     else
         grep -Eq '"bomFormat"[[:space:]]*:[[:space:]]*"CycloneDX"' "$sbom" \
             && grep -Fq '"serde"' "$sbom" \
             && grep -Fq '"mecmcp-auth"' "$sbom" \
+            && grep -Fq '"name": "rustsdcmcp"' "$sbom" \
             || die 'SBOM does not identify as CycloneDX'
     fi
+    ! grep -Eq '"/(home|workspace|workspaces)/' "$sbom" \
+        || die 'SBOM contains an absolute repository or worktree path'
 }
 
 validate_config() {

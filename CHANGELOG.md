@@ -15,3 +15,5 @@
   journald forwarding exception, and the public-release compatibility blocker.
 - Bind each lab package, checksum, and CI upload to its exact full source
   commit directory; require a Cargo-derived CycloneDX SBOM.
+- Fail closed for staged live-installer tests and harden commit artifact output
+  directories, SBOM metadata, and upload allowlists.

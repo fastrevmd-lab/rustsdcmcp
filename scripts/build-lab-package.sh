@@ -5,7 +5,16 @@
 set -euo pipefail
 umask 022
 
+fail() {
+    printf '%s\n' "lab package build failed: $*" >&2
+    exit 1
+}
+
+command -v realpath >/dev/null || fail 'realpath is required to validate artifact output paths'
+command -v jq >/dev/null || fail 'jq is required to normalize and validate the CycloneDX SBOM'
 repo_root=$(git rev-parse --show-toplevel)
+repo_root=$(realpath -e -- "$repo_root")
+[[ -d "$repo_root" && ! -L "$repo_root" ]] || fail 'repository root is not a real directory'
 cd "$repo_root"
 
 if [[ ${SDCMCP_ALLOW_DIRTY:-0} != 1 ]] && [[ -n $(git status --porcelain) ]]; then
@@ -20,15 +29,52 @@ trivy_version=$(trivy --version | sed -n 's/^Version: //p' | head -n 1)
 }
 
 git_commit=$(git rev-parse HEAD)
+[[ "$git_commit" =~ ^[0-9a-f]{40}$ ]] || fail 'HEAD must resolve to a full lowercase Git commit'
 git_sha12=${git_commit:0:12}
 source_date_epoch=$(git show -s --format=%ct HEAD)
 package_date=$(date -u -d "@$source_date_epoch" +%Y%m%d)
 package_root="rustsdcmcp_0.1.0-lab.${package_date}.${git_sha12}_amd64"
-dist_dir="$repo_root/dist/$git_commit"
-archive="$dist_dir/${package_root}.tar.gz"
+repo_dist="$repo_root/dist"
+if [[ -e "$repo_dist" || -L "$repo_dist" ]]; then
+    [[ -d "$repo_dist" && ! -L "$repo_dist" ]] || fail "artifact root is not a real directory: $repo_dist"
+else
+    mkdir -m 0755 -- "$repo_dist"
+fi
+repo_dist=$(realpath -e -- "$repo_dist")
+[[ "$repo_dist" == "$repo_root/dist" ]] || fail 'artifact root resolves outside the physical repository root'
 
-mkdir -p "$dist_dir"
-rm -f -- "$archive" "${archive}.sha256"
+dist_dir="$repo_dist/$git_commit"
+if [[ -e "$dist_dir" || -L "$dist_dir" ]]; then
+    [[ -d "$dist_dir" && ! -L "$dist_dir" ]] || fail "commit artifact directory is not a real directory: $dist_dir"
+else
+    mkdir -m 0755 -- "$dist_dir"
+fi
+dist_dir=$(realpath -e -- "$dist_dir")
+[[ "$dist_dir" == "$repo_dist/$git_commit" && $(dirname -- "$dist_dir") == "$repo_dist" ]] \
+    || fail 'commit artifact directory is not the immediate commit child of dist'
+
+archive="$dist_dir/${package_root}.tar.gz"
+checksum="${archive}.sha256"
+validate_output_entries() {
+    local entry type count=0
+    declare -A allowed=(
+        ["$(basename -- "$archive")"]=1
+        ["$(basename -- "$checksum")"]=1
+    )
+    while IFS=$'\t' read -r entry type; do
+        [[ -n "$entry" && "$type" == f && ${allowed[$entry]+yes} ]] \
+            || fail "commit artifact directory contains an unsafe or unexpected entry: $dist_dir/$entry"
+        [[ ! -L "$dist_dir/$entry" ]] || fail "commit artifact directory contains a symlink: $dist_dir/$entry"
+        ((count += 1))
+    done < <(find -P "$dist_dir" -mindepth 1 -maxdepth 1 -printf '%f\t%y\n')
+    if [[ ${1:-allow-stale} == exact ]]; then
+        [[ $count -eq 2 && -f "$archive" && ! -L "$archive" && -f "$checksum" && ! -L "$checksum" ]] \
+            || fail "commit artifact directory must contain exactly the archive and checksum: $dist_dir"
+    fi
+}
+validate_output_entries
+
+rm -f -- "$archive" "$checksum"
 artifact_complete=0
 build_dir=
 cleanup() {
@@ -36,7 +82,7 @@ cleanup() {
         rm -rf -- "$build_dir"
     fi
     if [[ $artifact_complete != 1 ]]; then
-        rm -f -- "$archive" "${archive}.sha256"
+        rm -f -- "$archive" "$checksum"
     fi
 }
 
@@ -83,6 +129,18 @@ EOF
 trivy filesystem --scanners vuln --format cyclonedx \
     --skip-dirs target,dist,.git \
     --output "$stage_dir/SBOM.cdx.json" "$repo_root"
+sbom_tmp="$stage_dir/SBOM.cdx.json.tmp"
+jq '.metadata.component.name = "rustsdcmcp"' "$stage_dir/SBOM.cdx.json" >"$sbom_tmp"
+mv -- "$sbom_tmp" "$stage_dir/SBOM.cdx.json"
+jq -e '
+    .bomFormat == "CycloneDX"
+    and (.metadata.component.name == "rustsdcmcp")
+    and (.components | type == "array" and length > 0)
+    and any(.components[]; .name == "serde")
+    and any(.components[]; .name == "mecmcp-auth")
+' "$stage_dir/SBOM.cdx.json" >/dev/null || fail 'normalized SBOM lacks required metadata or dependencies'
+! grep -Fq -- "$repo_root" "$stage_dir/SBOM.cdx.json" \
+    || fail 'SBOM contains an absolute repository or worktree path'
 chmod 0644 "$stage_dir/SBOM.cdx.json"
 
 (
@@ -96,14 +154,10 @@ chmod 0644 "$stage_dir/SBOM.cdx.json"
 )
 (
     cd "$dist_dir"
-    sha256sum "$(basename -- "$archive")" >"$(basename -- "$archive").sha256"
-    sha256sum -c "$(basename -- "$archive").sha256"
+    sha256sum "$(basename -- "$archive")" >"$(basename -- "$checksum")"
+    sha256sum -c "$(basename -- "$checksum")"
 )
-mapfile -t output_archives < <(find "$dist_dir" -maxdepth 1 -type f -name 'rustsdcmcp_*_amd64.tar.gz' -print)
-[[ ${#output_archives[@]} -eq 1 && ${output_archives[0]} == "$archive" && -f "${archive}.sha256" ]] || {
-    printf '%s\n' "commit artifact directory must contain exactly one archive/checksum pair: $dist_dir" >&2
-    exit 1
-}
+validate_output_entries exact
 packaging/tests/package-smoke.sh "$archive"
 artifact_complete=1
 printf '%s\n' "built $archive"

@@ -1157,7 +1157,7 @@ Jobs:
 
 1. `rust`: format, clippy, build, tests, docs on Rust 1.97.
 2. `msrv`: `cargo +1.88 check --workspace --all-targets --locked`.
-3. `packaging`: install shellcheck and Trivy 0.70.0, verify scripts, build package, smoke test, inspect glibc, upload `dist/*`.
+3. `packaging`: install shellcheck and Trivy 0.70.0, verify scripts, build package, smoke test, inspect glibc, upload `dist/<full-source-commit>/*`.
 
 Use `ubuntu-24.04` so its glibc floor remains compatible with Debian 13. For pull requests, checkout `github.event.pull_request.head.sha`; for pushes, checkout `github.sha`; record `git rev-parse HEAD`, build only `dist/<that-full-source-commit>/`, and upload it as `rustsdcmcp-lab-<that-full-source-commit>` with `if-no-files-found: error`.
 
