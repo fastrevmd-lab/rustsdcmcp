@@ -2,6 +2,7 @@
 
 use mecmcp_changeset::{
     ChangeSetState, ChangesetCoordinator, OperationLimits, StagedRecovery,
+    mutation_policy_signature,
 };
 use serde_json::Value;
 use std::{fs, time::Duration};
@@ -43,6 +44,14 @@ async fn released_coordinator_reads_036_state_without_rewriting_or_waiver_output
             "preview_digest": format!("sha256:{}", "b".repeat(64))
         }])
     );
+    let policy_signature = mutation_policy_signature(
+        "sdc-policy-deploy-v1:fixture-tenant:https://fixture.invalid",
+    );
+    assert_eq!(
+        policy_signature,
+        "sha256:60de6b705166a8c38449ce419e1ff954f8651f9dbb7bc64fbcaf0944d9e1ded5"
+    );
+    assert_eq!(record["policy_signature"], policy_signature);
 
     let directory = tempfile::tempdir().expect("temporary fixture directory");
     let state_path = directory.path().join("changeset-state.json");
