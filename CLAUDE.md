@@ -5,10 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this repo is
 
 `rustsdcmcp` is an MCP server for **HPE Juniper Security Director Cloud** (SDC).
-The repository is currently a **scaffold** — README, LICENSE, branding, and
-toolchain pin only. There is no Cargo workspace, no crates, and no build/test
-commands yet. Do not invent build instructions; add them here when the
-workspace actually lands.
+The repository is a Rust workspace with `rustsdcmcp-core` (SDC client, models,
+and change adapter) and `rustsdcmcp` (rmcp handler and runtime composition).
+Use `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D
+warnings`, and `cargo fmt --all --check`.
 
 ## The one architectural rule
 
@@ -16,17 +16,17 @@ This repo is a **consumer** of [`mecmcp`](https://github.com/fastrevmd-lab/mecmc
 (local checkout: `~/Projects/mecmcp`), the vendor-neutral Rust foundation shared
 across the mechub MCP server family. The split is not negotiable:
 
-- **Upstream in `mecmcp`:** token auth/scopes/grants (`mecmcp-auth`), audit and
+- **Consumed from `mecmcp`:** token auth/scopes/grants (`mecmcp-auth`), audit and
   redaction (`mecmcp-audit`), streamable-HTTP transport and limits
   (`mecmcp-transport`), CLI/TLS/shutdown (`mecmcp-runtime`), change-control
   state machine (`mecmcp-changeset`), inventory (`mecmcp-inventory`).
-- **Here:** the SDC REST client, its OAuth 2.0 / API-key auth flow, response
-  models, and the MCP tool surface built on them.
+- **Here:** the SDC REST client, exact opaque OAuth-token/API-key headers,
+  response models, endpoint allowlist, and MCP tool surface.
 
-If you are about to write generic auth, transport, rate-limiting, or
-change-control code in this repo, stop — it belongs in `mecmcp`. `mecmcp` is
-itself mid-extraction (only `mecmcp-auth` exists so far); its `PLAN.md` and
-`ANALYSIS.md` describe what lands when.
+Do not modify `mecmcp` from this repository task. Missing shared cloud-client
+foundations are tracked in mecmcp#90, and target-neutral auth vocabulary in
+mecmcp#91. Keep temporary compatibility code product-specific and isolated;
+do not expand it into a competing shared framework.
 
 Sibling reference implementations for the *shape* of a mechub MCP server:
 `~/Projects/RustJunosMCP` (NETCONF/SSH, runtime hardening) and
@@ -45,7 +45,8 @@ added here:
 - Read-only tools land first and stay the majority of the surface.
 - Response sizes are bounded — an estate-wide query will return far more than a
   single-device one.
-- Bearer tokens carry explicit tool **and tenant** scopes.
+- HTTP bearer tokens carry explicit tool **and tenant** scopes. Write tools
+  reject unauthenticated stdio/loopback callers.
 
 ## The API surface is pinned — read it, don't re-derive it
 

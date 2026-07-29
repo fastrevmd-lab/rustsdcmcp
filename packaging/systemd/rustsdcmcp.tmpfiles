@@ -1,0 +1,2 @@
+d /etc/rustsdcmcp 0750 root rustsdcmcp -
+d /var/lib/rustsdcmcp 0700 rustsdcmcp rustsdcmcp -

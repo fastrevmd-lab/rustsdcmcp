@@ -1,0 +1,58 @@
+[workspace]
+members = ["crates/rustsdcmcp-core", "crates/rustsdcmcp"]
+default-members = ["crates/rustsdcmcp-core", "crates/rustsdcmcp"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/fastrevmd-lab/rustsdcmcp"
+authors = ["fastrevmd-lab"]
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "deny"
+todo = "deny"
+unwrap_used = "warn"
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+axum = "0.8"
+axum-server = { version = "0.8", default-features = false, features = ["tls-rustls-no-provider"] }
+clap = { version = "4", features = ["derive"] }
+futures = "0.3"
+hex = "0.4"
+http = "1"
+reqwest = { version = "0.13", default-features = false, features = ["json", "query", "stream", "rustls-no-provider"] }
+rmcp = { version = "2", features = ["server", "transport-io", "transport-streamable-http-server", "transport-streamable-http-server-session"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
+tower = { version = "0.5", features = ["util"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2"
+zeroize = "1"
+
+mecmcp-audit = { version = "0.3.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.6" }
+mecmcp-auth = { version = "0.3.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.6" }
+mecmcp-changeset = { version = "0.3.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.6" }
+mecmcp-runtime = { version = "0.3.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.6" }
+mecmcp-transport = { version = "0.3.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.6" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

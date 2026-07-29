@@ -99,9 +99,11 @@ The API already separates rendering a change from applying it:
 
 NAT policies expose the identical set under `/api/v1/policies/nat/{id}/…`.
 
-Request bodies carry both `deploy_targets` and `undeploy_targets`, and the spec
-states that for each device **undeploy targets are processed first**, then
-deploy targets. A `target_type` of `DEVICE` selects the target.
+Preview request entries carry both `deploy_targets` and `undeploy_targets`, and
+the spec states that for each device **undeploy targets are processed first**,
+then deploy targets. A `target_type` of `DEVICE` selects the target. The batch
+deploy request is a separate shape containing only `policy_id` and
+`policy_type`; the implementation preserves that distinction exactly.
 
 This maps cleanly onto `mecmcp-changeset`: preview produces the artifact to
 digest and show a human, deploy is the apply step. Preview output is what the
@@ -182,8 +184,9 @@ Not answered by the spec; do not write code that assumes an answer:
   response headers are sent. Every operation declares `"headers": {}`.
 - Whether `x-oauth2-token` expects a raw JWT or an opaque token, and the token
   endpoint / refresh flow for the OAuth path.
-- Concrete polling guidance for async jobs — no documented interval, timeout,
-  or terminal-state enumeration for `*_id` status endpoints.
+- Concrete polling interval and timeout guidance. The status schema does
+  enumerate `PENDING`, `IN_PROGRESS`, `COMPLETED`, `PARTIAL_SUCCESS`, and
+  `FAILED`, but does not recommend how often or how long a client should poll.
 - Whether `409` is safely retryable per operation.
 - Region-specific base URLs. The spec declares exactly one server; whether
   other tenants land on a different host is unconfirmed.
