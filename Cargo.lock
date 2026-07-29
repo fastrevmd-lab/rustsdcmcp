@@ -1103,8 +1103,8 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "mecmcp-audit"
-version = "0.3.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=changeset-v0.3.6#93ab63d7c2fad649112807378f92fcc26cce73c6"
+version = "0.3.7"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=changeset-v0.3.7#85137c509fe1803b87e8636462f0392ce05072ce"
 dependencies = [
  "hmac",
  "mecmcp-auth",
@@ -1121,8 +1121,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-auth"
-version = "0.3.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=changeset-v0.3.6#93ab63d7c2fad649112807378f92fcc26cce73c6"
+version = "0.3.7"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=changeset-v0.3.7#85137c509fe1803b87e8636462f0392ce05072ce"
 dependencies = [
  "arc-swap",
  "chrono",
@@ -1139,8 +1139,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-changeset"
-version = "0.3.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=changeset-v0.3.6#93ab63d7c2fad649112807378f92fcc26cce73c6"
+version = "0.3.7"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=changeset-v0.3.7#85137c509fe1803b87e8636462f0392ce05072ce"
 dependencies = [
  "async-trait",
  "getrandom 0.4.3",
@@ -1158,8 +1158,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-runtime"
-version = "0.3.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=changeset-v0.3.6#93ab63d7c2fad649112807378f92fcc26cce73c6"
+version = "0.3.7"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=changeset-v0.3.7#85137c509fe1803b87e8636462f0392ce05072ce"
 dependencies = [
  "anyhow",
  "clap",
@@ -1172,8 +1172,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-transport"
-version = "0.3.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=changeset-v0.3.6#93ab63d7c2fad649112807378f92fcc26cce73c6"
+version = "0.3.7"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=changeset-v0.3.7#85137c509fe1803b87e8636462f0392ce05072ce"
 dependencies = [
  "axum",
  "dashmap",
