@@ -1119,7 +1119,7 @@ bash -n scripts/build-lab-package.sh scripts/verify-packaging.sh \
   packaging/lxc/install.sh packaging/tests/package-smoke.sh
 scripts/verify-packaging.sh
 scripts/build-lab-package.sh
-sha256sum -c dist/*.sha256
+(cd dist && sha256sum -c *.sha256)
 packaging/tests/package-smoke.sh dist/rustsdcmcp_*_amd64.tar.gz
 ```
 
@@ -1269,7 +1269,7 @@ Use GitHub Actions status/log tooling. Fix failures with the systematic-debuggin
 Download the packaging-job artifact for the exact PR head. Verify:
 
 ```bash
-sha256sum -c dist/*.sha256
+(cd dist && sha256sum -c *.sha256)
 tar -xOf dist/rustsdcmcp_*_amd64.tar.gz '*/BUILD-INFO'
 ```
 
@@ -1509,12 +1509,14 @@ Create the local output file first:
 install -m 0600 /dev/null /home/mharman/.config/rustsdcmcp/mcp-token
 ```
 
-Run the token command as the service user and redirect stdout directly to that file:
+Run the token command as root and redirect stdout directly to that file. mecmcp
+atomically replaces `tokens.json` in its existing directory, so root must perform
+the same-directory write while preserving the existing `rustsdcmcp`-owned `0600`
+destination:
 
 ```bash
 ssh root@192.168.1.202 \
-  'pct exec 606 -- runuser -u rustsdcmcp -- \
-   /usr/local/bin/rustsdcmcp token add \
+  'pct exec 606 -- /usr/local/bin/rustsdcmcp token add \
    --tokens-file /etc/rustsdcmcp/tokens.json \
    --device-mapping /etc/rustsdcmcp/sdc.json \
    --name lab-read \

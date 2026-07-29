@@ -141,6 +141,23 @@ them by exact name.
 See [`docs/operations.md`](docs/operations.md) for deployment and recovery
 details.
 
+## Lab package status
+
+The package is a **lab-only** archive, not a public release. Its name is
+`rustsdcmcp_0.1.0-lab.YYYYMMDD.<source-commit-12>_amd64.tar.gz`; its sibling
+checksum binds that exact archive. Verify the checksum from the directory that
+contains both files, because the checksum records only the archive basename:
+
+```console
+(cd dist && sha256sum -c *.sha256)
+```
+
+The package pins `mecmcp` to `changeset-v0.3.6`. Public `v0.1.0` is blocked
+until all 59 temporary compatibility symbols in the
+[`mecmcp compatibility ledger`](docs/mecmcp-compatibility.md) are replaced by
+one coherent upstream `mecmcp` release. The lab artifact must not be promoted,
+tagged, or presented as a public release while that blocker remains.
+
 ## Design commitments
 
 - **Read before write.** Every mutating tool is reachable only through a

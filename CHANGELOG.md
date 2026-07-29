@@ -9,3 +9,7 @@
   composition.
 - Add fixture tests, configuration example, operations guide, and security
   policy.
+- Add Rust 1.97/MSRV 1.88, packaging, and security CI gates for the lab-only
+  package.
+- Document the lab artifact workflow, loopback-only listener, token ownership,
+  journald forwarding exception, and the public-release compatibility blocker.

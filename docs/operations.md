@@ -1,5 +1,82 @@
 # Operations
 
+## Lab deployment boundary
+
+This package is for a controlled lab deployment only. Its archive is named
+`rustsdcmcp_0.1.0-lab.YYYYMMDD.<source-commit-12>_amd64.tar.gz` and is paired
+with a sibling `.sha256` file. The checksum contains the archive basename, so
+verify it from the sibling directory rather than the repository root:
+
+```console
+(cd dist && sha256sum -c *.sha256)
+```
+
+`mecmcp` is pinned to `changeset-v0.3.6`. This repository still has 59
+temporary compatibility symbols, each tracked in
+[`mecmcp-compatibility.tsv`](mecmcp-compatibility.tsv). There is no public
+`v0.1.0` release: do not publish, tag, or promote the lab archive until one
+coherent upstream `mecmcp` release replaces every ledger entry.
+
+## Installed layout and configuration
+
+The installer creates the service account and these paths:
+
+| Path | Required purpose and final mode/owner |
+|---|---|
+| `/etc/rustsdcmcp/sdc.json` | Live SDC configuration; `0640 root:rustsdcmcp` |
+| `/etc/rustsdcmcp/credentials.env` | SDC credential environment; `0600 root:root` |
+| `/etc/rustsdcmcp/tokens.json` | Digest-only bearer-token store; `0600 rustsdcmcp:rustsdcmcp` |
+| `/etc/rustsdcmcp/audit-hmac.key` | Audit redaction key; `0600 rustsdcmcp:rustsdcmcp` |
+| `/var/lib/rustsdcmcp/changeset-state.json` | Durable change-set state under the `0700 rustsdcmcp:rustsdcmcp` state directory |
+
+The package supplies only `sdc.json.example`; an operator must create the live
+configuration and credentials before manually starting the service. Never put
+the credential into JSON or record it in command history.
+
+## Listener and lab access
+
+The systemd unit binds the Streamable HTTP endpoint only to
+`http://127.0.0.1:30032/mcp`. Do not expose this listener directly. The lab DNS
+name is exactly `rustsdcmcp.mechub.org`; access it through an authenticated SSH
+tunnel from an authorized workstation:
+
+```console
+ssh -N -L 30032:127.0.0.1:30032 root@rustsdcmcp.mechub.org
+```
+
+Point the local MCP client at `http://127.0.0.1:30032/mcp` while the tunnel is
+open.
+
+## Initial read-only token
+
+Create the initial token as root, and redirect the one-time token value to a
+mode-`0600` local file without displaying it. Do **not** use `runuser`: mecmcp
+atomically writes in `/etc/rustsdcmcp`, preserving the existing
+`rustsdcmcp`-owned `0600` destination while root has the authority needed to
+perform the same-directory replacement.
+
+```console
+sudo /usr/local/bin/rustsdcmcp token add \
+  --tokens-file /etc/rustsdcmcp/tokens.json \
+  --device-mapping /etc/rustsdcmcp/sdc.json \
+  --name lab-read \
+  --devices production \
+  --tools get_sdc_tenant_scope,list_sdc_devices,get_sdc_device,list_sdc_firewall_policies,get_sdc_firewall_policy,list_sdc_nat_policies,get_sdc_nat_policy,list_sdc_resources,get_sdc_resource,get_sdc_preview_status,get_sdc_deploy_status,get_sdc_preview_device_result,get_sdc_deploy_device_result,get_sdc_change_set \
+  --actor-type human > /secure/local/path/rustsdcmcp-lab-read-token
+```
+
+This is an explicit 14-tool read-only grant; do not use wildcard tool scopes
+and do not add a write tool to the initial lab token. Confirm afterward that
+`/etc/rustsdcmcp/tokens.json` remains `0600 rustsdcmcp:rustsdcmcp`.
+
+## Audit retention and forwarding
+
+The package installs persistent journald storage with a 512 MiB cap and emits
+redacted JSON audit events to journald. Remote journal forwarding is required
+before production traffic. The approved lab deployment has a temporary
+exception: it may retain the persistent local journal without remote forwarding
+while it remains lab-only; review that exception before any promotion.
+
 ## Startup
 
 `rustsdcmcp` loads one JSON tenant configuration through the shared runtime's
