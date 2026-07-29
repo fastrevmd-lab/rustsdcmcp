@@ -200,4 +200,16 @@ fi
 printf '%s\n' parent-sentinel | cmp -s - "$parent_sentinel_dir/sentinel"
 [[ $(stat -c %a "$parent_sentinel_dir/sentinel") == 644 ]] || exit 1
 [[ ! -e "$parent_sentinel_dir/lib/rustsdcmcp" ]] || exit 1
+
+conflict_package="$work_dir/repeated-service-conflict"
+cp -a -- "$work_dir/$package_root" "$conflict_package"
+printf '%s\n' ' [Service] ' 'ReadOnlyPaths = /tmp' >>"$conflict_package/packaging/systemd/rustsdcmcp.service"
+if SDCMCP_INSTALL_ROOT="$work_dir/repeated-service-root" \
+    SDCMCP_INSTALL_SKIP_USER=1 \
+    SDCMCP_INSTALL_SKIP_SYSTEMD_RELOAD=1 \
+    SDCMCP_INSTALL_SKIP_RUNTIME_DEPS=1 \
+    "$conflict_package/packaging/lxc/install.sh" >/dev/null 2>&1; then
+    printf '%s\n' 'installer accepted a repeated whitespace Service section conflict' >&2
+    exit 1
+fi
 printf '%s\n' 'package smoke passed'

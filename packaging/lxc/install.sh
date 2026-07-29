@@ -112,8 +112,8 @@ validate_config() {
 
 extract_exec_start() {
     awk '
-        /^\[Service\]$/ { in_service = 1; next }
-        /^\[/ { in_service = 0 }
+        /^[[:space:]]*\[Service\][[:space:]]*$/ { in_service = 1; next }
+        /^[[:space:]]*\[[^]]+\][[:space:]]*$/ { in_service = 0 }
         in_service && $0 ~ /^[[:space:]]*ExecStart[[:space:]]*=/ {
             if (found++) exit 2
             line = $0
@@ -133,8 +133,8 @@ extract_exec_start() {
 service_directive_values() {
     local key=$1
     awk -v key="$key" '
-        /^\[Service\]$/ { in_service = 1; next }
-        /^\[/ { in_service = 0 }
+        /^[[:space:]]*\[Service\][[:space:]]*$/ { in_service = 1; next }
+        /^[[:space:]]*\[[^]]+\][[:space:]]*$/ { in_service = 0 }
         in_service {
             line = $0
             sub(/^[[:space:]]+/, "", line)
