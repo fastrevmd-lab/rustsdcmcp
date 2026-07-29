@@ -41,14 +41,18 @@ foundation shared by the mechub MCP server family. This repository is a
 | Token mint/digest/verify, `tokens.json`, scopes, grants, caller context | `mecmcp-auth` |
 | Attribution, audit events, redaction, sinks | `mecmcp-audit` |
 | Streamable-HTTP transport, host/Origin checks, rate + concurrency limits | `mecmcp-transport` |
-| CLI skeleton, TLS bootstrap, signals, graceful shutdown | `mecmcp-runtime` |
+| CLI skeleton, listener validation, token commands, signals | `mecmcp-runtime` |
+| Listener TLS loading and crypto-provider boundary | `mecmcp-transport` |
 | Plan → digest → approve → apply → verify change control | `mecmcp-changeset` |
-| Device/tenant registry | `mecmcp-inventory` |
-| **SDC REST client, OAuth 2.0 / API-key auth, response models, tool surface** | **this repo** |
+| Bounded MCP result conversion and handler authorization adapters | `mecmcp-server` |
+| **SDC REST client, opaque OAuth-token/API-key headers, response models, endpoint catalog, tool surface** | **this repo** |
 
-Everything that is *not* specific to the Security Director Cloud API is
-upstream. If you find yourself writing generic auth or transport code here,
-it belongs in `mecmcp` instead.
+Two proposed shared abstractions are deliberately tracked as issues rather than
+unpublished cross-repository code: [mecmcp#90](https://github.com/fastrevmd-lab/mecmcp/issues/90)
+for cloud-client foundations and
+[mecmcp#91](https://github.com/fastrevmd-lab/mecmcp/issues/91) for
+target-neutral token vocabulary. Until those land, the corresponding local
+code is isolated and SDC-specific; it is not treated as a new family standard.
 
 ## The API
 
@@ -82,34 +86,77 @@ Primary references:
 
 ## Status
 
-**Scaffold + pinned API surface.** No crates, no binary, no tool surface yet —
-nothing here is usable against a real tenant. What exists is the verified
-groundwork: the vendored OpenAPI spec, a generated endpoint inventory, and the
-structural constraints the client must honour.
+The workspace now builds an MCP server with 17 tools:
 
-Next, in order:
+- bounded tenant, device, firewall-policy, NAT-policy, and shared-object reads;
+- explicit preview/deploy job and per-device result reads;
+- policy deployment only through `prepare_sdc_policy_deploy` →
+  `approve_sdc_change_set` → `apply_sdc_change_set`;
+- startup verification that the configured credential resolves to the expected
+  tenant ID;
+- stdio and hardened Streamable HTTP composition from `mecmcp`.
 
-1. ~~Pin the verified SDC API surface into `docs/`.~~ Done —
-   [`docs/sdc-api/`](docs/sdc-api/README.md).
-2. Stand up the Cargo workspace against the `mecmcp` crates as they publish.
-3. Read-only tools first — inventory, policy read, device state — under bearer
-   auth with per-token scopes.
-4. Mutating tools only behind `mecmcp-changeset`, never as direct writes.
+The implementation is fixture-tested against the pinned OpenAPI shapes. It has
+not yet been exercised against a live SDC tenant, so the API questions listed
+in [`docs/sdc-api/README.md`](docs/sdc-api/README.md#still-unverified) remain
+open.
+
+## Build and configure
+
+Rust 1.88 is pinned by `rust-toolchain.toml`.
+
+```console
+cargo build --release
+cargo test --workspace
+```
+
+Copy [`examples/sdc.example.json`](examples/sdc.example.json), set the named
+credential environment variable in the server process, and keep the secret
+itself out of JSON:
+
+```console
+export SDC_API_TOKEN='...'
+cargo run -p rustsdcmcp -- -f /absolute/path/to/sdc.json
+```
+
+The shared runtime currently names `-f`/`--device-mapping`; in this
+management-plane consumer it selects the SDC configuration file. A neutral
+spelling is tracked by mecmcp#91.
+
+Streamable HTTP requires an absolute token-store path unless explicit
+loopback-only no-auth mode is selected:
+
+```console
+cargo run -p rustsdcmcp -- \
+  -f /etc/sdcmcp/sdc.json \
+  --transport streamable-http \
+  --tokens-file /etc/sdcmcp/tokens.json
+```
+
+Use the shared `token` subcommand to mint scoped credentials. Until
+mecmcp#91 lands, the tenant allowlist is passed through the historical
+`--devices` flag. Wildcard tool scopes exclude the three write tools; grant
+them by exact name.
+
+See [`docs/operations.md`](docs/operations.md) for deployment and recovery
+details.
 
 ## Design commitments
 
 - **Read before write.** Every mutating tool is reachable only through a
   plan → digest → approve → apply lifecycle. No tool writes to a tenant on a
   single unattested call.
-- **Scoped tokens.** Bearer tokens carry explicit tool and tenant scopes;
-  an unscoped token is a configuration error, not a convenience.
+- **Scoped tokens.** HTTP bearer tokens carry explicit tool and tenant scopes.
+  Write tools require authentication and exact tool grants; unauthenticated
+  stdio/loopback modes are read-only.
 - **Bounded I/O.** Request and response sizes are capped. A management-plane
   API will happily hand back an estate-sized payload; the server will not.
 - **Auditable by construction.** Attribution and redaction come from
   `mecmcp-audit`, so every call is traceable to a caller without leaking
   credentials into logs.
-- **No secrets in the repo.** SDC API keys and OAuth client secrets live in
-  operator-managed files outside version control.
+- **No secrets in the repo.** SDC API keys and opaque OAuth tokens are supplied
+  through an operator-named process environment variable and are redacted from
+  formatting and audit output.
 
 ## License
 
