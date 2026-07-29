@@ -30,6 +30,7 @@ mecmcp-runtime.workspace = true
 mecmcp-transport.workspace = true
 
 [dev-dependencies]
+syn = { version = "2", features = ["full"] }
 tower.workspace = true
 
 [lints]
