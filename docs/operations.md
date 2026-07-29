@@ -4,11 +4,16 @@
 
 This package is for a controlled lab deployment only. Its archive is named
 `rustsdcmcp_0.1.0-lab.YYYYMMDD.<source-commit-12>_amd64.tar.gz` and is paired
-with a sibling `.sha256` file. The checksum contains the archive basename, so
-verify it from the sibling directory rather than the repository root:
+with a sibling `.sha256` file under `dist/<full-source-commit>/`. Select the
+approved full source commit explicitly; never glob across `dist/`. The checksum
+contains the archive basename, so verify it from that commit directory:
 
 ```console
-(cd dist && sha256sum -c *.sha256)
+source_commit="$(git rev-parse HEAD)"
+artifact_dir="dist/$source_commit"
+mapfile -t archives < <(find "$artifact_dir" -maxdepth 1 -type f -name 'rustsdcmcp_*_amd64.tar.gz' -print)
+test "${#archives[@]}" -eq 1
+(cd "$artifact_dir" && sha256sum -c "$(basename "${archives[0]}").sha256")
 ```
 
 `mecmcp` is pinned to `changeset-v0.3.6`. This repository still has 59

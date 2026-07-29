@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-archive=${1:-}
-if [[ -z "$archive" || ! -f "$archive" ]]; then
+[[ $# -eq 1 ]] || {
+    printf '%s\n' 'exactly one archive argument is required' >&2
+    exit 1
+}
+archive=$1
+if [[ ! -f "$archive" ]]; then
     printf '%s\n' "archive not found: ${archive:-<missing>}" >&2
     exit 1
 fi
@@ -13,11 +17,16 @@ command -v jq >/dev/null || {
 
 archive=$(CDPATH= cd -- "$(dirname -- "$archive")" && pwd -P)/$(basename -- "$archive")
 checksum="${archive}.sha256"
-if [[ -f "$checksum" ]]; then
+if [[ ${SDCMCP_SMOKE_SKIP_CHECKSUM:-0} == 1 ]]; then
+    :
+elif [[ -f "$checksum" ]]; then
     (
         cd "$(dirname -- "$archive")"
         sha256sum -c "$(basename -- "$checksum")"
     )
+else
+    printf '%s\n' "sibling checksum not found: $checksum" >&2
+    exit 1
 fi
 work_dir=$(mktemp -d)
 trap 'rm -rf -- "$work_dir"' EXIT
@@ -100,7 +109,12 @@ done <"$members_file"
 }
 
 tar -xOf "$archive" "$package_root/SBOM.cdx.json" \
-    | jq -e '.bomFormat == "CycloneDX"' >/dev/null || {
+    | jq -e '
+        .bomFormat == "CycloneDX"
+        and (.components | type == "array" and length > 0)
+        and any(.components[]; .name == "serde")
+        and any(.components[]; .name == "mecmcp-auth")
+    ' >/dev/null || {
         printf '%s\n' 'archive SBOM is not a CycloneDX JSON document' >&2
         exit 1
     }
@@ -200,6 +214,23 @@ fi
 printf '%s\n' parent-sentinel | cmp -s - "$parent_sentinel_dir/sentinel"
 [[ $(stat -c %a "$parent_sentinel_dir/sentinel") == 644 ]] || exit 1
 [[ ! -e "$parent_sentinel_dir/lib/rustsdcmcp" ]] || exit 1
+
+skip_user_root="$work_dir/skip-user-root"
+fake_bin="$work_dir/fake-bin"
+mkdir -p "$skip_user_root" "$fake_bin"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$fake_bin/getent"
+chmod 0755 "$fake_bin/getent"
+if PATH="$fake_bin:$PATH" \
+    SDCMCP_INSTALL_ROOT="$skip_user_root" \
+    SDCMCP_INSTALL_TEST_LIVE=1 \
+    SDCMCP_INSTALL_SKIP_USER=1 \
+    SDCMCP_INSTALL_SKIP_SYSTEMD_RELOAD=1 \
+    SDCMCP_INSTALL_SKIP_RUNTIME_DEPS=1 \
+    "$installer" >/dev/null 2>&1; then
+    printf '%s\n' 'installer accepted missing service identity with SKIP_USER=1' >&2
+    exit 1
+fi
+[[ ! -e "$skip_user_root/etc/rustsdcmcp" ]] || exit 1
 
 conflict_package="$work_dir/repeated-service-conflict"
 cp -a -- "$work_dir/$package_root" "$conflict_package"

@@ -145,11 +145,16 @@ details.
 
 The package is a **lab-only** archive, not a public release. Its name is
 `rustsdcmcp_0.1.0-lab.YYYYMMDD.<source-commit-12>_amd64.tar.gz`; its sibling
-checksum binds that exact archive. Verify the checksum from the directory that
-contains both files, because the checksum records only the archive basename:
+checksum binds that exact archive. Each build is isolated under
+`dist/<full-source-commit>/`; select that exact directory, never a glob across
+`dist/`, and verify from it because the checksum records only the basename:
 
 ```console
-(cd dist && sha256sum -c *.sha256)
+source_commit="$(git rev-parse HEAD)"
+artifact_dir="dist/$source_commit"
+mapfile -t archives < <(find "$artifact_dir" -maxdepth 1 -type f -name 'rustsdcmcp_*_amd64.tar.gz' -print)
+test "${#archives[@]}" -eq 1
+(cd "$artifact_dir" && sha256sum -c "$(basename "${archives[0]}").sha256")
 ```
 
 The package pins `mecmcp` to `changeset-v0.3.6`. Public `v0.1.0` is blocked

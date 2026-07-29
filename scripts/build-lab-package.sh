@@ -24,7 +24,7 @@ git_sha12=${git_commit:0:12}
 source_date_epoch=$(git show -s --format=%ct HEAD)
 package_date=$(date -u -d "@$source_date_epoch" +%Y%m%d)
 package_root="rustsdcmcp_0.1.0-lab.${package_date}.${git_sha12}_amd64"
-dist_dir="$repo_root/dist"
+dist_dir="$repo_root/dist/$git_commit"
 archive="$dist_dir/${package_root}.tar.gz"
 
 mkdir -p "$dist_dir"
@@ -80,7 +80,10 @@ glibc_floor=$glibc_floor
 rustc=$rustc_metadata
 EOF
 
-trivy filesystem --scanners vuln --format cyclonedx --output "$stage_dir/SBOM.cdx.json" "$stage_dir"
+trivy filesystem --scanners vuln --format cyclonedx \
+    --skip-dirs target,dist,.git \
+    --output "$stage_dir/SBOM.cdx.json" "$repo_root"
+chmod 0644 "$stage_dir/SBOM.cdx.json"
 
 (
     cd "$build_dir"
@@ -96,6 +99,11 @@ trivy filesystem --scanners vuln --format cyclonedx --output "$stage_dir/SBOM.cd
     sha256sum "$(basename -- "$archive")" >"$(basename -- "$archive").sha256"
     sha256sum -c "$(basename -- "$archive").sha256"
 )
+mapfile -t output_archives < <(find "$dist_dir" -maxdepth 1 -type f -name 'rustsdcmcp_*_amd64.tar.gz' -print)
+[[ ${#output_archives[@]} -eq 1 && ${output_archives[0]} == "$archive" && -f "${archive}.sha256" ]] || {
+    printf '%s\n' "commit artifact directory must contain exactly one archive/checksum pair: $dist_dir" >&2
+    exit 1
+}
 packaging/tests/package-smoke.sh "$archive"
 artifact_complete=1
 printf '%s\n' "built $archive"

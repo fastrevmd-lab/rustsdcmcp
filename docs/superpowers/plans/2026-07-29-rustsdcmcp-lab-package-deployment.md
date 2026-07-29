@@ -920,7 +920,7 @@ git commit -m "feat: compose issue-linked HTTP transport"
 
 **Interfaces:**
 - Consumes: release binary, `examples/sdc.example.json`, source commit, Trivy 0.70.0.
-- Produces: `dist/rustsdcmcp_0.1.0-lab.20260729.${GIT_SHA12}_amd64.tar.gz`, checksum, SBOM, BUILD-INFO.
+- Produces: `dist/${GIT_COMMIT}/rustsdcmcp_0.1.0-lab.20260729.${GIT_SHA12}_amd64.tar.gz`, checksum, SBOM, BUILD-INFO. Every consumer selects exactly that full-commit directory and requires exactly one archive/checksum pair.
 
 - [ ] **Step 1: Write the package smoke test first**
 
@@ -1119,8 +1119,12 @@ bash -n scripts/build-lab-package.sh scripts/verify-packaging.sh \
   packaging/lxc/install.sh packaging/tests/package-smoke.sh
 scripts/verify-packaging.sh
 scripts/build-lab-package.sh
-(cd dist && sha256sum -c *.sha256)
-packaging/tests/package-smoke.sh dist/rustsdcmcp_*_amd64.tar.gz
+source_commit="$(git rev-parse HEAD)"
+artifact_dir="dist/$source_commit"
+mapfile -t archives < <(find "$artifact_dir" -maxdepth 1 -type f -name 'rustsdcmcp_*_amd64.tar.gz' -print)
+test "${#archives[@]}" -eq 1
+(cd "$artifact_dir" && sha256sum -c "$(basename "${archives[0]}").sha256")
+packaging/tests/package-smoke.sh "${archives[0]}"
 ```
 
 Expected: all commands pass. Record the archive filename and checksum without exposing secrets.
@@ -1155,7 +1159,7 @@ Jobs:
 2. `msrv`: `cargo +1.88 check --workspace --all-targets --locked`.
 3. `packaging`: install shellcheck and Trivy 0.70.0, verify scripts, build package, smoke test, inspect glibc, upload `dist/*`.
 
-Use `ubuntu-24.04` so its glibc floor remains compatible with Debian 13. Upload the artifact as `rustsdcmcp-lab-${GITHUB_SHA}` with `if-no-files-found: error`.
+Use `ubuntu-24.04` so its glibc floor remains compatible with Debian 13. For pull requests, checkout `github.event.pull_request.head.sha`; for pushes, checkout `github.sha`; record `git rev-parse HEAD`, build only `dist/<that-full-source-commit>/`, and upload it as `rustsdcmcp-lab-<that-full-source-commit>` with `if-no-files-found: error`.
 
 - [ ] **Step 2: Add the security workflow**
 
@@ -1239,7 +1243,11 @@ cargo deny check licenses bans sources
 trivy fs --scanners vuln,misconfig,secret --exit-code 1 .
 scripts/verify-packaging.sh
 scripts/build-lab-package.sh
-packaging/tests/package-smoke.sh dist/rustsdcmcp_*_amd64.tar.gz
+source_commit="$(git rev-parse HEAD)"
+artifact_dir="dist/$source_commit"
+mapfile -t archives < <(find "$artifact_dir" -maxdepth 1 -type f -name 'rustsdcmcp_*_amd64.tar.gz' -print)
+test "${#archives[@]}" -eq 1
+packaging/tests/package-smoke.sh "${archives[0]}"
 ```
 
 Expected: clean source tree except ignored `dist/`; all gates pass.
@@ -1269,8 +1277,14 @@ Use GitHub Actions status/log tooling. Fix failures with the systematic-debuggin
 Download the packaging-job artifact for the exact PR head. Verify:
 
 ```bash
-(cd dist && sha256sum -c *.sha256)
-tar -xOf dist/rustsdcmcp_*_amd64.tar.gz '*/BUILD-INFO'
+source_commit="<exact PR head SHA>"
+artifact_dir="dist/$source_commit"
+mapfile -t archives < <(find "$artifact_dir" -maxdepth 1 -type f -name 'rustsdcmcp_*_amd64.tar.gz' -print)
+test "${#archives[@]}" -eq 1
+(cd "$artifact_dir" && sha256sum -c "$(basename "${archives[0]}").sha256")
+mapfile -t build_infos < <(tar -tzf "${archives[0]}" | grep -E '/BUILD-INFO$')
+test "${#build_infos[@]}" -eq 1
+tar -xOf "${archives[0]}" "${build_infos[0]}"
 ```
 
 Expected: `release_status=lab-only`, exact PR source commit, `mecmcp_ref=changeset-v0.3.6`, and a glibc floor no newer than the Debian 13 runtime.
@@ -1341,12 +1355,18 @@ ssh root@192.168.1.202 \
 Extract the exact artifact commit before setting the description:
 
 ```bash
-archive_path="$(find dist -maxdepth 1 -type f -name 'rustsdcmcp_*_amd64.tar.gz' -print -quit)"
-source_commit="$(tar -xOf "$archive_path" '*/BUILD-INFO' \
+source_commit="<approved CI source commit>"
+artifact_dir="dist/$source_commit"
+mapfile -t archives < <(find "$artifact_dir" -maxdepth 1 -type f -name 'rustsdcmcp_*_amd64.tar.gz' -print)
+test "${#archives[@]}" -eq 1
+archive_path="${archives[0]}"
+mapfile -t build_infos < <(tar -tzf "$archive_path" | grep -E '/BUILD-INFO$')
+test "${#build_infos[@]}" -eq 1
+artifact_commit="$(tar -xOf "$archive_path" "${build_infos[0]}" \
   | sed -n 's/^git_commit=//p')"
-test "${#source_commit}" -eq 40
+test "$artifact_commit" = "$source_commit"
 ssh root@192.168.1.202 \
-  "pct set 606 --description 'rustsdcmcp lab-only build $source_commit; Debian 13; no public release'"
+  "pct set 606 --description 'rustsdcmcp lab-only build $artifact_commit; Debian 13; no public release'"
 ssh root@192.168.1.202 'pct start 606'
 ssh root@192.168.1.202 'pct config 606'
 ssh root@192.168.1.202 'pct exec 606 -- systemctl is-system-running --wait'
@@ -1406,8 +1426,11 @@ Assert from `pct config 606`: pve2 placement, hostname, resources, `local-lvm:4`
 - [ ] **Step 1: Transfer and verify the archive**
 
 ```bash
-archive_path="$(find dist -maxdepth 1 -type f -name 'rustsdcmcp_*_amd64.tar.gz' -print -quit)"
-test -n "$archive_path"
+source_commit="<approved CI source commit>"
+artifact_dir="dist/$source_commit"
+mapfile -t archives < <(find "$artifact_dir" -maxdepth 1 -type f -name 'rustsdcmcp_*_amd64.tar.gz' -print)
+test "${#archives[@]}" -eq 1
+archive_path="${archives[0]}"
 checksum_path="${archive_path}.sha256"
 test -f "$checksum_path"
 archive_name="$(basename "$archive_path")"
@@ -1430,7 +1453,11 @@ Expected: checksum reports `OK` inside VMID 606 before extraction.
 - [ ] **Step 2: Run the installer twice**
 
 ```bash
-archive_path="$(find dist -maxdepth 1 -type f -name 'rustsdcmcp_*_amd64.tar.gz' -print -quit)"
+source_commit="<approved CI source commit>"
+artifact_dir="dist/$source_commit"
+mapfile -t archives < <(find "$artifact_dir" -maxdepth 1 -type f -name 'rustsdcmcp_*_amd64.tar.gz' -print)
+test "${#archives[@]}" -eq 1
+archive_path="${archives[0]}"
 archive_name="$(basename "$archive_path")"
 package_root="$(tar -tzf "$archive_path" | sed -n '1s#/.*##p')"
 test -n "$package_root"
@@ -1469,6 +1496,9 @@ ssh root@192.168.1.202 'pct exec 606 -- bash -s' <<'REMOTE'
 set -euo pipefail
 set +x
 umask 077
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq
+jq --version
 set -a
 . /etc/rustsdcmcp/credentials.env
 set +a

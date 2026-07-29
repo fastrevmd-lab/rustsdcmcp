@@ -196,6 +196,11 @@ The lab artifact name will identify its status, date, and exact source commit:
 rustsdcmcp_0.1.0-lab.20260729.${GIT_SHA12}_amd64.tar.gz
 ```
 
+The archive and its basename-only checksum are emitted only under
+`dist/${GIT_COMMIT}/`. Consumers must select that approved full source-commit
+directory and require exactly one archive/checksum pair; they must not select a
+glob across `dist/`.
+
 The package will contain:
 
 - The release binary.

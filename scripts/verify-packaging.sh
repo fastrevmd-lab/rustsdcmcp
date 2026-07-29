@@ -117,7 +117,7 @@ systemd-analyze --root="$verification_root" verify /etc/systemd/system/rustsdcmc
 
 git_commit=$(git rev-parse HEAD)
 package_date=$(date -u -d "@$(git show -s --format=%ct HEAD)" +%Y%m%d)
-archive="dist/rustsdcmcp_0.1.0-lab.${package_date}.${git_commit:0:12}_amd64.tar.gz"
+archive="dist/$git_commit/rustsdcmcp_0.1.0-lab.${package_date}.${git_commit:0:12}_amd64.tar.gz"
 if [[ -f "$archive" ]]; then
     packaging/tests/package-smoke.sh "$archive"
 fi

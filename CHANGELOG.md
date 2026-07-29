@@ -13,3 +13,5 @@
   package.
 - Document the lab artifact workflow, loopback-only listener, token ownership,
   journald forwarding exception, and the public-release compatibility blocker.
+- Bind each lab package, checksum, and CI upload to its exact full source
+  commit directory; require a Cargo-derived CycloneDX SBOM.

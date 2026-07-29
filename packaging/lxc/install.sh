@@ -14,8 +14,9 @@ skip_user=${SDCMCP_INSTALL_SKIP_USER:-0}
 skip_reload=${SDCMCP_INSTALL_SKIP_SYSTEMD_RELOAD:-0}
 skip_runtime_deps=${SDCMCP_INSTALL_SKIP_RUNTIME_DEPS:-0}
 force_unit=${SDCMCP_FORCE_UNIT:-0}
+test_live=${SDCMCP_INSTALL_TEST_LIVE:-0}
 
-for flag in "$skip_user" "$skip_reload" "$skip_runtime_deps" "$force_unit"; do
+for flag in "$skip_user" "$skip_reload" "$skip_runtime_deps" "$force_unit" "$test_live"; do
     [[ "$flag" == 0 || "$flag" == 1 ]] || die 'installer flags must be 0 or 1'
 done
 if [[ -n "$install_root" ]]; then
@@ -24,6 +25,7 @@ if [[ -n "$install_root" ]]; then
     install_root=$(realpath -m -- "$install_root")
     [[ "$install_root" != / ]] || die 'SDCMCP_INSTALL_ROOT must not resolve to /'
 fi
+[[ "$test_live" != 1 || -n "$install_root" ]] || die 'SDCMCP_INSTALL_TEST_LIVE requires a stage root'
 
 package_dir=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
 target_path() {
@@ -85,9 +87,16 @@ validate_build_info() {
 validate_sbom() {
     local sbom="$package_dir/SBOM.cdx.json"
     if command -v jq >/dev/null; then
-        jq -e '.bomFormat == "CycloneDX"' "$sbom" >/dev/null || die 'SBOM is not CycloneDX JSON'
+        jq -e '
+            .bomFormat == "CycloneDX"
+            and (.components | type == "array" and length > 0)
+            and any(.components[]; .name == "serde")
+            and any(.components[]; .name == "mecmcp-auth")
+        ' "$sbom" >/dev/null || die 'SBOM lacks required CycloneDX components'
     else
         grep -Eq '"bomFormat"[[:space:]]*:[[:space:]]*"CycloneDX"' "$sbom" \
+            && grep -Fq '"serde"' "$sbom" \
+            && grep -Fq '"mecmcp-auth"' "$sbom" \
             || die 'SBOM does not identify as CycloneDX'
     fi
 }
@@ -182,7 +191,7 @@ validate_package() {
 validate_package
 
 live_install=0
-[[ -z "$install_root" ]] && live_install=1
+[[ -z "$install_root" || "$test_live" == 1 ]] && live_install=1
 
 config_dir=$(target_path /etc/rustsdcmcp)
 state_dir=$(target_path /var/lib/rustsdcmcp)
@@ -234,6 +243,10 @@ for destination in "${managed_destinations[@]}"; do
 done
 
 if (( live_install )); then
+    if [[ "$skip_user" == 1 ]]; then
+        getent passwd rustsdcmcp >/dev/null && getent group rustsdcmcp >/dev/null \
+            || die 'SDCMCP_INSTALL_SKIP_USER=1 requires rustsdcmcp user and group'
+    fi
     if [[ "$skip_runtime_deps" != 1 ]]; then
         [[ -f /etc/debian_version ]] || die 'live installation requires Debian'
         apt-get update
