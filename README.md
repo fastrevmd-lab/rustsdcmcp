@@ -22,163 +22,201 @@ clients as a bounded, auditable tool surface. Where
 [`rustjunosmcp`](https://github.com/fastrevmd-lab/rustjunosmcp) talks NETCONF to
 individual SRX devices and
 [`rustpanosmcp`](https://github.com/fastrevmd-lab/rustpanosmcp) talks XML-API to
-individual PAN-OS firewalls, this server talks to the **management plane** — the
-SASE portal that fronts an entire estate of on-premises, cloud-based, and
-cloud-delivered security.
+individual PAN-OS firewalls, this server talks to the management plane.
 
-That difference matters. A single SDC call can move policy across thousands of
-managed devices at once, so the change-control and attribution machinery is not
-optional garnish here; it is the point.
+That distinction has a large blast radius: one SDC action can affect many
+managed devices. Strict approval, credential-safe attribution, and bounded I/O
+therefore protect the management plane rather than merely decorate it.
+
+## Current status
+
+`rustsdcmcp` is available to repository collaborators as the private
+[`v0.1.0-lab.1` prerelease](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.1.0-lab.1),
+which targets `65135e29484be4487f5ba58bdf70ec0ef7518288`. It exposes 17 MCP
+tools: 14 bounded read tools and three write tools—`prepare_sdc_policy_deploy`,
+`approve_sdc_change_set`, and `apply_sdc_change_set`—that can be used only
+through prepare → independent approval → apply.
+
+Live, read-only validation against SDC has verified credential-based startup
+tenant validation, `get_sdc_tenant_scope`, and `list_sdc_devices` with
+`from=0,size=1`. Authentication and the tenant-scope check also succeeded
+after a service restart. No preview, approval, apply, deployment, or other SDC
+mutation was attempted; the remaining endpoint questions are tracked in
+[`docs/sdc-api/README.md`](docs/sdc-api/README.md#still-unverified).
+
+## Private prerelease
+
+Repository collaborators can download the private
+[`v0.1.0-lab.1` prerelease](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.1.0-lab.1)
+and verify its archive:
+
+```console
+gh release download v0.1.0-lab.1 \
+  --repo fastrevmd-lab/rustsdcmcp \
+  --pattern 'rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz*'
+sha256sum -c rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz.sha256
+sha256sum rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz
+```
+
+The final command must print:
+
+```text
+f3497192cb6fe8c83cfad8014fadc787ff16de7bca89a2302b565331e4f21848  rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz
+```
+
+## Build from approved source
+
+Rust 1.88 is pinned by `rust-toolchain.toml`. In an approved clone containing
+the authorized commit, operators must first bind their detached checkout to
+that commit before building, testing, or packaging:
+
+```console
+approved_commit=65135e29484be4487f5ba58bdf70ec0ef7518288
+git checkout --detach "$approved_commit"
+test "$(git rev-parse HEAD)" = "$approved_commit"
+cargo build --release --locked
+cargo test --workspace --locked
+scripts/build-lab-package.sh
+cp examples/sdc.example.json /secure/operator/path/sdc.json
+```
+
+In that configuration, `credential_env` names the external process variable;
+the credential itself never belongs in JSON. For a local commit-addressed
+package, verify the newly built archive and its embedded `BUILD-INFO` from the
+approved commit directory—never glob across `dist/` because the checksum
+records only the archive basename:
+
+```console
+artifact_dir="dist/$approved_commit"
+archive="$artifact_dir/rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz"
+(cd "$artifact_dir" && sha256sum -c "$(basename "$archive").sha256")
+package_root=$(tar -tzf "$archive" | sed -n '1s#/.*##p')
+test -n "$package_root"
+tar -xOf "$archive" "$package_root/BUILD-INFO" | grep -Fx "git_commit=$approved_commit"
+```
+
+## Debian 13 LXC quick start
+
+Prerequisites:
+
+- Debian 13 AMD64; an unprivileged LXC is recommended.
+- 1 vCPU, 512 MiB RAM, 512 MiB swap, and 4 GiB disk for the lab profile.
+- Working DNS and time synchronization, plus outbound HTTPS to
+  `api.sdcloud.juniperclouds.net`.
+- Root or equivalent operator access inside the LXC.
+
+After downloading the release assets, install the verified package:
+
+```bash
+set -euo pipefail
+archive=rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz
+sha256sum -c "$archive.sha256"
+package_root=$(tar -tzf "$archive" | sed -n '1s#/.*##p')
+test -n "$package_root"
+tar -xzf "$archive"
+sudo "$package_root/packaging/lxc/install.sh"
+```
+
+Create the configuration and credential file without exposing a credential:
+
+```bash
+sudo install -o root -g rustsdcmcp -m 0640 \
+  /etc/rustsdcmcp/sdc.json.example /etc/rustsdcmcp/sdc.json
+sudoedit /etc/rustsdcmcp/sdc.json
+sudo install -o root -g root -m 0600 /dev/null \
+  /etc/rustsdcmcp/credentials.env
+sudoedit /etc/rustsdcmcp/credentials.env
+```
+
+`sdc.json` must retain the HTTPS SDC endpoint, use the desired local tenant
+alias, and set `expected_tenant_id` to the operator-obtained SDC tenant ID. The
+credentials file contains one shell-compatible assignment using the name from
+`credential_env`, for example `SDC_API_TOKEN=...`; never put a real value in
+the README or JSON.
+
+Create the initial exact 14-tool read-only grant. The redirect destination must
+already be mode `0600`; the output is a one-time bearer token.
+
+```console
+sudo /usr/local/bin/rustsdcmcp token add \
+  --tokens-file /etc/rustsdcmcp/tokens.json \
+  --device-mapping /etc/rustsdcmcp/sdc.json \
+  --name lab-read \
+  --devices production \
+  --tools get_sdc_tenant_scope,list_sdc_devices,get_sdc_device,list_sdc_firewall_policies,get_sdc_firewall_policy,list_sdc_nat_policies,get_sdc_nat_policy,list_sdc_resources,get_sdc_resource,get_sdc_preview_status,get_sdc_deploy_status,get_sdc_preview_device_result,get_sdc_deploy_device_result,get_sdc_change_set \
+  --actor-type human > /secure/local/path/rustsdcmcp-lab-read-token
+```
+
+Start the service and access it through an authenticated SSH tunnel:
+
+```console
+sudo systemctl enable --now rustsdcmcp.service
+sudo systemctl --no-pager --full status rustsdcmcp.service
+sudo ss -ltnp 'sport = :30032'
+ssh -N -L 30032:127.0.0.1:30032 root@rustsdcmcp.mechub.org
+```
+
+The expected listener is only `127.0.0.1:30032`. While the tunnel is active,
+the local MCP client uses `http://127.0.0.1:30032/mcp`.
+`rustsdcmcp.mechub.org` is the current lab deployment; other installations use
+their own SSH host.
+
+## Security commitments
+
+- External credentials use restrictive file modes and never belong in JSON.
+- Startup verifies the configured identity against `expected_tenant_id`.
+- Bearer tokens carry exact tool and tenant scopes.
+- Request, response, and page sizes are bounded.
+- Audit attribution is credential-safe and target values receive HMAC redaction.
+- Mutations require two-principal prepare → approve → apply change control.
+- There is no direct deploy tool and no unauthenticated write path.
+
+Detailed deployment, recovery, audit-retention, and write-workflow guidance is
+in [`docs/operations.md`](docs/operations.md).
+
+## Completed lab work
+
+The qualified Debian lab package deployment runs on VMID 606 on `pve2`, with
+Debian 13 and DNS `rustsdcmcp.mechub.org`; VMID 606 runs under the packaged
+`rustsdcmcp.service` systemd unit. It uses a loopback-only endpoint, the private
+prerelease and SBOM, and the qualified live read-only results described above.
+The detailed acceptance record is
+[`docs/lab-deployment-606.md`](docs/lab-deployment-606.md). It intentionally
+does not reproduce tenant identifiers, credentials, bearer tokens, HMAC keys,
+or runtime state.
+
+## Roadmap
+
+1. First-class Docker image and Compose support with secret injection, health
+   checks, and release documentation.
+2. Replace all 59 temporary compatibility declarations when their tracked
+   mecmcp APIs ship together in one coherent release.
+3. Add remote audit-journal forwarding for non-lab operation.
+4. Expand bounded live validation across the remaining read endpoints, then
+   exercise write workflows only through approved change control.
+5. Publish a stable release after the upstream and operational blockers clear.
 
 ## Relationship to `mecmcp`
 
 [`mecmcp`](https://github.com/fastrevmd-lab/mecmcp) is the vendor-neutral Rust
-foundation shared by the mechub MCP server family. This repository is a
-**consumer** of that foundation, not a fork of it:
+foundation shared by the mechub MCP server family. This repository consumes it,
+rather than forking it. The lab package pins `mecmcp` to `changeset-v0.3.6`
+before the 59 temporary compatibility declarations tracked
+in the [`mecmcp compatibility ledger`](docs/mecmcp-compatibility.md); public
+`v0.1.0` remains blocked until all 59 are replaced by one coherent upstream
+release.
 
-| Concern | Where it lives |
-|---|---|
-| Token mint/digest/verify, `tokens.json`, scopes, grants, caller context | `mecmcp-auth` |
-| Attribution, audit events, redaction, sinks | `mecmcp-audit` |
-| Streamable-HTTP transport, host/Origin checks, rate + concurrency limits | `mecmcp-transport` |
-| CLI skeleton, listener validation, token commands, signals | `mecmcp-runtime` |
-| Listener TLS loading and crypto-provider boundary | `mecmcp-transport` |
-| Plan → digest → approve → apply → verify change control | `mecmcp-changeset` |
-| Bounded MCP result conversion and handler authorization adapters | `mecmcp-server` |
-| **SDC REST client, opaque OAuth-token/API-key headers, response models, endpoint catalog, tool surface** | **this repo** |
+## API provenance
 
-Two proposed shared abstractions are deliberately tracked as issues rather than
-unpublished cross-repository code: [mecmcp#90](https://github.com/fastrevmd-lab/mecmcp/issues/90)
-for cloud-client foundations and
-[mecmcp#91](https://github.com/fastrevmd-lab/mecmcp/issues/91) for
-target-neutral token vocabulary. Until those land, the corresponding local
-code is isolated and SDC-specific; it is not treated as a new family standard.
-
-## The API
-
-The API surface is **pinned from Juniper's own OpenAPI 3 export**, vendored in
-[`docs/sdc-api/`](docs/sdc-api/README.md) — 227 paths, 368 operations, 61 groups,
-804 schemas, against `https://api.sdcloud.juniperclouds.net/`.
-
-Authentication is a header, one of two schemes, applied to every operation
-(no operation overrides it): `x-api-key`, or `x-oauth2-token` for the OAuth 2.0
-path that federates to a customer IdP. Path versioning is mixed — `/api/v1/…`
-for policies, devices, and templates; `/api/v2/…` for IAM, sites, and tunnels.
-
-Three facts shape everything this server does:
-
-- **Bulk mutations are asynchronous.** `POST` returns a job id; status and
-  per-device results are separate `GET`s. Treating them as synchronous reports
-  success for work that has not happened.
-- **Preview and deploy are already separate endpoints.** The API hands us a
-  native change-control boundary; `mecmcp-changeset` binds to it directly.
-- **`429` means two different things** — rate limited *or* response payload too
-  large — so it is not unconditionally retry-after-sleep.
-
-Details, the full endpoint inventory, and an explicit list of what the spec does
-**not** answer: [`docs/sdc-api/README.md`](docs/sdc-api/README.md).
+The API surface is pinned from Juniper's OpenAPI 3 export, vendored in
+[`docs/sdc-api/`](docs/sdc-api/README.md). It is the authoritative inventory of
+the supported SDC API surface and its remaining open questions.
 
 Primary references:
 
 - [Security Director Cloud API Reference](https://www.juniper.net/documentation/us/en/software/sd-cloud/api/http/getting-started/how-to-get-started)
 - [API Security Overview](https://www.juniper.net/documentation/us/en/software/sd-cloud/sd-cloud-user-guide/user-guide/topics/concept/about-api-access.html)
 - [Security Director Cloud documentation portal](https://www.juniper.net/documentation/product/us/en/juniper-security-director-cloud/)
-
-## Status
-
-The workspace now builds an MCP server with 17 tools:
-
-- bounded tenant, device, firewall-policy, NAT-policy, and shared-object reads;
-- explicit preview/deploy job and per-device result reads;
-- policy deployment only through `prepare_sdc_policy_deploy` →
-  `approve_sdc_change_set` → `apply_sdc_change_set`;
-- startup verification that the configured credential resolves to the expected
-  tenant ID;
-- stdio and hardened Streamable HTTP composition from `mecmcp`.
-
-The implementation is fixture-tested against the pinned OpenAPI shapes. It has
-not yet been exercised against a live SDC tenant, so the API questions listed
-in [`docs/sdc-api/README.md`](docs/sdc-api/README.md#still-unverified) remain
-open.
-
-## Build and configure
-
-Rust 1.88 is pinned by `rust-toolchain.toml`.
-
-```console
-cargo build --release
-cargo test --workspace
-```
-
-Copy [`examples/sdc.example.json`](examples/sdc.example.json), set the named
-credential environment variable in the server process, and keep the secret
-itself out of JSON:
-
-```console
-export SDC_API_TOKEN='...'
-cargo run -p rustsdcmcp -- -f /absolute/path/to/sdc.json
-```
-
-The shared runtime currently names `-f`/`--device-mapping`; in this
-management-plane consumer it selects the SDC configuration file. A neutral
-spelling is tracked by mecmcp#91.
-
-Streamable HTTP requires an absolute token-store path unless explicit
-loopback-only no-auth mode is selected:
-
-```console
-cargo run -p rustsdcmcp -- \
-  -f /etc/rustsdcmcp/sdc.json \
-  --transport streamable-http \
-  --tokens-file /etc/rustsdcmcp/tokens.json
-```
-
-Use the shared `token` subcommand to mint scoped credentials. Until
-mecmcp#91 lands, the tenant allowlist is passed through the historical
-`--devices` flag. Wildcard tool scopes exclude the three write tools; grant
-them by exact name.
-
-See [`docs/operations.md`](docs/operations.md) for deployment and recovery
-details.
-
-## Lab package status
-
-The package is a **lab-only** archive, not a public release. Its name is
-`rustsdcmcp_0.1.0-lab.YYYYMMDD.<source-commit-12>_amd64.tar.gz`; its sibling
-checksum binds that exact archive. Each build is isolated under
-`dist/<full-source-commit>/`; select that exact directory, never a glob across
-`dist/`, and verify from it because the checksum records only the basename:
-
-```console
-source_commit="$(git rev-parse HEAD)"
-artifact_dir="dist/$source_commit"
-mapfile -t archives < <(find "$artifact_dir" -maxdepth 1 -type f -name 'rustsdcmcp_*_amd64.tar.gz' -print)
-test "${#archives[@]}" -eq 1
-(cd "$artifact_dir" && sha256sum -c "$(basename "${archives[0]}").sha256")
-```
-
-The package pins `mecmcp` to `changeset-v0.3.6`. Public `v0.1.0` is blocked
-until all 59 temporary compatibility symbols in the
-[`mecmcp compatibility ledger`](docs/mecmcp-compatibility.md) are replaced by
-one coherent upstream `mecmcp` release. The lab artifact must not be promoted,
-tagged, or presented as a public release while that blocker remains.
-
-## Design commitments
-
-- **Read before write.** Every mutating tool is reachable only through a
-  plan → digest → approve → apply lifecycle. No tool writes to a tenant on a
-  single unattested call.
-- **Scoped tokens.** HTTP bearer tokens carry explicit tool and tenant scopes.
-  Write tools require authentication and exact tool grants; unauthenticated
-  stdio/loopback modes are read-only.
-- **Bounded I/O.** Request and response sizes are capped. A management-plane
-  API will happily hand back an estate-sized payload; the server will not.
-- **Auditable by construction.** Attribution and redaction come from
-  `mecmcp-audit`, so every call is traceable to a caller without leaking
-  credentials into logs.
-- **No secrets in the repo.** SDC API keys and opaque OAuth tokens are supplied
-  through an operator-named process environment variable and are redacted from
-  formatting and audit output.
 
 ## License
 
