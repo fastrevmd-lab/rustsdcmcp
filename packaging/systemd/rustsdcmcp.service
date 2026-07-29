@@ -1,0 +1,63 @@
+[Unit]
+Description=Security Director Cloud MCP server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rustsdcmcp
+Group=rustsdcmcp
+EnvironmentFile=/etc/rustsdcmcp/credentials.env
+Environment=RUST_LOG=info
+ExecStart=/usr/local/bin/rustsdcmcp \
+    --device-mapping /etc/rustsdcmcp/sdc.json \
+    --transport streamable-http \
+    --host 127.0.0.1 \
+    --port 30032 \
+    --tokens-file /etc/rustsdcmcp/tokens.json \
+    --audit-format json \
+    --audit-journald \
+    --audit-redact devices=hmac \
+    --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+UMask=0077
+StateDirectory=rustsdcmcp
+StateDirectoryMode=0700
+RuntimeDirectory=rustsdcmcp
+RuntimeDirectoryMode=0700
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/etc/rustsdcmcp
+ReadWritePaths=/var/lib/rustsdcmcp
+PrivateTmp=true
+PrivateDevices=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+TasksMax=256
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target
