@@ -32,7 +32,7 @@ if [[ "$test_live" == 1 ]]; then
     [[ "$skip_reload" == 1 ]] || die 'SDCMCP_INSTALL_TEST_LIVE requires SDCMCP_INSTALL_SKIP_SYSTEMD_RELOAD=1'
 fi
 
-package_dir=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
+package_dir=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd -P)
 target_path() {
     if [[ -n "$install_root" ]]; then
         printf '%s%s\n' "$install_root" "$1"
@@ -100,11 +100,12 @@ validate_sbom() {
             and any(.components[]; .name == "mecmcp-auth")
         ' "$sbom" >/dev/null || die 'SBOM lacks required CycloneDX metadata or components'
     else
-        grep -Eq '"bomFormat"[[:space:]]*:[[:space:]]*"CycloneDX"' "$sbom" \
-            && grep -Fq '"serde"' "$sbom" \
-            && grep -Fq '"mecmcp-auth"' "$sbom" \
-            && grep -Fq '"name": "rustsdcmcp"' "$sbom" \
-            || die 'SBOM does not identify as CycloneDX'
+        if ! grep -Eq '"bomFormat"[[:space:]]*:[[:space:]]*"CycloneDX"' "$sbom" \
+            || ! grep -Fq '"serde"' "$sbom" \
+            || ! grep -Fq '"mecmcp-auth"' "$sbom" \
+            || ! grep -Fq '"name": "rustsdcmcp"' "$sbom"; then
+            die 'SBOM does not identify as CycloneDX'
+        fi
     fi
     ! grep -Eq '"/(home|workspace|workspaces)/' "$sbom" \
         || die 'SBOM contains an absolute repository or worktree path'
@@ -121,10 +122,11 @@ validate_config() {
             and .changeset_state_file == "/var/lib/rustsdcmcp/changeset-state.json"
         ' "$config" >/dev/null || die 'config example is not operationally valid JSON'
     else
-        grep -Fq '"version": 1' "$config" \
-            && grep -Fq '"changeset_state_file": "/var/lib/rustsdcmcp/changeset-state.json"' "$config" \
-            && grep -Fq '"endpoint": "https://' "$config" \
-            || die 'config example fails dependency-free validation'
+        if ! grep -Fq '"version": 1' "$config" \
+            || ! grep -Fq '"changeset_state_file": "/var/lib/rustsdcmcp/changeset-state.json"' "$config" \
+            || ! grep -Fq '"endpoint": "https://' "$config"; then
+            die 'config example fails dependency-free validation'
+        fi
     fi
 }
 
@@ -174,7 +176,6 @@ require_service_directive() {
 }
 
 validate_service() {
-    local service="$package_dir/packaging/systemd/rustsdcmcp.service"
     local expected exec_start
     expected='/usr/local/bin/rustsdcmcp --device-mapping /etc/rustsdcmcp/sdc.json --transport streamable-http --host 127.0.0.1 --port 30032 --tokens-file /etc/rustsdcmcp/tokens.json --audit-format json --audit-journald --audit-redact devices=hmac --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key'
     exec_start=$(extract_exec_start | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//') || die 'unit has invalid ExecStart'
@@ -253,8 +254,9 @@ done
 
 if (( live_install )); then
     if [[ "$skip_user" == 1 ]]; then
-        getent passwd rustsdcmcp >/dev/null && getent group rustsdcmcp >/dev/null \
-            || die 'SDCMCP_INSTALL_SKIP_USER=1 requires rustsdcmcp user and group'
+        if ! getent passwd rustsdcmcp >/dev/null || ! getent group rustsdcmcp >/dev/null; then
+            die 'SDCMCP_INSTALL_SKIP_USER=1 requires rustsdcmcp user and group'
+        fi
     fi
     if [[ "$skip_runtime_deps" != 1 ]]; then
         [[ -f /etc/debian_version ]] || die 'live installation requires Debian'

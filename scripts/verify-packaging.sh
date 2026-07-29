@@ -87,10 +87,16 @@ require 'd /var/lib/rustsdcmcp 0700 rustsdcmcp rustsdcmcp -' "$tmpfiles"
 require '[Journal]' "$journal"
 require 'Storage=persistent' "$journal"
 require 'SystemMaxUse=512M' "$journal"
+# These assertions intentionally match literal shell source fragments.
+# shellcheck disable=SC2016
 require_contains 'install -o root -g rustsdcmcp -m 0640 "$package_dir/config/sdc.json.example" "$config_dir/sdc.json.example"' "$installer"
+# shellcheck disable=SC2016
 require_contains 'install_root=$(realpath -m -- "$install_root")' "$installer"
+# shellcheck disable=SC2016
 require_contains '[[ "$install_root" != / ]] || die '\''SDCMCP_INSTALL_ROOT must not resolve to /'\''' "$installer"
+# shellcheck disable=SC2016
 require_contains 'systemd-sysusers "$package_dir/packaging/systemd/rustsdcmcp.sysusers"' "$installer"
+# shellcheck disable=SC2016
 require_contains 'systemd-tmpfiles --create "$package_dir/packaging/systemd/rustsdcmcp.tmpfiles"' "$installer"
 require_contains 'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates' "$installer"
 require_contains 'systemctl daemon-reload' "$installer"

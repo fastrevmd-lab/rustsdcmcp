@@ -15,7 +15,7 @@ command -v jq >/dev/null || {
     exit 1
 }
 
-archive=$(CDPATH= cd -- "$(dirname -- "$archive")" && pwd -P)/$(basename -- "$archive")
+archive=$(CDPATH='' cd -- "$(dirname -- "$archive")" && pwd -P)/$(basename -- "$archive")
 checksum="${archive}.sha256"
 if [[ ${SDCMCP_SMOKE_SKIP_CHECKSUM:-0} == 1 ]]; then
     :
