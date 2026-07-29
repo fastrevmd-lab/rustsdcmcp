@@ -14,15 +14,16 @@ use std::sync::Arc;
 
 const MAX_AUTHORIZATION_HEADER_BYTES: usize = 4096;
 
-/// mecmcp-compat: type mecmcp_auth::BearerSyntax https://github.com/fastrevmd-lab/mecmcp/issues/96
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+/// mecmcp-compat: type mecmcp_auth::BearerSyntax https://github.com/fastrevmd-lab/mecmcp/issues/96
 pub(crate) enum BearerSyntax {
     Strict,
     Trimmed,
 }
 
-/// mecmcp-compat: type mecmcp_auth::BearerHeaderError https://github.com/fastrevmd-lab/mecmcp/issues/97
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+/// mecmcp-compat: type mecmcp_auth::BearerHeaderError https://github.com/fastrevmd-lab/mecmcp/issues/97
 pub(crate) enum BearerHeaderError {
     #[error("authorization header is too large")]
     TooLarge,
@@ -39,8 +40,8 @@ pub(crate) enum BearerHeaderError {
 /// mecmcp-compat: type mecmcp_transport::Authenticate https://github.com/fastrevmd-lab/mecmcp/issues/103
 type Authenticate = dyn Fn(&str) -> Option<CallerCtx<NoGrant>> + Send + Sync;
 
-/// mecmcp-compat: type mecmcp_transport::BearerAuthenticator https://github.com/fastrevmd-lab/mecmcp/issues/104
 #[derive(Clone)]
+/// mecmcp-compat: type mecmcp_transport::BearerAuthenticator https://github.com/fastrevmd-lab/mecmcp/issues/104
 pub(crate) struct BearerAuthenticator {
     syntax: BearerSyntax,
     authenticate: Arc<Authenticate>,
@@ -64,15 +65,16 @@ impl BearerAuthenticator {
     }
 }
 
-/// mecmcp-compat: type mecmcp_transport::BearerResponseProfile https://github.com/fastrevmd-lab/mecmcp/issues/105
 #[derive(Clone)]
+/// mecmcp-compat: type mecmcp_transport::BearerResponseProfile https://github.com/fastrevmd-lab/mecmcp/issues/105
 pub(crate) struct BearerResponseProfile {
     realm: String,
     style: BearerResponseStyle,
 }
 
-/// mecmcp-compat: type mecmcp_transport::BearerResponseStyle https://github.com/fastrevmd-lab/mecmcp/issues/106
 #[derive(Clone)]
+#[allow(dead_code)]
+/// mecmcp-compat: type mecmcp_transport::BearerResponseStyle https://github.com/fastrevmd-lab/mecmcp/issues/106
 pub(crate) enum BearerResponseStyle {
     Detailed,
     Compact,
@@ -88,8 +90,8 @@ impl BearerResponseProfile {
     }
 }
 
-/// mecmcp-compat: type mecmcp_transport::BearerBoundary https://github.com/fastrevmd-lab/mecmcp/issues/107
 #[derive(Clone)]
+/// mecmcp-compat: type mecmcp_transport::BearerBoundary https://github.com/fastrevmd-lab/mecmcp/issues/107
 pub(crate) struct BearerBoundary {
     authenticator: BearerAuthenticator,
     responses: BearerResponseProfile,
@@ -97,8 +99,8 @@ pub(crate) struct BearerBoundary {
     preflight: OptionalPreflight,
 }
 
-/// mecmcp-compat: type mecmcp_transport::PresentationError https://github.com/fastrevmd-lab/mecmcp/issues/108
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// mecmcp-compat: type mecmcp_transport::PresentationError https://github.com/fastrevmd-lab/mecmcp/issues/108
 enum PresentationError {
     Missing,
     Malformed,

@@ -1,14 +1,17 @@
 //! SDC parameters for the shared MCP Streamable HTTP transport.
 
-use crate::{SdcHandler, WRITE_TOOLS};
+use crate::{
+    SdcHandler, WRITE_TOOLS,
+    compat::{
+        bearer::{BearerAuthenticator, BearerBoundary, BearerResponseProfile, BearerSyntax},
+        http::{HostOriginPolicy, HttpTransportConfig, build_streamable_http_router, serve_router},
+        preflight::{MalformedArgumentsPolicy, TargetField, ToolScopePreflight},
+    },
+};
 use anyhow::{Context, Result};
 use axum::Router;
-use mecmcp_auth::{BearerSyntax, CallerCtx, NoGrant, TokenStoreFile};
-use mecmcp_transport::{
-    BearerAuthenticator, BearerBoundary, BearerResponseProfile, HostOriginPolicy,
-    HttpTransportConfig, LimitsConfig, MalformedArgumentsPolicy, TargetField, ToolScopePreflight,
-    TransportIdentity, build_streamable_http_router, serve_router,
-};
+use mecmcp_auth::{CallerCtx, NoGrant, TokenStoreFile};
+use mecmcp_transport::{LimitsConfig, TransportIdentity};
 use std::{net::SocketAddr, sync::Arc};
 
 /// Build the complete shared HTTP router with SDC-owned identity and scope fields.
@@ -22,7 +25,7 @@ pub fn build_http_router(
 ) -> Result<Router> {
     let body_limit = limits.max_request_body_bytes;
     let identity = TransportIdentity::new("sdcmcp", "sdc", "rustsdcmcp", ["tenant"]);
-    let mut config = HttpTransportConfig::<NoGrant>::new(
+    let mut config = HttpTransportConfig::new(
         identity,
         limits,
         HostOriginPolicy::enforced(allowed_hosts, allowed_origins),

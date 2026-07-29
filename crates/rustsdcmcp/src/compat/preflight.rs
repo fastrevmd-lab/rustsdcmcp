@@ -2,29 +2,31 @@ use mecmcp_auth::{CallerCtx, NoGrant, ScopeSet};
 use mecmcp_transport::ScopePreflight;
 use serde_json::Value;
 
-/// mecmcp-compat: type mecmcp_transport::MalformedArgumentsPolicy https://github.com/fastrevmd-lab/mecmcp/issues/109
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+/// mecmcp-compat: type mecmcp_transport::MalformedArgumentsPolicy https://github.com/fastrevmd-lab/mecmcp/issues/109
 pub(crate) enum MalformedArgumentsPolicy {
     Deny,
     Ignore,
 }
 
-/// mecmcp-compat: type mecmcp_transport::MalformedTargetPolicy https://github.com/fastrevmd-lab/mecmcp/issues/110
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// mecmcp-compat: type mecmcp_transport::MalformedTargetPolicy https://github.com/fastrevmd-lab/mecmcp/issues/110
 pub(crate) enum MalformedTargetPolicy {
     Deny,
     Ignore,
 }
 
-/// mecmcp-compat: type mecmcp_transport::TargetValueShape https://github.com/fastrevmd-lab/mecmcp/issues/111
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+/// mecmcp-compat: type mecmcp_transport::TargetValueShape https://github.com/fastrevmd-lab/mecmcp/issues/111
 pub(crate) enum TargetValueShape {
     Scalar,
     NonEmptyArray,
 }
 
-/// mecmcp-compat: type mecmcp_transport::TargetField https://github.com/fastrevmd-lab/mecmcp/issues/112
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// mecmcp-compat: type mecmcp_transport::TargetField https://github.com/fastrevmd-lab/mecmcp/issues/112
 pub(crate) struct TargetField {
     name: &'static str,
     shape: TargetValueShape,
@@ -42,8 +44,8 @@ impl TargetField {
     }
 }
 
-/// mecmcp-compat: type mecmcp_transport::ToolScopePreflight https://github.com/fastrevmd-lab/mecmcp/issues/113
 #[derive(Debug, Clone)]
+/// mecmcp-compat: type mecmcp_transport::ToolScopePreflight https://github.com/fastrevmd-lab/mecmcp/issues/113
 pub(crate) struct ToolScopePreflight {
     write_tools: &'static [&'static str],
     target_fields: Vec<TargetField>,

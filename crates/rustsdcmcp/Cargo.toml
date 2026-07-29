@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+axum-server.workspace = true
 clap.workspace = true
 http.workspace = true
 rmcp.workspace = true
@@ -27,6 +28,9 @@ mecmcp-auth.workspace = true
 mecmcp-changeset.workspace = true
 mecmcp-runtime.workspace = true
 mecmcp-transport.workspace = true
+
+[dev-dependencies]
+tower.workspace = true
 
 [lints]
 workspace = true
