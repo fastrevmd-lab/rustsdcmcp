@@ -40,7 +40,7 @@ rmcp handler helpers currently consumed by `rustsdcmcp`.
   compatibility layer.
 - Track every reusable compatibility function, method, and type in mecmcp.
 - Produce an amd64 Debian 13 lab package following mecmcp packaging standards.
-- Deploy the exact package to VMID 602 on `pve2`.
+- Deploy the exact package to VMID 606 on `pve2`.
 - Validate authentication, authorization, audit behavior, and read-only SDC API
   access without making an SDC policy change.
 
@@ -88,7 +88,7 @@ Temporary compatibility code will live under clearly named internal modules
 such as `compat::server` and `compat::http`. Production SDC modules may call
 these modules but may not duplicate their generic behavior.
 
-The current direct compatibility inventory contains these 19 functions and
+The current compatibility entry-point inventory contains these 20 functions and
 methods:
 
 1. `audit_scope`
@@ -110,6 +110,7 @@ methods:
 17. `ToolScopePreflight::new`
 18. `build_streamable_http_router`
 19. `serve_router`
+20. `parse_bearer_header`
 
 The currently known reusable supporting-type inventory is:
 
@@ -127,6 +128,8 @@ The currently known reusable supporting-type inventory is:
 12. `ToolScopePreflight`
 13. `HttpTransportBuildError`
 14. `HttpServeError`
+15. `BearerSyntax`
+16. `BearerHeaderError`
 
 Before any compatibility implementation is written:
 
@@ -213,13 +216,17 @@ and no release tag is created.
 
 ## LXC Design
 
+VMID 602 is already assigned cluster-wide to the running `journal-collector`
+LXC on `pve3`. It must not be modified. The user selected VMID 606 on `pve2`
+instead.
+
 The deployment target is:
 
 | Setting | Value |
 | --- | --- |
 | Proxmox node | `pve2` |
-| VMID | `602` |
-| Hostname | `rustsdcmcp-602` |
+| VMID | `606` |
+| Hostname | `rustsdcmcp-606` |
 | DNS name | `rustsdcmcp.mechub.org` |
 | Address | `192.168.1.211/24` |
 | Gateway | `192.168.1.1` |
@@ -234,7 +241,7 @@ The deployment target is:
 | Proxmox firewall | Enabled |
 | Start on boot | Enabled |
 
-VMID 602, the address, and the DNS name will be checked again immediately
+VMID 606, the address, and the DNS name will be checked again immediately
 before creation. The static address is outside the DHCP pool. After the LXC MAC
 is known, UniFi will receive the reservation and exact DNS record
 `rustsdcmcp.mechub.org`.
