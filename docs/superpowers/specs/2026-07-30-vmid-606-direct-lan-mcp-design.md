@@ -139,9 +139,11 @@ Codex or Claude
    metadata, and the existing client token scopes.
 2. Create Proxmox snapshot `pre-lan-bind-20260730`.
 3. Stage and validate the separate transition and final systemd drop-ins and
-   the edited tunnel unit without reading secret contents. The staged tunnel
-   retains local `127.0.0.1:39032` but changes its remote target from
-   `127.0.0.1:30032` to `192.168.1.211:30032`; do not restart it yet.
+   explicit original and transition tunnel-unit artifacts without reading
+   secret contents. The staged transition tunnel retains local
+   `127.0.0.1:39032` but changes its remote target from `127.0.0.1:30032` to
+   `192.168.1.211:30032`; do not restart it yet. The distinct original artifact
+   is the exact rollback source and is retained until final cleanup.
 4. Install the transition dual-Host drop-in, reload systemd, restart the
    server, and wait for the exact LAN listener.
 5. Reload and restart the user tunnel from its staged unit, then prove its

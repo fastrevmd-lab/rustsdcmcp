@@ -159,7 +159,7 @@ create_snapshot(
   vmid="606",
   vm_type="lxc",
   snapname="pre-lan-bind-20260730",
-  description="Before rustsdcmcp VMID 606 direct-LAN bind: lab.2 190dab9a4e8ff546b06403999afbaaacfe96633c, mecmcp 0.3.7, loopback to 192.168.1.211:30032",
+  description="Before rustsdcmcp VMID 606 direct-LAN bind: lab.2 190dab9a4e8ff546b06403999afbaaacfe96633c, mecmcp 0.3.7, pre-change loopback listener with planned target 192.168.1.211:30032",
   vmstate=false
 )
 list_snapshots(node="pve2", vmid="606", vm_type="lxc")
@@ -231,9 +231,6 @@ verify rustsdcmcp.service` only after staging it in Step 4.
 
 - [ ] **Step 3: Stage the validated drop-in on VMID 606**
 
-Before continuing to Step 4, complete Task 3 Step 1 to stage the edited tunnel
-unit without restarting it. This is deliberately before server rebinding.
-
 Run:
 
 ```bash
@@ -248,7 +245,49 @@ scp -p /tmp/rustsdcmcp-lan-bind-20260730/transition-lan.conf \
 Expected: two root-owned regular staging files and no secret material. Never
 reconstruct either configuration during rollback; select the named staged file.
 
-- [ ] **Step 4: Install, restart, and compare protected content in one remote transaction**
+- [ ] **Step 4: Stage explicit original and transition tunnel-unit artifacts**
+
+Before server rebinding, create these two distinct local files with mode `0600`:
+
+```bash
+tunnel_stage=/tmp/rustsdcmcp-lan-bind-20260730
+original_tunnel=$tunnel_stage/rustsdcmcp-tunnel-original.service
+transition_tunnel=$tunnel_stage/rustsdcmcp-tunnel-transition.service
+live_tunnel=/home/mharman/.config/systemd/user/rustsdcmcp-tunnel.service
+install -m 0600 "$live_tunnel" "$original_tunnel"
+cmp -s "$live_tunnel" "$original_tunnel"
+install -m 0600 "$original_tunnel" "$transition_tunnel"
+```
+
+Use `apply_patch` on only `$transition_tunnel` to change remote
+`127.0.0.1:30032` to remote `192.168.1.211:30032`; retain local
+`127.0.0.1:39032`, all existing SSH identity and hardening options, and every
+other line. Validate both artifacts without displaying secret material:
+
+```bash
+test "$(stat -c %a "$original_tunnel")" = 600
+test "$(stat -c %a "$transition_tunnel")" = 600
+grep -Fq '127.0.0.1:30032' "$original_tunnel"
+grep -Fq '127.0.0.1:39032' "$original_tunnel"
+grep -Fq '192.168.1.211:30032' "$transition_tunnel"
+grep -Fq '127.0.0.1:39032' "$transition_tunnel"
+! grep -Fq '127.0.0.1:30032' "$transition_tunnel"
+cmp -s "$live_tunnel" "$original_tunnel"
+```
+
+Do not reload or restart the tunnel in this step. If server rebinding or later
+tunnel activation fails, restore the original target with these exact commands:
+
+```bash
+install -m 0600 "$original_tunnel" "$live_tunnel"
+cmp -s "$original_tunnel" "$live_tunnel"
+systemctl --user daemon-reload
+systemctl --user enable --now rustsdcmcp-tunnel.service
+test "$(systemctl --user is-enabled rustsdcmcp-tunnel.service)" = enabled
+test "$(systemctl --user is-active rustsdcmcp-tunnel.service)" = active
+```
+
+- [ ] **Step 5: Install, restart, and compare protected content in one remote transaction**
 
 Run the following quoted remote script:
 
@@ -332,7 +371,7 @@ Expected: exact LAN listener, exact lab.2 binary, and no protected-content
 change. On failure, the script removes only the new drop-in and restores the
 loopback service.
 
-- [ ] **Step 5: Verify the effective unit without displaying secrets**
+- [ ] **Step 6: Verify the effective unit without displaying secrets**
 
 Run:
 
@@ -354,8 +393,8 @@ drop-in, and only `192.168.1.211:30032`.
 
 **Files:**
 - Stage locally: `/tmp/rustsdcmcp-lan-bind-20260730/rustsdcmcp-tunnel-transition.service`
+- Preserve locally: `/tmp/rustsdcmcp-lan-bind-20260730/rustsdcmcp-tunnel-original.service`
 - Modify after LAN listener health: `/home/mharman/.config/systemd/user/rustsdcmcp-tunnel.service`
-- Preserve as rollback source: an exact staged copy of the original tunnel unit
 
 **Interfaces:**
 - Consumes: a healthy transition dual-Host listener and the existing enabled,
@@ -363,36 +402,78 @@ drop-in, and only `192.168.1.211:30032`.
 - Produces: a proven authenticated fallback at local `127.0.0.1:39032` that
   forwards to remote `192.168.1.211:30032`.
 
-- [ ] **Step 1: Stage the tunnel-unit edit before the server rebind**
+- [ ] **Step 1: Activate the staged retarget only after LAN listener health**
 
-Before Task 2 Step 4, copy the existing user unit to the named staging file
-with mode `0600`, and use `apply_patch` to change only its remote forwarding
-target from `127.0.0.1:30032` to `192.168.1.211:30032`. Retain the local
-`127.0.0.1:39032` endpoint, all existing SSH identity and hardening options,
-and the original unit as a separately named rollback copy. Validate that the
-staged unit contains the new remote target and no old remote target. Do not
-reload or restart the user tunnel in this step.
-
-- [ ] **Step 2: Activate the staged retarget only after LAN listener health**
-
-After Task 2 confirms the exact LAN listener, install the staged tunnel unit,
-then run `systemctl --user daemon-reload` and
+After Task 2 confirms the exact LAN listener, install
+`/tmp/rustsdcmcp-lan-bind-20260730/rustsdcmcp-tunnel-transition.service` as
+the live user unit, verify it matches the staged transition artifact, then run
+`systemctl --user daemon-reload` and
 `systemctl --user restart rustsdcmcp-tunnel.service`. Require the unit to be
 enabled and active and exactly one listener at `127.0.0.1:39032`. If this
 fails, restore the original staged tunnel unit, reload and restart it, and
 then restore packaged loopback server behavior by removing `lan.conf`, running
 `systemctl daemon-reload`, and restarting `rustsdcmcp.service`.
 
-- [ ] **Step 3: Prove authenticated fallback before direct qualification**
+- [ ] **Step 2: Prove authenticated fallback before direct qualification**
 
-Reload each existing token without printing it, and run initialize,
-`tools/list`, and bounded `get_sdc_tenant_scope` through
-`http://127.0.0.1:39032/mcp` for each client. Require authenticated success,
-the exact 14 read tools, and absent write tools. Clear in-memory tokens. Do
-not proceed to direct endpoint qualification or change either client URL until
-this proof succeeds.
+Run this one safe, reproducible Bash sequence. It writes credentials only to
+mode-`0600` curl configuration files, does not print tokens, bodies, or session
+IDs, checks authenticated MCP initialize and exact tool surface for each client,
+and clears all temporary material even on failure:
 
-- [ ] **Step 4: Complete rollback if either rebinding or retargeting failed**
+```bash
+set -euo pipefail
+tunnel_check=$(mktemp -d /tmp/rustsdcmcp-tunnel-acceptance.XXXXXX)
+chmod 0700 "$tunnel_check"
+cleanup_tunnel_check() {
+  rc=$?
+  unset codex_token claude_token session_id
+  rm -f -- "$tunnel_check"/*
+  rmdir "$tunnel_check"
+  exit "$rc"
+}
+trap cleanup_tunnel_check EXIT
+codex_token=$(fish -c 'printf %s $RUSTSDCMCP_CODEX_TOKEN')
+claude_token=$(jq -r '.mcpServers.rustsdcmcp.headers.Authorization | sub("^Bearer "; "")' /home/mharman/.claude.json)
+[[ "$codex_token" =~ ^[A-Za-z0-9_-]{32,}$ ]]
+[[ "$claude_token" =~ ^[A-Za-z0-9_-]{32,}$ ]]
+verify_tunnel_client() {
+  local label=$1 token=$2 cfg=$tunnel_check/$1.curl
+  local headers=$tunnel_check/$1.headers initialize=$tunnel_check/$1.initialize
+  local tools=$tunnel_check/$1.tools call=$tunnel_check/$1.call
+  umask 077
+  printf '%s\n' "header = Authorization: Bearer $token" >"$cfg"
+  curl --silent --show-error --fail-with-body --config "$cfg" \
+    -D "$headers" -o "$initialize" -H 'Content-Type: application/json' \
+    --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"tunnel-fallback-check","version":"1"}}}' \
+    http://127.0.0.1:39032/mcp
+  session_id=$(awk 'BEGIN {IGNORECASE=1} /^Mcp-Session-Id:/ {sub(/^[^:]*:[[:space:]]*/, ""); sub(/\r$/, ""); print; exit}' "$headers")
+  [[ -n "$session_id" ]]
+  curl --silent --show-error --fail-with-body --config "$cfg" -o /dev/null \
+    -H "Mcp-Session-Id: $session_id" -H 'Content-Type: application/json' \
+    --data '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}' \
+    http://127.0.0.1:39032/mcp
+  curl --silent --show-error --fail-with-body --config "$cfg" -o "$tools" \
+    -H "Mcp-Session-Id: $session_id" -H 'Content-Type: application/json' \
+    --data '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
+    http://127.0.0.1:39032/mcp
+  jq -e '[.result.tools[].name] | sort == ["get_sdc_change_set","get_sdc_deploy_device_result","get_sdc_deploy_status","get_sdc_device","get_sdc_firewall_policy","get_sdc_nat_policy","get_sdc_preview_device_result","get_sdc_preview_status","get_sdc_resource","get_sdc_tenant_scope","list_sdc_devices","list_sdc_firewall_policies","list_sdc_nat_policies","list_sdc_resources"]' "$tools" >/dev/null
+  jq -e '[.result.tools[].name] | index("prepare_sdc_policy_deploy") == null and index("approve_sdc_change_set") == null and index("apply_sdc_change_set") == null' "$tools" >/dev/null
+  curl --silent --show-error --fail-with-body --config "$cfg" -o "$call" \
+    -H "Mcp-Session-Id: $session_id" -H 'Content-Type: application/json' \
+    --data '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_sdc_tenant_scope","arguments":{"tenant":"production"}}}' \
+    http://127.0.0.1:39032/mcp
+  jq -e '(.error | not) and .result.isError == false' "$call" >/dev/null
+}
+verify_tunnel_client codex "$codex_token"
+verify_tunnel_client claude "$claude_token"
+printf '%s\n' 'tunnel_fallback=authenticated tools=14 write_tools=absent'
+```
+
+Do not proceed to direct endpoint qualification or change either client URL
+until this command succeeds.
+
+- [ ] **Step 3: Complete rollback if either rebinding or retargeting failed**
 
 Restore all four original states: remove the server deployment drop-in and
 restart the packaged loopback service; install the original tunnel unit with
@@ -762,7 +843,17 @@ test ! -e /root/rustsdcmcp-lan-bind-20260730'
 
 Delete `/tmp/rustsdcmcp-lan-bind-20260730/transition-lan.conf`,
 `/tmp/rustsdcmcp-lan-bind-20260730/final-lan.conf`, and the named staged tunnel
-unit (but never the active unit before Step 3) with `apply_patch`, then:
+artifacts (but never the active unit before Step 3) with `apply_patch` using
+these exact deletions, then:
+
+```diff
+*** Begin Patch
+*** Delete File: /tmp/rustsdcmcp-lan-bind-20260730/transition-lan.conf
+*** Delete File: /tmp/rustsdcmcp-lan-bind-20260730/final-lan.conf
+*** Delete File: /tmp/rustsdcmcp-lan-bind-20260730/rustsdcmcp-tunnel-transition.service
+*** Delete File: /tmp/rustsdcmcp-lan-bind-20260730/rustsdcmcp-tunnel-original.service
+*** End Patch
+```
 
 ```bash
 rmdir /tmp/rustsdcmcp-lan-bind-20260730
