@@ -446,7 +446,7 @@ verify_tunnel_client() {
   local headers=$tunnel_check/$1.headers initialize=$tunnel_check/$1.initialize
   local tools=$tunnel_check/$1.tools call=$tunnel_check/$1.call
   umask 077
-  printf 'header = "Authorization: Bearer %s"\n' "$token" >"$cfg"
+  printf 'header = "Authorization: Bearer %s"\nheader = "Accept: application/json, text/event-stream"\n' "$token" >"$cfg"
   curl --silent --show-error --fail-with-body --config "$cfg" \
     -D "$headers" -o "$initialize" -H 'Content-Type: application/json' \
     --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"tunnel-fallback-check","version":"1"}}}' \
