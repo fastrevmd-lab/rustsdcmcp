@@ -204,9 +204,11 @@ assert_installer_post_jq_validation_order() {
         "command -v jq >/dev/null || die 'jq is required to validate package JSON'" \
         "$installer")
     mapfile -t sbom_lines < <(logical_line_numbers 'validate_sbom' "$installer")
+    # shellcheck disable=SC2016
     mapfile -t sysusers_lines < <(logical_line_numbers \
         'systemd-sysusers "$package_dir/packaging/systemd/rustsdcmcp.sysusers"' \
         "$installer")
+    # shellcheck disable=SC2016
     mapfile -t install_lines < <(logical_line_numbers \
         'install -d -m 0750 "$config_dir"' \
         "$installer")
@@ -317,6 +319,7 @@ require_logical_line \
     "has_single_exact_key mecmcp_ref 'mecmcp_ref=changeset-v0.3.7' \"\$build_info\" || {" \
     packaging/tests/package-smoke.sh
 for build_info_consumer in "$installer" packaging/tests/package-smoke.sh; do
+    # shellcheck disable=SC2016
     require_logical_line \
         '$1 == key { count += 1; matches += ($0 == expected) }' \
         "$build_info_consumer"
