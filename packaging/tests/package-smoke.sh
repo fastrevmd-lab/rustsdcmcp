@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+count_exact_lines() {
+    local expected=$1 file=$2
+    awk -v expected="$expected" '$0 == expected { count += 1 } END { print count + 0 }' "$file"
+}
+
 [[ $# -eq 1 ]] || {
     printf '%s\n' 'exactly one archive argument is required' >&2
     exit 1
@@ -110,7 +115,7 @@ done <"$members_file"
 
 build_info="$work_dir/BUILD-INFO"
 tar -xOf "$archive" "$package_root/BUILD-INFO" >"$build_info"
-grep -Fqx 'mecmcp_ref=changeset-v0.3.7' "$build_info" || {
+[[ $(count_exact_lines 'mecmcp_ref=changeset-v0.3.7' "$build_info") -eq 1 ]] || {
     printf '%s\n' 'archive BUILD-INFO has the wrong mecmcp ref' >&2
     exit 1
 }
@@ -122,7 +127,13 @@ jq -e '
         and (.metadata.component.name == "rustsdcmcp")
         and (.components | type == "array" and length > 0)
         and any(.components[]; .name == "serde")
-        and any(.components[]; .name == "mecmcp-auth")
+        and any(.components[]; .name == "mecmcp-audit" and .version == "0.3.7")
+        and any(.components[]; .name == "mecmcp-auth" and .version == "0.3.7")
+        and any(.components[]; .name == "mecmcp-changeset" and .version == "0.3.7")
+        and any(.components[]; .name == "mecmcp-runtime" and .version == "0.3.7")
+        and any(.components[]; .name == "mecmcp-transport" and .version == "0.3.7")
+        and (tostring | contains("changeset-v0.3.6") | not)
+        and (tostring | contains("93ab63d7c2fad649112807378f92fcc26cce73c6") | not)
     ' "$sbom" >/dev/null || {
         printf '%s\n' 'archive SBOM is not a CycloneDX JSON document' >&2
         exit 1

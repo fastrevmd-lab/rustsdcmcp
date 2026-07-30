@@ -90,7 +90,7 @@ jobs:
           build_info="$(tar -xOf "$archive" "${build_infos[0]}")"
           printf '%s\n' "$build_info" | grep -Fx 'release_status=lab-only'
           printf '%s\n' "$build_info" | grep -Fx "git_commit=$SOURCE_SHA"
-          printf '%s\n' "$build_info" | grep -Fx 'mecmcp_ref=changeset-v0.3.6'
+          test "$(awk '$0 == "mecmcp_ref=changeset-v0.3.7" { count += 1 } END { print count + 0 }' <<<"$build_info")" -eq 1
           printf '%s\n' "$build_info" | grep -E '^glibc_floor=[0-9]+(\.[0-9]+)+$'
           mapfile -t sboms < <(tar -tzf "$archive" | grep -E '/SBOM\.cdx\.json$')
           test "${#sboms[@]}" -eq 1
@@ -99,7 +99,13 @@ jobs:
             and (.metadata.component.name == "rustsdcmcp")
             and (.components | type == "array" and length > 0)
             and any(.components[]; .name == "serde")
-            and any(.components[]; .name == "mecmcp-auth")
+            and any(.components[]; .name == "mecmcp-audit" and .version == "0.3.7")
+            and any(.components[]; .name == "mecmcp-auth" and .version == "0.3.7")
+            and any(.components[]; .name == "mecmcp-changeset" and .version == "0.3.7")
+            and any(.components[]; .name == "mecmcp-runtime" and .version == "0.3.7")
+            and any(.components[]; .name == "mecmcp-transport" and .version == "0.3.7")
+            and (tostring | contains("changeset-v0.3.6") | not)
+            and (tostring | contains("93ab63d7c2fad649112807378f92fcc26cce73c6") | not)
           ' >/dev/null
           ! tar -xOf "$archive" "${sboms[0]}" | grep -Fq "$GITHUB_WORKSPACE"
           ! tar -xOf "$archive" "${sboms[0]}" | grep -Eq '"/(home|workspace|workspaces)/'
@@ -119,6 +125,7 @@ jobs:
           test "${artifact_entries[0]}" = "$(basename -- "$archive")"$'\t'f
           test "${artifact_entries[1]}" = "$(basename -- "${archive}.sha256")"$'\t'f
       - name: Upload lab package
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rustsdcmcp-lab-${{ steps.source.outputs.sha }}

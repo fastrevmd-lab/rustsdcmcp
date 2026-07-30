@@ -137,7 +137,13 @@ jq -e '
     and (.metadata.component.name == "rustsdcmcp")
     and (.components | type == "array" and length > 0)
     and any(.components[]; .name == "serde")
-    and any(.components[]; .name == "mecmcp-auth")
+    and any(.components[]; .name == "mecmcp-audit" and .version == "0.3.7")
+    and any(.components[]; .name == "mecmcp-auth" and .version == "0.3.7")
+    and any(.components[]; .name == "mecmcp-changeset" and .version == "0.3.7")
+    and any(.components[]; .name == "mecmcp-runtime" and .version == "0.3.7")
+    and any(.components[]; .name == "mecmcp-transport" and .version == "0.3.7")
+    and (tostring | contains("changeset-v0.3.6") | not)
+    and (tostring | contains("93ab63d7c2fad649112807378f92fcc26cce73c6") | not)
 ' "$stage_dir/SBOM.cdx.json" >/dev/null || fail 'normalized SBOM lacks required metadata or dependencies'
 ! grep -Fq -- "$repo_root" "$stage_dir/SBOM.cdx.json" \
     || fail 'SBOM contains an absolute repository or worktree path'

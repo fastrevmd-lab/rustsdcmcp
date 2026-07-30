@@ -16,6 +16,26 @@ require_contains() {
     local needle=$1 file=$2
     grep -Fq -- "$needle" "$file" || fail "missing '$needle' in $file"
 }
+require_exact_count() {
+    local needle=$1 expected=$2 file=$3 actual
+    actual=$(grep -Fxc -- "$needle" "$file" || true)
+    [[ "$actual" -eq "$expected" ]] \
+        || fail "expected $expected exact '$needle' line(s) in $file; found $actual"
+}
+require_logical_line() {
+    local needle=$1 file=$2 actual
+    actual=$(awk -v needle="$needle" '
+        {
+            line = $0
+            sub(/^[[:space:]]+/, "", line)
+            sub(/[[:space:]]+$/, "", line)
+            if (line == needle) count += 1
+        }
+        END { print count + 0 }
+    ' "$file")
+    [[ "$actual" -eq 1 ]] \
+        || fail "expected one executable '$needle' line in $file; found $actual"
+}
 
 for script in scripts/build-lab-package.sh scripts/verify-packaging.sh \
     packaging/lxc/install.sh packaging/tests/package-smoke.sh; do
@@ -30,6 +50,7 @@ fi
 
 service=packaging/systemd/rustsdcmcp.service
 installer=packaging/lxc/install.sh
+ci=.github/workflows/ci.yml
 tmpfiles=packaging/systemd/rustsdcmcp.tmpfiles
 sysusers=packaging/systemd/rustsdcmcp.sysusers
 journal=packaging/journald/mecmcp.conf
@@ -87,6 +108,9 @@ require 'd /var/lib/rustsdcmcp 0700 rustsdcmcp rustsdcmcp -' "$tmpfiles"
 require '[Journal]' "$journal"
 require 'Storage=persistent' "$journal"
 require 'SystemMaxUse=512M' "$journal"
+require_exact_count \
+    "        if: github.event_name == 'push' && github.ref == 'refs/heads/main'" \
+    1 "$ci"
 # These assertions intentionally match literal shell source fragments.
 # shellcheck disable=SC2016
 require_contains 'install -o root -g rustsdcmcp -m 0640 "$package_dir/config/sdc.json.example" "$config_dir/sdc.json.example"' "$installer"
@@ -98,7 +122,12 @@ require_contains '[[ "$install_root" != / ]] || die '\''SDCMCP_INSTALL_ROOT must
 require_contains 'systemd-sysusers "$package_dir/packaging/systemd/rustsdcmcp.sysusers"' "$installer"
 # shellcheck disable=SC2016
 require_contains 'systemd-tmpfiles --create "$package_dir/packaging/systemd/rustsdcmcp.tmpfiles"' "$installer"
-require_contains 'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates' "$installer"
+require_logical_line \
+    'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates jq' \
+    "$installer"
+require_logical_line \
+    "command -v jq >/dev/null || die 'jq is required to validate package JSON'" \
+    "$installer"
 require_contains 'systemctl daemon-reload' "$installer"
 if rg -n 'systemctl (enable|start|restart|try-restart)' "$installer"; then
     fail 'installer must not enable or start the nonbootable service'
@@ -110,9 +139,35 @@ fi
 if ! grep -Fq 's#/var/lib/sdcmcp/changeset-state.json#/var/lib/rustsdcmcp/changeset-state.json#' scripts/build-lab-package.sh; then
     fail 'builder does not package the canonical state path'
 fi
-require_contains 'mecmcp_ref=changeset-v0.3.7' scripts/build-lab-package.sh
-require_contains 'mecmcp_ref=changeset-v0.3.7' packaging/lxc/install.sh
-require_contains 'mecmcp_ref=changeset-v0.3.7' packaging/tests/package-smoke.sh
+require_logical_line 'mecmcp_ref=changeset-v0.3.7' scripts/build-lab-package.sh
+require_logical_line \
+    "[[ \$(count_exact_lines 'mecmcp_ref=changeset-v0.3.7' \"\$build_info\") -eq 1 ]] || die 'BUILD-INFO mecmcp ref is invalid'" \
+    "$installer"
+require_logical_line \
+    "[[ \$(count_exact_lines 'mecmcp_ref=changeset-v0.3.7' \"\$build_info\") -eq 1 ]] || {" \
+    packaging/tests/package-smoke.sh
+require_logical_line \
+    "test \"\$(awk '\$0 == \"mecmcp_ref=changeset-v0.3.7\" { count += 1 } END { print count + 0 }' <<<\"\$build_info\")\" -eq 1" \
+    "$ci"
+sbom_validators=(
+    scripts/build-lab-package.sh
+    packaging/lxc/install.sh
+    packaging/tests/package-smoke.sh
+    "$ci"
+)
+for validator in "${sbom_validators[@]}"; do
+    for package in mecmcp-audit mecmcp-auth mecmcp-changeset mecmcp-runtime mecmcp-transport; do
+        require_logical_line \
+            "and any(.components[]; .name == \"$package\" and .version == \"0.3.7\")" \
+            "$validator"
+    done
+    require_logical_line \
+        'and (tostring | contains("changeset-v0.3.6") | not)' \
+        "$validator"
+    require_logical_line \
+        'and (tostring | contains("93ab63d7c2fad649112807378f92fcc26cce73c6") | not)' \
+        "$validator"
+done
 
 assert_builder_preserves_unsafe_output_entries() {
     local fixture fake_bin commit archive checksum outside extra

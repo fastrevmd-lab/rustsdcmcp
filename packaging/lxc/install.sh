@@ -8,6 +8,11 @@ die() {
     exit 1
 }
 
+count_exact_lines() {
+    local expected=$1 file=$2
+    awk -v expected="$expected" '$0 == expected { count += 1 } END { print count + 0 }' "$file"
+}
+
 [[ ! -L "$0" ]] || die 'installer must not be invoked through a symlink'
 install_root=${SDCMCP_INSTALL_ROOT:-}
 skip_user=${SDCMCP_INSTALL_SKIP_USER:-0}
@@ -84,29 +89,26 @@ validate_build_info() {
     grep -Eq '^git_commit=[0-9a-f]{40}$' "$build_info" || die 'BUILD-INFO commit is invalid'
     grep -Eq '^source_date_epoch=[0-9]+$' "$build_info" || die 'BUILD-INFO epoch is invalid'
     grep -Fqx 'target=x86_64-unknown-linux-gnu' "$build_info" || die 'BUILD-INFO target is invalid'
-    grep -Fqx 'mecmcp_ref=changeset-v0.3.7' "$build_info" || die 'BUILD-INFO mecmcp ref is invalid'
+    [[ $(count_exact_lines 'mecmcp_ref=changeset-v0.3.7' "$build_info") -eq 1 ]] || die 'BUILD-INFO mecmcp ref is invalid'
     grep -Eq '^glibc_floor=[0-9]+(\.[0-9]+)+$' "$build_info" || die 'BUILD-INFO GLIBC floor is invalid'
     grep -Eq '^rustc=rustc ' "$build_info" || die 'BUILD-INFO rustc metadata is invalid'
 }
 
 validate_sbom() {
     local sbom="$package_dir/SBOM.cdx.json"
-    if command -v jq >/dev/null; then
-        jq -e '
-            .bomFormat == "CycloneDX"
-            and (.metadata.component.name == "rustsdcmcp")
-            and (.components | type == "array" and length > 0)
-            and any(.components[]; .name == "serde")
-            and any(.components[]; .name == "mecmcp-auth")
-        ' "$sbom" >/dev/null || die 'SBOM lacks required CycloneDX metadata or components'
-    else
-        if ! grep -Eq '"bomFormat"[[:space:]]*:[[:space:]]*"CycloneDX"' "$sbom" \
-            || ! grep -Fq '"serde"' "$sbom" \
-            || ! grep -Fq '"mecmcp-auth"' "$sbom" \
-            || ! grep -Fq '"name": "rustsdcmcp"' "$sbom"; then
-            die 'SBOM does not identify as CycloneDX'
-        fi
-    fi
+    jq -e '
+        .bomFormat == "CycloneDX"
+        and (.metadata.component.name == "rustsdcmcp")
+        and (.components | type == "array" and length > 0)
+        and any(.components[]; .name == "serde")
+        and any(.components[]; .name == "mecmcp-audit" and .version == "0.3.7")
+        and any(.components[]; .name == "mecmcp-auth" and .version == "0.3.7")
+        and any(.components[]; .name == "mecmcp-changeset" and .version == "0.3.7")
+        and any(.components[]; .name == "mecmcp-runtime" and .version == "0.3.7")
+        and any(.components[]; .name == "mecmcp-transport" and .version == "0.3.7")
+        and (tostring | contains("changeset-v0.3.6") | not)
+        and (tostring | contains("93ab63d7c2fad649112807378f92fcc26cce73c6") | not)
+    ' "$sbom" >/dev/null || die 'SBOM lacks required CycloneDX metadata or components'
     ! grep -Eq '"/(home|workspace|workspaces)/' "$sbom" \
         || die 'SBOM contains an absolute repository or worktree path'
 }
@@ -189,7 +191,6 @@ validate_package() {
     validate_layout
     bash -n "$package_dir/packaging/lxc/install.sh"
     validate_build_info
-    validate_sbom
     validate_config
     validate_service
     grep -Fqx 'u rustsdcmcp - "rustsdcmcp service" /var/lib/rustsdcmcp /usr/sbin/nologin' "$package_dir/packaging/systemd/rustsdcmcp.sysusers" || die 'sysusers declaration is invalid'
@@ -197,7 +198,8 @@ validate_package() {
     grep -Fqx 'd /var/lib/rustsdcmcp 0700 rustsdcmcp rustsdcmcp -' "$package_dir/packaging/systemd/rustsdcmcp.tmpfiles" || die 'state tmpfiles declaration is invalid'
 }
 
-# This is deliberately before apt, sysusers, tmpfiles, or any target mutation.
+# Structural and provenance checks deliberately run before apt, sysusers,
+# tmpfiles, or any target mutation. SBOM validation follows jq installation.
 validate_package
 
 live_install=0
@@ -261,11 +263,13 @@ if (( live_install )); then
     if [[ "$skip_runtime_deps" != 1 ]]; then
         [[ -f /etc/debian_version ]] || die 'live installation requires Debian'
         apt-get update
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates jq
     fi
-    if [[ "$skip_user" != 1 ]]; then
-        systemd-sysusers "$package_dir/packaging/systemd/rustsdcmcp.sysusers"
-    fi
+fi
+command -v jq >/dev/null || die 'jq is required to validate package JSON'
+validate_sbom
+if (( live_install )) && [[ "$skip_user" != 1 ]]; then
+    systemd-sysusers "$package_dir/packaging/systemd/rustsdcmcp.sysusers"
 fi
 
 install -d -m 0750 "$config_dir"
