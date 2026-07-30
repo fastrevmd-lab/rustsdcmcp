@@ -282,9 +282,11 @@ tunnel activation fails, restore the original target with these exact commands:
 install -m 0600 "$original_tunnel" "$live_tunnel"
 cmp -s "$original_tunnel" "$live_tunnel"
 systemctl --user daemon-reload
-systemctl --user enable --now rustsdcmcp-tunnel.service
+systemctl --user restart rustsdcmcp-tunnel.service
+systemctl --user enable rustsdcmcp-tunnel.service
 test "$(systemctl --user is-enabled rustsdcmcp-tunnel.service)" = enabled
 test "$(systemctl --user is-active rustsdcmcp-tunnel.service)" = active
+test "$(ss -lnt | awk '$4 == "127.0.0.1:39032" {count++} END {print count+0}')" -eq 1
 ```
 
 - [ ] **Step 5: Install, restart, and compare protected content in one remote transaction**
@@ -410,9 +412,11 @@ the live user unit, verify it matches the staged transition artifact, then run
 `systemctl --user daemon-reload` and
 `systemctl --user restart rustsdcmcp-tunnel.service`. Require the unit to be
 enabled and active and exactly one listener at `127.0.0.1:39032`. If this
-fails, restore the original staged tunnel unit, reload and restart it, and
-then restore packaged loopback server behavior by removing `lan.conf`, running
-`systemctl daemon-reload`, and restarting `rustsdcmcp.service`.
+fails, restore the original staged tunnel unit, reload and explicitly restart
+it, ensure it is enabled, and verify its local listener using Task 2 Step 4's
+exact rollback sequence. Then restore packaged loopback server behavior by
+removing `lan.conf`, running `systemctl daemon-reload`, and restarting
+`rustsdcmcp.service`.
 
 - [ ] **Step 2: Prove authenticated fallback before direct qualification**
 
@@ -477,9 +481,10 @@ until this command succeeds.
 
 Restore all four original states: remove the server deployment drop-in and
 restart the packaged loopback service; install the original tunnel unit with
-remote `127.0.0.1:30032`; ensure the tunnel is active and enabled; and restore
-both client URLs to `http://127.0.0.1:39032/mcp`. Do not disable or delete the
-tunnel during this rollback.
+remote `127.0.0.1:30032`; reload, explicitly restart, enable, and verify the
+active tunnel and its `127.0.0.1:39032` listener; and restore both client URLs
+to `http://127.0.0.1:39032/mcp`. Do not disable or delete the tunnel during
+this rollback.
 
 ---
 

@@ -194,8 +194,9 @@ Codex or Claude
 
 If server rebinding or tunnel retargeting fails, remove the deployment
 drop-in, reload systemd, and restart the packaged loopback service. Restore
-the original tunnel target `127.0.0.1:30032`, ensure its active and enabled
-state, and restore both clients' original
+the original tunnel target `127.0.0.1:30032`, reload its user unit, explicitly
+restart its process, ensure it is enabled and active with one local
+`127.0.0.1:39032` listener, and restore both clients' original
 `http://127.0.0.1:39032/mcp` URLs. The separately staged transition and final
 drop-ins make this rollback independent of reconstructing prior content.
 
