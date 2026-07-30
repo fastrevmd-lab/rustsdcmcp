@@ -1748,6 +1748,7 @@ dependencies = [
  "mecmcp-changeset",
  "mecmcp-runtime",
  "mecmcp-transport",
+ "reqwest",
  "rmcp",
  "rustls",
  "rustsdcmcp-core",

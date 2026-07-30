@@ -420,20 +420,19 @@ removing `lan.conf`, running `systemctl daemon-reload`, and restarting
 
 - [ ] **Step 2: Prove authenticated fallback before direct qualification**
 
-Run this one safe, reproducible Bash sequence. It writes credentials only to
-mode-`0600` curl configuration files, does not print tokens, bodies, or session
-IDs, checks authenticated MCP initialize and exact tool surface for each client,
-and clears all temporary material even on failure:
+Run this one safe, reproducible Bash sequence. It passes each credential only
+through the protected environment of its verifier process, does not put a
+bearer on the command line or in a repository file, does not print tokens,
+bodies, or session IDs, checks authenticated MCP initialize and exact tool
+surface for each client, and clears the in-memory credentials even on failure.
+The test-only verifier is temporary pending
+https://github.com/fastrevmd-lab/mecmcp/issues/184:
 
 ```bash
 set -euo pipefail
-tunnel_check=$(mktemp -d /tmp/rustsdcmcp-tunnel-acceptance.XXXXXX)
-chmod 0700 "$tunnel_check"
 cleanup_tunnel_check() {
   rc=$?
-  unset codex_token claude_token session_id
-  rm -f -- "$tunnel_check"/*
-  rmdir "$tunnel_check"
+  unset codex_token claude_token
   exit "$rc"
 }
 trap cleanup_tunnel_check EXIT
@@ -441,36 +440,22 @@ codex_token=$(fish -c 'printf %s $RUSTSDCMCP_CODEX_TOKEN')
 claude_token=$(jq -r '.mcpServers.rustsdcmcp.headers.Authorization | sub("^Bearer "; "")' /home/mharman/.claude.json)
 [[ "$codex_token" =~ ^[A-Za-z0-9_-]{32,}$ ]]
 [[ "$claude_token" =~ ^[A-Za-z0-9_-]{32,}$ ]]
+[[ "$codex_token" != "$claude_token" ]]
 verify_tunnel_client() {
-  local label=$1 token=$2 cfg=$tunnel_check/$1.curl
-  local headers=$tunnel_check/$1.headers initialize=$tunnel_check/$1.initialize
-  local tools=$tunnel_check/$1.tools call=$tunnel_check/$1.call
-  umask 077
-  printf 'header = "Authorization: Bearer %s"\nheader = "Accept: application/json, text/event-stream"\n' "$token" >"$cfg"
-  curl --silent --show-error --fail-with-body --config "$cfg" \
-    -D "$headers" -o "$initialize" -H 'Content-Type: application/json' \
-    --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"tunnel-fallback-check","version":"1"}}}' \
-    http://127.0.0.1:39032/mcp
-  session_id=$(awk 'BEGIN {IGNORECASE=1} /^Mcp-Session-Id:/ {sub(/^[^:]*:[[:space:]]*/, ""); sub(/\r$/, ""); print; exit}' "$headers")
-  [[ -n "$session_id" ]]
-  curl --silent --show-error --fail-with-body --config "$cfg" -o /dev/null \
-    -H "Mcp-Session-Id: $session_id" -H 'Content-Type: application/json' \
-    --data '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}' \
-    http://127.0.0.1:39032/mcp
-  curl --silent --show-error --fail-with-body --config "$cfg" -o "$tools" \
-    -H "Mcp-Session-Id: $session_id" -H 'Content-Type: application/json' \
-    --data '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
-    http://127.0.0.1:39032/mcp
-  jq -e '[.result.tools[].name] | sort == ["get_sdc_change_set","get_sdc_deploy_device_result","get_sdc_deploy_status","get_sdc_device","get_sdc_firewall_policy","get_sdc_nat_policy","get_sdc_preview_device_result","get_sdc_preview_status","get_sdc_resource","get_sdc_tenant_scope","list_sdc_devices","list_sdc_firewall_policies","list_sdc_nat_policies","list_sdc_resources"]' "$tools" >/dev/null
-  jq -e '[.result.tools[].name] | index("prepare_sdc_policy_deploy") == null and index("approve_sdc_change_set") == null and index("apply_sdc_change_set") == null' "$tools" >/dev/null
-  curl --silent --show-error --fail-with-body --config "$cfg" -o "$call" \
-    -H "Mcp-Session-Id: $session_id" -H 'Content-Type: application/json' \
-    --data '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_sdc_tenant_scope","arguments":{"tenant":"production"}}}' \
-    http://127.0.0.1:39032/mcp
-  jq -e '(.error | not) and .result.isError == false' "$call" >/dev/null
+  local token=$1
+  RUSTSDCMCP_VERIFY_URL=http://127.0.0.1:39032/mcp \
+    RUSTSDCMCP_VERIFY_BEARER="$token" \
+    cargo test \
+      --manifest-path /home/mharman/Projects/rustsdcmcp/Cargo.toml \
+      -p rustsdcmcp \
+      --test deployed_http \
+      --locked \
+      -- \
+      --ignored \
+      --exact verifies_deployed_read_only_mcp_surface
 }
-verify_tunnel_client codex "$codex_token"
-verify_tunnel_client claude "$claude_token"
+verify_tunnel_client "$codex_token"
+verify_tunnel_client "$claude_token"
 printf '%s\n' 'tunnel_fallback=authenticated tools=14 write_tools=absent'
 ```
 
