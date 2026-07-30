@@ -4,7 +4,7 @@
 
 **Goal:** Replace the workstation SSH tunnel with direct authenticated internal-LAN access to VMID 606 while preserving exact read-only client scopes and a clean rollback path.
 
-**Architecture:** Add a deployment-only systemd drop-in that binds `rustsdcmcp` to the LXC's exact address, retains bearer authentication, and explicitly records the accepted plain-HTTP lab exception. Verify the direct route with the existing separately attributed Codex and Claude tokens before changing either client, and remove the tunnel only after both client configurations pass.
+**Architecture:** Stage separate transition and final deployment-only systemd drop-ins that bind `rustsdcmcp` to the LXC's exact address, retain bearer authentication, and explicitly record the accepted plain-HTTP lab exception. Before rebinding, stage an edit that retargets the existing local tunnel at the exact LAN listener without restarting it. After the LAN listener is healthy, restart and prove that tunnel fallback, then qualify the direct route and migrate clients. Finalize DNS-only Host acceptance and re-verify both clients before removing the tunnel.
 
 **Tech Stack:** Proxmox VE LXC snapshots, systemd, OpenSSH, Streamable HTTP MCP, mecmcp bearer-token scopes and attribution, Codex CLI, Claude Code CLI, Bash, `curl`, `jq`, GitHub Actions.
 
@@ -19,7 +19,16 @@
 - Codex and Claude retain separate tokens with exactly 14 read tools; never print, log, or commit token values.
 - Never read or display the SDC API credential, token digests, HMAC key, tenant ID, or change-set contents.
 - Never call `prepare_sdc_policy_deploy`, `approve_sdc_change_set`, `apply_sdc_change_set`, or another SDC mutation.
-- Keep the SSH tunnel active until both direct client routes pass.
+- During migration, the server accepts both Host authorities
+  `rustsdcmcp.mechub.org:30032` and `127.0.0.1:39032`; final state accepts
+  only `rustsdcmcp.mechub.org:30032`.
+- Stage the tunnel-unit retarget from remote `127.0.0.1:30032` to remote
+  `192.168.1.211:30032`, retaining local `127.0.0.1:39032`, before server
+  rebind and without restarting it.
+- Do not qualify the direct endpoint or migrate either client until the
+  retargeted tunnel provides authenticated access.
+- Keep the proven SSH tunnel active through final DNS-only server and direct
+  client verification; remove it only afterwards.
 - Keep the pre-change Proxmox snapshot after acceptance; do not create an LXC dump.
 - Preserve the original deployment and lab.2 upgrade history in documentation.
 
@@ -160,10 +169,11 @@ Expected: `pre-lan-bind-20260730` exists. Do not delete it later in this plan.
 
 ---
 
-### Task 2: Install the exact-address systemd drop-in
+### Task 2: Stage the transition and final server configurations, then rebind
 
 **Files:**
-- Create temporarily: `/tmp/rustsdcmcp-lan-bind-20260730/lan.conf`
+- Create temporarily: `/tmp/rustsdcmcp-lan-bind-20260730/transition-lan.conf`
+- Create temporarily: `/tmp/rustsdcmcp-lan-bind-20260730/final-lan.conf`
 - Create on VMID 606: `/etc/systemd/system/rustsdcmcp.service.d/lan.conf`
 - Preserve on VMID 606: `/etc/systemd/system/rustsdcmcp.service`
 
@@ -182,7 +192,15 @@ install -d -m 0700 /tmp/rustsdcmcp-lan-bind-20260730
 ```
 
 Then use `apply_patch` to create
-`/tmp/rustsdcmcp-lan-bind-20260730/lan.conf` with exactly:
+`/tmp/rustsdcmcp-lan-bind-20260730/transition-lan.conf` with exactly:
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/rustsdcmcp --device-mapping /etc/rustsdcmcp/sdc.json --transport streamable-http --host 192.168.1.211 --port 30032 --tokens-file /etc/rustsdcmcp/tokens.json --allow-insecure-bind --allowed-host rustsdcmcp.mechub.org:30032 --allowed-host 127.0.0.1:39032 --audit-format json --audit-journald --audit-redact devices=hmac --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key
+```
+
+Also create `/tmp/rustsdcmcp-lan-bind-20260730/final-lan.conf` with exactly:
 
 ```ini
 [Service]
@@ -195,18 +213,26 @@ ExecStart=/usr/local/bin/rustsdcmcp --device-mapping /etc/rustsdcmcp/sdc.json --
 Run:
 
 ```bash
-grep -Fqx '[Service]' /tmp/rustsdcmcp-lan-bind-20260730/lan.conf
-grep -Fqx 'ExecStart=' /tmp/rustsdcmcp-lan-bind-20260730/lan.conf
+grep -Fqx '[Service]' /tmp/rustsdcmcp-lan-bind-20260730/transition-lan.conf
+grep -Fqx 'ExecStart=' /tmp/rustsdcmcp-lan-bind-20260730/transition-lan.conf
+grep -Fqx \
+  'ExecStart=/usr/local/bin/rustsdcmcp --device-mapping /etc/rustsdcmcp/sdc.json --transport streamable-http --host 192.168.1.211 --port 30032 --tokens-file /etc/rustsdcmcp/tokens.json --allow-insecure-bind --allowed-host rustsdcmcp.mechub.org:30032 --allowed-host 127.0.0.1:39032 --audit-format json --audit-journald --audit-redact devices=hmac --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key' \
+  /tmp/rustsdcmcp-lan-bind-20260730/transition-lan.conf
+grep -Fqx '[Service]' /tmp/rustsdcmcp-lan-bind-20260730/final-lan.conf
+grep -Fqx 'ExecStart=' /tmp/rustsdcmcp-lan-bind-20260730/final-lan.conf
 grep -Fqx \
   'ExecStart=/usr/local/bin/rustsdcmcp --device-mapping /etc/rustsdcmcp/sdc.json --transport streamable-http --host 192.168.1.211 --port 30032 --tokens-file /etc/rustsdcmcp/tokens.json --allow-insecure-bind --allowed-host rustsdcmcp.mechub.org:30032 --audit-format json --audit-journald --audit-redact devices=hmac --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key' \
-  /tmp/rustsdcmcp-lan-bind-20260730/lan.conf
+  /tmp/rustsdcmcp-lan-bind-20260730/final-lan.conf
 ```
 
-The three exact-line checks are the local validation. A drop-in is not a
+The exact-line checks are the local validation. A drop-in is not a
 standalone unit, so validate the composed service with `systemd-analyze
 verify rustsdcmcp.service` only after staging it in Step 4.
 
 - [ ] **Step 3: Stage the validated drop-in on VMID 606**
+
+Before continuing to Step 4, complete Task 3 Step 1 to stage the edited tunnel
+unit without restarting it. This is deliberately before server rebinding.
 
 Run:
 
@@ -214,11 +240,13 @@ Run:
 ssh -T -o BatchMode=yes root@rustsdcmcp.mechub.org \
   'test ! -e /root/rustsdcmcp-lan-bind-20260730 &&
    install -d -m 0700 /root/rustsdcmcp-lan-bind-20260730'
-scp -p /tmp/rustsdcmcp-lan-bind-20260730/lan.conf \
-  root@rustsdcmcp.mechub.org:/root/rustsdcmcp-lan-bind-20260730/lan.conf
+scp -p /tmp/rustsdcmcp-lan-bind-20260730/transition-lan.conf \
+  /tmp/rustsdcmcp-lan-bind-20260730/final-lan.conf \
+  root@rustsdcmcp.mechub.org:/root/rustsdcmcp-lan-bind-20260730/
 ```
 
-Expected: one root-owned regular staging file and no secret material.
+Expected: two root-owned regular staging files and no secret material. Never
+reconstruct either configuration during rollback; select the named staged file.
 
 - [ ] **Step 4: Install, restart, and compare protected content in one remote transaction**
 
@@ -227,7 +255,7 @@ Run the following quoted remote script:
 ```bash
 ssh -T -o BatchMode=yes root@rustsdcmcp.mechub.org 'bash -s' <<'REMOTE'
 set -euo pipefail
-stage=/root/rustsdcmcp-lan-bind-20260730/lan.conf
+stage=/root/rustsdcmcp-lan-bind-20260730/transition-lan.conf
 dropin_dir=/etc/systemd/system/rustsdcmcp.service.d
 dropin="$dropin_dir/lan.conf"
 protected_paths=(
@@ -322,7 +350,59 @@ drop-in, and only `192.168.1.211:30032`.
 
 ---
 
-### Task 3: Qualify the direct authenticated LAN endpoint
+### Task 3: Retarget and prove the SSH tunnel fallback
+
+**Files:**
+- Stage locally: `/tmp/rustsdcmcp-lan-bind-20260730/rustsdcmcp-tunnel-transition.service`
+- Modify after LAN listener health: `/home/mharman/.config/systemd/user/rustsdcmcp-tunnel.service`
+- Preserve as rollback source: an exact staged copy of the original tunnel unit
+
+**Interfaces:**
+- Consumes: a healthy transition dual-Host listener and the existing enabled,
+  active local tunnel.
+- Produces: a proven authenticated fallback at local `127.0.0.1:39032` that
+  forwards to remote `192.168.1.211:30032`.
+
+- [ ] **Step 1: Stage the tunnel-unit edit before the server rebind**
+
+Before Task 2 Step 4, copy the existing user unit to the named staging file
+with mode `0600`, and use `apply_patch` to change only its remote forwarding
+target from `127.0.0.1:30032` to `192.168.1.211:30032`. Retain the local
+`127.0.0.1:39032` endpoint, all existing SSH identity and hardening options,
+and the original unit as a separately named rollback copy. Validate that the
+staged unit contains the new remote target and no old remote target. Do not
+reload or restart the user tunnel in this step.
+
+- [ ] **Step 2: Activate the staged retarget only after LAN listener health**
+
+After Task 2 confirms the exact LAN listener, install the staged tunnel unit,
+then run `systemctl --user daemon-reload` and
+`systemctl --user restart rustsdcmcp-tunnel.service`. Require the unit to be
+enabled and active and exactly one listener at `127.0.0.1:39032`. If this
+fails, restore the original staged tunnel unit, reload and restart it, and
+then restore packaged loopback server behavior by removing `lan.conf`, running
+`systemctl daemon-reload`, and restarting `rustsdcmcp.service`.
+
+- [ ] **Step 3: Prove authenticated fallback before direct qualification**
+
+Reload each existing token without printing it, and run initialize,
+`tools/list`, and bounded `get_sdc_tenant_scope` through
+`http://127.0.0.1:39032/mcp` for each client. Require authenticated success,
+the exact 14 read tools, and absent write tools. Clear in-memory tokens. Do
+not proceed to direct endpoint qualification or change either client URL until
+this proof succeeds.
+
+- [ ] **Step 4: Complete rollback if either rebinding or retargeting failed**
+
+Restore all four original states: remove the server deployment drop-in and
+restart the packaged loopback service; install the original tunnel unit with
+remote `127.0.0.1:30032`; ensure the tunnel is active and enabled; and restore
+both client URLs to `http://127.0.0.1:39032/mcp`. Do not disable or delete the
+tunnel during this rollback.
+
+---
+
+### Task 4: Qualify the direct authenticated LAN endpoint
 
 **Files:**
 - Create temporarily: `/tmp/rustsdcmcp-direct-lan-acceptance/`
@@ -455,12 +535,12 @@ unset codex_token claude_token
 test ! -e /tmp/rustsdcmcp-direct-lan-acceptance
 ```
 
-Task 4 must reload both tokens from their protected stores; it must not depend
+Task 5 must reload both tokens from their protected stores; it must not depend
 on shell state or temporary sessions from this task.
 
 ---
 
-### Task 4: Point Codex and Claude directly at VMID 606
+### Task 5: Point Codex and Claude directly at VMID 606
 
 **Files:**
 - Modify through Codex CLI: `/home/mharman/.codex/config.toml`
@@ -473,7 +553,7 @@ on shell state or temporary sessions from this task.
 
 - [ ] **Step 1: Reload both tokens and install the complete rollback trap**
 
-Start a fresh Bash process and execute all of Task 4 Steps 1 through 5 in that
+Start a fresh Bash process and execute all of Task 5 Steps 1 through 5 in that
 one process. Reload both protected values without printing or exporting them,
 then install the complete rollback before changing either client:
 
@@ -594,11 +674,12 @@ unset codex_token claude_token
 printf '%s\n' 'client_migration=accepted rollback_fallback=still_available'
 ```
 
-Keep the SSH tunnel active until Task 5.
+Keep the proven SSH tunnel active until final DNS-only server configuration and
+both direct clients pass in Task 6.
 
 ---
 
-### Task 5: Remove the SSH tunnel and clean deployment staging
+### Task 6: Finalize DNS-only Host acceptance, then remove the SSH tunnel
 
 **Files:**
 - Delete: `/home/mharman/.config/systemd/user/rustsdcmcp-tunnel.service`
@@ -608,10 +689,24 @@ Keep the SSH tunnel active until Task 5.
 
 **Interfaces:**
 - Consumes: two accepted direct client configurations.
-- Produces: no workstation tunnel, no staging material, and a retained direct
-  service configuration.
+- Produces: a final DNS-only service configuration, no workstation tunnel, no
+  staging material, and a retained direct service configuration.
 
-- [ ] **Step 1: Disable and stop the user tunnel**
+- [ ] **Step 1: Replace the transition configuration with final DNS-only configuration**
+
+Before disabling the tunnel, install the separately staged
+`/root/rustsdcmcp-lan-bind-20260730/final-lan.conf` as
+`/etc/systemd/system/rustsdcmcp.service.d/lan.conf`, reload systemd, and
+restart `rustsdcmcp.service`. Require enabled/active state, exactly one
+`192.168.1.211:30032` listener, and an effective `ExecStart` containing
+`--allowed-host rustsdcmcp.mechub.org:30032` but not
+`--allowed-host 127.0.0.1:39032`. Re-run direct initialize and exact 14-tool
+`tools/list` acceptance for Codex and Claude. If server finalization or either
+client check fails, restore the separately staged
+`transition-lan.conf`, reload and restart the server, and retain the running
+tunnel. Do not remove the tunnel in that case.
+
+- [ ] **Step 2: Disable and stop the user tunnel**
 
 Run:
 
@@ -622,7 +717,7 @@ test "$(systemctl --user is-active rustsdcmcp-tunnel.service || true)" = inactiv
 
 Expected: the enablement symlink is removed and the SSH process exits.
 
-- [ ] **Step 2: Delete only the exact user unit with `apply_patch`**
+- [ ] **Step 3: Delete only the exact user unit with `apply_patch`**
 
 Use `apply_patch`:
 
@@ -646,7 +741,7 @@ test "$(
 
 Expected: no unit file and no port-39032 listener.
 
-- [ ] **Step 3: Reconfirm direct access after tunnel removal**
+- [ ] **Step 4: Reconfirm direct access after tunnel removal**
 
 Using the stored client configuration, repeat initialize and `tools/list` for
 Codex and Claude.
@@ -654,7 +749,7 @@ Codex and Claude.
 Expected: both still connect directly and see exactly 14 read tools. This
 proves no hidden dependency on local port `39032` remains.
 
-- [ ] **Step 4: Remove only the explicit staging directories**
+- [ ] **Step 5: Remove only the explicit staging directories**
 
 Run:
 
@@ -665,7 +760,9 @@ rm -r -- /root/rustsdcmcp-lan-bind-20260730
 test ! -e /root/rustsdcmcp-lan-bind-20260730'
 ```
 
-Delete `/tmp/rustsdcmcp-lan-bind-20260730/lan.conf` with `apply_patch`, then:
+Delete `/tmp/rustsdcmcp-lan-bind-20260730/transition-lan.conf`,
+`/tmp/rustsdcmcp-lan-bind-20260730/final-lan.conf`, and the named staged tunnel
+unit (but never the active unit before Step 3) with `apply_patch`, then:
 
 ```bash
 rmdir /tmp/rustsdcmcp-lan-bind-20260730
@@ -674,7 +771,7 @@ rmdir /tmp/rustsdcmcp-lan-bind-20260730
 Report that both staging directories were removed and the Proxmox snapshot
 remains the recovery point.
 
-- [ ] **Step 5: Verify the final live state**
+- [ ] **Step 6: Verify the final live state**
 
 Run:
 
@@ -689,6 +786,10 @@ listener_count=$(ss -lnt | awk '"'"'$4 ~ /:30032$/ {count++} END {print count+0}
 exact_count=$(ss -lnt | awk '"'"'$4 == "192.168.1.211:30032" {count++} END {print count+0}'"'"')
 test "$listener_count" -eq 1
 test "$exact_count" -eq 1
+systemctl cat rustsdcmcp.service | \
+  grep -F -- '--allowed-host rustsdcmcp.mechub.org:30032'
+! systemctl cat rustsdcmcp.service | \
+  grep -F -- '--allowed-host 127.0.0.1:39032'
 systemd-analyze security --no-pager rustsdcmcp.service |
   grep -F "Overall exposure level"'
 ```
@@ -698,7 +799,7 @@ Use the Proxmox connector to list snapshots again and require
 
 ---
 
-### Task 6: Update current documentation without rewriting history
+### Task 7: Update current documentation without rewriting history
 
 **Files:**
 - Modify: `README.md`
@@ -777,7 +878,7 @@ current instructions to use the direct DNS URL.
 
 ---
 
-### Task 7: Run repository verification and update pull request 4
+### Task 8: Run repository verification and update pull request 4
 
 **Files:**
 - Verify: all files changed on branch `docs/lab2-606-upgrade`

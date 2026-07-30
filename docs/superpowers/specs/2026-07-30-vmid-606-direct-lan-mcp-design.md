@@ -41,9 +41,13 @@ per-client attribution, and exact read-only tool scopes remain required.
 
 ### Selected: exact-address HTTP bind
 
-Bind the service to `192.168.1.211:30032`, retain bearer authentication, and
-explicitly allow the DNS authority `rustsdcmcp.mechub.org:30032`. This removes
-the tunnel while limiting exposure to the one intended LXC interface.
+Bind the final service to `192.168.1.211:30032`, retain bearer authentication,
+and explicitly allow the DNS authority `rustsdcmcp.mechub.org:30032`. During
+migration, retain a working rollback path by temporarily allowing both that
+authority and `127.0.0.1:39032`, and by retargeting the existing tunnel to the
+exact LAN listener before client routing changes. This removes the tunnel only
+after final direct-client acceptance while limiting final exposure to the one
+intended LXC interface.
 
 ### Rejected: all-interface HTTP bind
 
@@ -59,26 +63,39 @@ It remains the appropriate next step before any less-trusted network exposure.
 
 ## Service configuration
 
-Create a deployment-specific systemd drop-in at:
+Create separately named, deployment-specific staging drop-ins:
 
 ```text
-/etc/systemd/system/rustsdcmcp.service.d/lan.conf
+/tmp/rustsdcmcp-lan-bind-20260730/transition-lan.conf
+/tmp/rustsdcmcp-lan-bind-20260730/final-lan.conf
 ```
 
-The drop-in clears and replaces `ExecStart` with the packaged command plus:
+The transition drop-in clears and replaces `ExecStart` with the packaged
+command plus:
 
 ```text
 --host 192.168.1.211
 --port 30032
 --allow-insecure-bind
 --allowed-host rustsdcmcp.mechub.org:30032
+--allowed-host 127.0.0.1:39032
 ```
 
 All existing authentication, audit, HMAC-redaction, token-store, and device
 mapping arguments remain unchanged. The explicit `--allow-insecure-bind`
 records the accepted plain-HTTP lab exception in executable configuration.
-The drop-in keeps the package-owned unit unchanged and can be removed cleanly
-to restore the default.
+After both clients pass on the direct DNS URL, replace the transition drop-in
+with the separately staged final drop-in. The final drop-in has the same
+command but only this authority flag:
+
+```text
+--allowed-host rustsdcmcp.mechub.org:30032
+```
+
+Install each selected staging file as
+`/etc/systemd/system/rustsdcmcp.service.d/lan.conf`. The package-owned unit
+remains unchanged and removing the deployment drop-in cleanly restores the
+packaged loopback behavior.
 
 No Proxmox or guest firewall rule is broadened in advance. If the existing
 policy blocks the exact LAN listener after a successful bind, implementation
@@ -121,21 +138,31 @@ Codex or Claude
 1. Verify DNS, VMID 606 placement, current service health, protected-file
    metadata, and the existing client token scopes.
 2. Create Proxmox snapshot `pre-lan-bind-20260730`.
-3. Stage and validate the systemd drop-in without reading secret contents.
-4. Reload systemd, restart the service, and wait for the exact LAN listener.
-5. Verify missing and fixed-invalid bearer requests return credential-free
+3. Stage and validate the separate transition and final systemd drop-ins and
+   the edited tunnel unit without reading secret contents. The staged tunnel
+   retains local `127.0.0.1:39032` but changes its remote target from
+   `127.0.0.1:30032` to `192.168.1.211:30032`; do not restart it yet.
+4. Install the transition dual-Host drop-in, reload systemd, restart the
+   server, and wait for the exact LAN listener.
+5. Reload and restart the user tunnel from its staged unit, then prove its
+   `127.0.0.1:39032` path still provides authenticated access. It is the
+   working fallback before direct endpoint qualification or client migration.
+6. Verify missing and fixed-invalid bearer requests return credential-free
    HTTP 401 responses.
-6. Verify each existing token directly over the LAN with initialize,
+7. Verify each existing token directly over the LAN with initialize,
    `tools/list`, and one bounded `get_sdc_tenant_scope` call.
-7. Change Codex and Claude from the local tunnel URL to the DNS URL.
-8. Re-run both client acceptance paths from their stored configurations.
-9. Disable and remove `rustsdcmcp-tunnel.service`, then confirm local port
-   `39032` is closed.
-10. Append the direct-LAN change to the deployment record and update current
+8. Change Codex and Claude from the local tunnel URL to the DNS URL, retaining
+   the active, proven fallback.
+9. Re-run both client acceptance paths from their stored configurations.
+10. Replace the transition drop-in with the staged final DNS-only drop-in and
+    restart the server. Verify direct Codex and Claude access again. If this
+    finalization fails, restore the dual-Host transition drop-in and retain
+    the running tunnel.
+11. Disable and remove `rustsdcmcp-tunnel.service`, then confirm local port
+    `39032` is closed, only after final DNS-only service and both direct
+    clients pass.
+12. Append the direct-LAN change to the deployment record and update current
     README and operations guidance in pull request 4.
-
-The old tunnel remains active until step 8 succeeds, so client routing has a
-known-good fallback throughout the migration.
 
 ## Acceptance criteria
 
@@ -151,6 +178,11 @@ known-good fallback throughout the migration.
 - Codex and Claude each see exactly the 14 approved read tools.
 - Both clients complete `get_sdc_tenant_scope`; audit records retain their
   distinct provider and actor attribution.
+- Before direct endpoint qualification, the retargeted local tunnel completes
+  authenticated access through `127.0.0.1:39032`.
+- Final `lan.conf` accepts only Host authority
+  `rustsdcmcp.mechub.org:30032`; the transition-only `127.0.0.1:39032`
+  authority is absent.
 - No SDC mutation is attempted.
 - `rustsdcmcp-tunnel.service` is disabled and absent, and nothing listens on
   workstation port `39032`.
@@ -158,12 +190,17 @@ known-good fallback throughout the migration.
 
 ## Failure handling and rollback
 
-If the new process fails before direct client acceptance, remove the drop-in,
-reload systemd, and restart the original loopback service. The still-active
-SSH tunnel then restores the prior client path.
+If server rebinding or tunnel retargeting fails, remove the deployment
+drop-in, reload systemd, and restart the packaged loopback service. Restore
+the original tunnel target `127.0.0.1:30032`, ensure its active and enabled
+state, and restore both clients' original
+`http://127.0.0.1:39032/mcp` URLs. The separately staged transition and final
+drop-ins make this rollback independent of reconstructing prior content.
 
 If the service succeeds but either client configuration fails, restore that
-client's URL to `http://127.0.0.1:39032/mcp`; do not remove the tunnel.
+client's URL to `http://127.0.0.1:39032/mcp`; do not remove the proven,
+retargeted tunnel. If final DNS-only configuration fails, restore the
+dual-Host transition drop-in and retain the running tunnel.
 
 The Proxmox snapshot is retained as a last-resort rollback point. Snapshot
 rollback is not automatic because it would also revert later token and
