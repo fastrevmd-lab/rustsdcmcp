@@ -16,6 +16,147 @@ require_contains() {
     local needle=$1 file=$2
     grep -Fq -- "$needle" "$file" || fail "missing '$needle' in $file"
 }
+require_logical_line() {
+    local needle=$1 file=$2 actual
+    actual=$(NEEDLE="$needle" awk '
+        BEGIN { needle = ENVIRON["NEEDLE"] }
+        {
+            line = $0
+            sub(/^[[:space:]]+/, "", line)
+            sub(/[[:space:]]+$/, "", line)
+            if (line == needle) count += 1
+        }
+        END { print count + 0 }
+    ' "$file")
+    [[ "$actual" -eq 1 ]] \
+        || fail "expected one executable '$needle' line in $file; found $actual"
+}
+logical_line_numbers() {
+    local needle=$1 file=$2
+    NEEDLE="$needle" awk '
+        BEGIN { needle = ENVIRON["NEEDLE"] }
+        {
+            line = $0
+            sub(/^[[:space:]]+/, "", line)
+            sub(/[[:space:]]+$/, "", line)
+            if (line == needle) print NR
+        }
+    ' "$file"
+}
+has_single_exact_key() {
+    local key=$1 expected=$2 file=$3
+    awk -F= -v key="$key" -v expected="$expected" '
+        $1 == key { count += 1; matches += ($0 == expected) }
+        END { exit !(count == 1 && matches == 1) }
+    ' "$file"
+}
+source_has_single_exact_key() {
+    local key=$1 expected=$2 file=$3
+    KEY="$key" EXPECTED="$expected" awk '
+        BEGIN {
+            key = ENVIRON["KEY"]
+            expected = ENVIRON["EXPECTED"]
+        }
+        {
+            line = $0
+            sub(/^[[:space:]]+/, "", line)
+            sub(/[[:space:]]+$/, "", line)
+            split(line, fields, "=")
+            if (fields[1] == key) {
+                count += 1
+                matches += (line == expected)
+            }
+        }
+        END { exit !(count == 1 && matches == 1) }
+    ' "$file"
+}
+
+assert_build_info_key_contract() {
+    local fixture
+    fixture=$(mktemp)
+    printf '%s\n' 'mecmcp_ref=changeset-v0.3.7' >"$fixture"
+    has_single_exact_key mecmcp_ref 'mecmcp_ref=changeset-v0.3.7' "$fixture" \
+        || fail 'singular expected BUILD-INFO mecmcp key was rejected'
+    printf '%s\n' 'mecmcp_ref=changeset-v0.3.6' >>"$fixture"
+    if has_single_exact_key mecmcp_ref 'mecmcp_ref=changeset-v0.3.7' "$fixture"; then
+        fail 'conflicting BUILD-INFO mecmcp key was accepted'
+    fi
+    rm -f -- "$fixture"
+}
+assert_build_info_key_contract
+
+upload_step_has_main_push_condition() {
+    local file=$1 condition
+    condition="        if: github.event_name == 'push' && github.ref == 'refs/heads/main'"
+    CONDITION="$condition" awk '
+        BEGIN { condition = ENVIRON["CONDITION"] }
+        function finish_step() {
+            if (upload_uses > 0) {
+                upload_steps += 1
+                if (upload_uses != 1 || upload_conditions != 1) invalid = 1
+            }
+        }
+        /^      - / {
+            finish_step()
+            in_step = 1
+            upload_uses = 0
+            upload_conditions = 0
+        }
+        in_step && /^        uses: actions\/upload-artifact@/ {
+            upload_uses += 1
+        }
+        in_step && $0 == condition {
+            upload_conditions += 1
+        }
+        END {
+            finish_step()
+            exit !(upload_steps == 1 && invalid == 0)
+        }
+    ' "$file"
+}
+
+extract_builder_sbom_filter() {
+    awk '
+        BEGIN { quote = sprintf("%c", 39) }
+        $0 == "jq -e " quote { capture = 1; next }
+        capture && index($0, quote " \"") == 1 { exit }
+        capture { print }
+    ' scripts/build-lab-package.sh
+}
+
+assert_exact_mecmcp_sbom_set() {
+    local filter valid candidate index
+    local -a cases=(duplicate extra mixed-registry wrong-version)
+    local -a mutations=(
+        '.components += [.components[] | select(.name == "mecmcp-auth")]'
+        '.components += [{"name":"mecmcp-extra","version":"0.3.7"}]'
+        '.components += [{"name":"mecmcp-auth","version":"0.3.6","purl":"pkg:cargo/mecmcp-auth@0.3.6"}]'
+        '(.components[] | select(.name == "mecmcp-auth") | .version) = "0.3.6"'
+    )
+    filter=$(extract_builder_sbom_filter)
+    [[ -n "$filter" ]] || fail 'could not extract builder SBOM jq filter'
+    valid=$(jq -nc '{
+        bomFormat: "CycloneDX",
+        metadata: {component: {name: "rustsdcmcp"}},
+        components: [
+            {name: "serde", version: "1.0.0"},
+            {name: "mecmcp-audit", version: "0.3.7"},
+            {name: "mecmcp-auth", version: "0.3.7"},
+            {name: "mecmcp-changeset", version: "0.3.7"},
+            {name: "mecmcp-runtime", version: "0.3.7"},
+            {name: "mecmcp-transport", version: "0.3.7"}
+        ]
+    }')
+    jq -e "$filter" <<<"$valid" >/dev/null \
+        || fail 'builder SBOM filter rejected the exact mecmcp component set'
+    for index in "${!cases[@]}"; do
+        candidate=$(jq -c "${mutations[$index]}" <<<"$valid")
+        if jq -e "$filter" <<<"$candidate" >/dev/null; then
+            fail "builder SBOM filter accepted ${cases[$index]} mecmcp components"
+        fi
+    done
+}
+assert_exact_mecmcp_sbom_set
 
 for script in scripts/build-lab-package.sh scripts/verify-packaging.sh \
     packaging/lxc/install.sh packaging/tests/package-smoke.sh; do
@@ -30,10 +171,63 @@ fi
 
 service=packaging/systemd/rustsdcmcp.service
 installer=packaging/lxc/install.sh
+ci=.github/workflows/ci.yml
 tmpfiles=packaging/systemd/rustsdcmcp.tmpfiles
 sysusers=packaging/systemd/rustsdcmcp.sysusers
 journal=packaging/journald/mecmcp.conf
 expected_exec='/usr/local/bin/rustsdcmcp --device-mapping /etc/rustsdcmcp/sdc.json --transport streamable-http --host 127.0.0.1 --port 30032 --tokens-file /etc/rustsdcmcp/tokens.json --audit-format json --audit-journald --audit-redact devices=hmac --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key'
+
+assert_upload_step_policy() {
+    local mutated condition
+    condition="        if: github.event_name == 'push' && github.ref == 'refs/heads/main'"
+    upload_step_has_main_push_condition "$ci" \
+        || fail 'artifact upload step lacks its exact main-push condition'
+    mutated=$(mktemp)
+    CONDITION="$condition" awk '
+        BEGIN { condition = ENVIRON["CONDITION"] }
+        $0 == condition { next }
+        $0 == "      - name: Upload lab package" { print condition }
+        { print }
+    ' "$ci" >"$mutated"
+    if upload_step_has_main_push_condition "$mutated"; then
+        fail 'upload policy accepted a condition attached to another YAML step'
+    fi
+    rm -f -- "$mutated"
+}
+assert_upload_step_policy
+
+assert_installer_post_jq_validation_order() {
+    local jq_line sbom_line sysusers_line install_line
+    local -a config_lines=() jq_lines=() sbom_lines=() sysusers_lines=() install_lines=()
+    mapfile -t config_lines < <(logical_line_numbers 'validate_config' "$installer")
+    mapfile -t jq_lines < <(logical_line_numbers \
+        "command -v jq >/dev/null || die 'jq is required to validate package JSON'" \
+        "$installer")
+    mapfile -t sbom_lines < <(logical_line_numbers 'validate_sbom' "$installer")
+    # shellcheck disable=SC2016
+    mapfile -t sysusers_lines < <(logical_line_numbers \
+        'systemd-sysusers "$package_dir/packaging/systemd/rustsdcmcp.sysusers"' \
+        "$installer")
+    # shellcheck disable=SC2016
+    mapfile -t install_lines < <(logical_line_numbers \
+        'install -d -m 0750 "$config_dir"' \
+        "$installer")
+    [[ ${#config_lines[@]} -eq 2 && ${#jq_lines[@]} -eq 1 \
+        && ${#sbom_lines[@]} -eq 1 && ${#sysusers_lines[@]} -eq 1 \
+        && ${#install_lines[@]} -eq 1 ]] \
+        || fail 'installer must have singular ordered validation and mutation calls'
+    jq_line=${jq_lines[0]}
+    sbom_line=${sbom_lines[0]}
+    sysusers_line=${sysusers_lines[0]}
+    install_line=${install_lines[0]}
+    (( config_lines[0] < jq_line
+        && jq_line < config_lines[1]
+        && config_lines[1] < sbom_line
+        && sbom_line < sysusers_line
+        && sbom_line < install_line )) \
+        || fail 'installer must revalidate config after jq and before SBOM or mutation'
+}
+assert_installer_post_jq_validation_order
 
 service_directive_values() {
     local key=$1
@@ -98,7 +292,12 @@ require_contains '[[ "$install_root" != / ]] || die '\''SDCMCP_INSTALL_ROOT must
 require_contains 'systemd-sysusers "$package_dir/packaging/systemd/rustsdcmcp.sysusers"' "$installer"
 # shellcheck disable=SC2016
 require_contains 'systemd-tmpfiles --create "$package_dir/packaging/systemd/rustsdcmcp.tmpfiles"' "$installer"
-require_contains 'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates' "$installer"
+require_logical_line \
+    'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates jq' \
+    "$installer"
+require_logical_line \
+    "command -v jq >/dev/null || die 'jq is required to validate package JSON'" \
+    "$installer"
 require_contains 'systemctl daemon-reload' "$installer"
 if rg -n 'systemctl (enable|start|restart|try-restart)' "$installer"; then
     fail 'installer must not enable or start the nonbootable service'
@@ -110,6 +309,57 @@ fi
 if ! grep -Fq 's#/var/lib/sdcmcp/changeset-state.json#/var/lib/rustsdcmcp/changeset-state.json#' scripts/build-lab-package.sh; then
     fail 'builder does not package the canonical state path'
 fi
+source_has_single_exact_key \
+    mecmcp_ref 'mecmcp_ref=changeset-v0.3.7' scripts/build-lab-package.sh \
+    || fail 'builder must emit one exact mecmcp BUILD-INFO key'
+require_logical_line \
+    "has_single_exact_key mecmcp_ref 'mecmcp_ref=changeset-v0.3.7' \"\$build_info\" || die 'BUILD-INFO mecmcp ref is invalid'" \
+    "$installer"
+require_logical_line \
+    "has_single_exact_key mecmcp_ref 'mecmcp_ref=changeset-v0.3.7' \"\$build_info\" || {" \
+    packaging/tests/package-smoke.sh
+for build_info_consumer in "$installer" packaging/tests/package-smoke.sh; do
+    # shellcheck disable=SC2016
+    require_logical_line \
+        '$1 == key { count += 1; matches += ($0 == expected) }' \
+        "$build_info_consumer"
+    require_logical_line \
+        'END { exit !(count == 1 && matches == 1) }' \
+        "$build_info_consumer"
+done
+require_logical_line \
+    "printf '%s\n' \"\$build_info\" | awk -F= -v expected='mecmcp_ref=changeset-v0.3.7' '\$1 == \"mecmcp_ref\" { count += 1; matches += (\$0 == expected) } END { exit !(count == 1 && matches == 1) }'" \
+    "$ci"
+sbom_validators=(
+    scripts/build-lab-package.sh
+    packaging/lxc/install.sh
+    packaging/tests/package-smoke.sh
+    "$ci"
+)
+required_mecmcp_pairs=(
+    '["mecmcp-audit", "0.3.7"],'
+    '["mecmcp-auth", "0.3.7"],'
+    '["mecmcp-changeset", "0.3.7"],'
+    '["mecmcp-runtime", "0.3.7"],'
+    '["mecmcp-transport", "0.3.7"]'
+)
+for validator in "${sbom_validators[@]}"; do
+    require_logical_line \
+        '| select(.name? | strings | startswith("mecmcp-"))' \
+        "$validator"
+    require_logical_line '| [.name, .version]' "$validator"
+    require_logical_line '] | sort)' "$validator"
+    require_logical_line '== [' "$validator"
+    for pair in "${required_mecmcp_pairs[@]}"; do
+        require_logical_line "$pair" "$validator"
+    done
+    require_logical_line \
+        'and (tostring | contains("changeset-v0.3.6") | not)' \
+        "$validator"
+    require_logical_line \
+        'and (tostring | contains("93ab63d7c2fad649112807378f92fcc26cce73c6") | not)' \
+        "$validator"
+done
 
 assert_builder_preserves_unsafe_output_entries() {
     local fixture fake_bin commit archive checksum outside extra

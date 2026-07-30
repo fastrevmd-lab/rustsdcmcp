@@ -121,7 +121,7 @@ version=0.1.0
 git_commit=$git_commit
 source_date_epoch=$source_date_epoch
 target=x86_64-unknown-linux-gnu
-mecmcp_ref=changeset-v0.3.6
+mecmcp_ref=changeset-v0.3.7
 glibc_floor=$glibc_floor
 rustc=$rustc_metadata
 EOF
@@ -137,7 +137,22 @@ jq -e '
     and (.metadata.component.name == "rustsdcmcp")
     and (.components | type == "array" and length > 0)
     and any(.components[]; .name == "serde")
-    and any(.components[]; .name == "mecmcp-auth")
+    and (
+        ([
+            .components[]
+            | select(.name? | strings | startswith("mecmcp-"))
+            | [.name, .version]
+        ] | sort)
+        == [
+            ["mecmcp-audit", "0.3.7"],
+            ["mecmcp-auth", "0.3.7"],
+            ["mecmcp-changeset", "0.3.7"],
+            ["mecmcp-runtime", "0.3.7"],
+            ["mecmcp-transport", "0.3.7"]
+        ]
+    )
+    and (tostring | contains("changeset-v0.3.6") | not)
+    and (tostring | contains("93ab63d7c2fad649112807378f92fcc26cce73c6") | not)
 ' "$stage_dir/SBOM.cdx.json" >/dev/null || fail 'normalized SBOM lacks required metadata or dependencies'
 ! grep -Fq -- "$repo_root" "$stage_dir/SBOM.cdx.json" \
     || fail 'SBOM contains an absolute repository or worktree path'
