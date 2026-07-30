@@ -31,37 +31,41 @@ therefore protect the management plane rather than merely decorate it.
 ## Current status
 
 `rustsdcmcp` is available to repository collaborators as the private
-[`v0.1.0-lab.1` prerelease](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.1.0-lab.1),
-which targets `65135e29484be4487f5ba58bdf70ec0ef7518288`. It exposes 17 MCP
-tools: 14 bounded read tools and three write tools—`prepare_sdc_policy_deploy`,
+[`v0.1.0-lab.2` prerelease](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.1.0-lab.2),
+which targets `190dab9a4e8ff546b06403999afbaaacfe96633c` and pins all five
+shared mecmcp crates to `changeset-v0.3.7`. It exposes 17 MCP tools: 14 bounded
+read tools and three write tools—`prepare_sdc_policy_deploy`,
 `approve_sdc_change_set`, and `apply_sdc_change_set`—that can be used only
 through prepare → independent approval → apply.
 
-Live, read-only validation against SDC has verified credential-based startup
-tenant validation, `get_sdc_tenant_scope`, and `list_sdc_devices` with
+The original live, read-only validation against SDC verified credential-based
+startup tenant validation, `get_sdc_tenant_scope`, and `list_sdc_devices` with
 `from=0,size=1`. Authentication and the tenant-scope check also succeeded
-after a service restart. No preview, approval, apply, deployment, or other SDC
-mutation was attempted; the remaining endpoint questions are tracked in
+after a service restart. The lab.2 upgrade revalidated startup tenant identity,
+the exact installed binary, bearer rejection behavior, and the loopback-only
+listener without replaying an authenticated MCP tool call. No preview,
+approval, apply, deployment, or other SDC mutation was attempted; the
+remaining endpoint questions are tracked in
 [`docs/sdc-api/README.md`](docs/sdc-api/README.md#still-unverified).
 
 ## Private prerelease
 
 Repository collaborators can download the private
-[`v0.1.0-lab.1` prerelease](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.1.0-lab.1)
+[`v0.1.0-lab.2` prerelease](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.1.0-lab.2)
 and verify its archive:
 
 ```console
-gh release download v0.1.0-lab.1 \
+gh release download v0.1.0-lab.2 \
   --repo fastrevmd-lab/rustsdcmcp \
-  --pattern 'rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz*'
-sha256sum -c rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz.sha256
-sha256sum rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz
+  --pattern 'rustsdcmcp_0.1.0-lab.20260730.190dab9a4e8f_amd64.tar.gz*'
+sha256sum -c rustsdcmcp_0.1.0-lab.20260730.190dab9a4e8f_amd64.tar.gz.sha256
+sha256sum rustsdcmcp_0.1.0-lab.20260730.190dab9a4e8f_amd64.tar.gz
 ```
 
 The final command must print:
 
 ```text
-f3497192cb6fe8c83cfad8014fadc787ff16de7bca89a2302b565331e4f21848  rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz
+7ce2b10c27d422aebb18488f08b7a12419e543ad33ff95b1ec16e2cf014a06d5  rustsdcmcp_0.1.0-lab.20260730.190dab9a4e8f_amd64.tar.gz
 ```
 
 ## Build from approved source
@@ -71,7 +75,7 @@ the authorized commit, operators must first bind their detached checkout to
 that commit before building, testing, or packaging:
 
 ```console
-approved_commit=65135e29484be4487f5ba58bdf70ec0ef7518288
+approved_commit=190dab9a4e8ff546b06403999afbaaacfe96633c
 git checkout --detach "$approved_commit"
 test "$(git rev-parse HEAD)" = "$approved_commit"
 cargo build --release --locked
@@ -88,7 +92,7 @@ records only the archive basename:
 
 ```console
 artifact_dir="dist/$approved_commit"
-archive="$artifact_dir/rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz"
+archive="$artifact_dir/rustsdcmcp_0.1.0-lab.20260730.190dab9a4e8f_amd64.tar.gz"
 (cd "$artifact_dir" && sha256sum -c "$(basename "$archive").sha256")
 package_root=$(tar -tzf "$archive" | sed -n '1s#/.*##p')
 test -n "$package_root"
@@ -109,7 +113,7 @@ After downloading the release assets, install the verified package:
 
 ```bash
 set -euo pipefail
-archive=rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz
+archive=rustsdcmcp_0.1.0-lab.20260730.190dab9a4e8f_amd64.tar.gz
 sha256sum -c "$archive.sha256"
 package_root=$(tar -tzf "$archive" | sed -n '1s#/.*##p')
 test -n "$package_root"
@@ -178,9 +182,11 @@ in [`docs/operations.md`](docs/operations.md).
 
 The qualified Debian lab package deployment runs on VMID 606 on `pve2`, with
 Debian 13 and DNS `rustsdcmcp.mechub.org`; VMID 606 runs under the packaged
-`rustsdcmcp.service` systemd unit. It uses a loopback-only endpoint, the private
-prerelease and SBOM, and the qualified live read-only results described above.
-The detailed acceptance record is
+`rustsdcmcp.service` systemd unit. It was upgraded in place to
+`v0.1.0-lab.2` and mecmcp `0.3.7` on 2026-07-30 after snapshot
+`pre-lab2-20260730`. It uses a loopback-only endpoint, the private prerelease
+and SBOM, and the qualified live read-only results described above. The
+detailed initial and upgrade acceptance record is
 [`docs/lab-deployment-606.md`](docs/lab-deployment-606.md). It intentionally
 does not reproduce tenant identifiers, credentials, bearer tokens, HMAC keys,
 or runtime state.
@@ -200,11 +206,12 @@ or runtime state.
 
 [`mecmcp`](https://github.com/fastrevmd-lab/mecmcp) is the vendor-neutral Rust
 foundation shared by the mechub MCP server family. This repository consumes it,
-rather than forking it. Current source and the next lab-package build pin all
-five shared crates to `changeset-v0.3.7`. The existing private
-`v0.1.0-lab.1` prerelease and VMID 606 were built with `changeset-v0.3.6`, as
-recorded in [`docs/lab-deployment-606.md`](docs/lab-deployment-606.md).
-The 59 temporary compatibility declarations remain tracked in the
+rather than forking it. Current source, the private `v0.1.0-lab.2`
+prerelease, and VMID 606 pin all five shared crates to
+`changeset-v0.3.7`. The earlier `v0.1.0-lab.1` prerelease and VMID 606's
+original deployment used `changeset-v0.3.6`, as recorded in
+[`docs/lab-deployment-606.md`](docs/lab-deployment-606.md). The 59 temporary
+compatibility declarations remain tracked in the
 [`mecmcp compatibility ledger`](docs/mecmcp-compatibility.md); public `v0.1.0`
 remains blocked until all 59 are replaced by one coherent upstream release.
 
