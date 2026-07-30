@@ -90,7 +90,7 @@ jobs:
           build_info="$(tar -xOf "$archive" "${build_infos[0]}")"
           printf '%s\n' "$build_info" | grep -Fx 'release_status=lab-only'
           printf '%s\n' "$build_info" | grep -Fx "git_commit=$SOURCE_SHA"
-          test "$(awk '$0 == "mecmcp_ref=changeset-v0.3.7" { count += 1 } END { print count + 0 }' <<<"$build_info")" -eq 1
+          printf '%s\n' "$build_info" | awk -F= -v expected='mecmcp_ref=changeset-v0.3.7' '$1 == "mecmcp_ref" { count += 1; matches += ($0 == expected) } END { exit !(count == 1 && matches == 1) }'
           printf '%s\n' "$build_info" | grep -E '^glibc_floor=[0-9]+(\.[0-9]+)+$'
           mapfile -t sboms < <(tar -tzf "$archive" | grep -E '/SBOM\.cdx\.json$')
           test "${#sboms[@]}" -eq 1
@@ -99,11 +99,20 @@ jobs:
             and (.metadata.component.name == "rustsdcmcp")
             and (.components | type == "array" and length > 0)
             and any(.components[]; .name == "serde")
-            and any(.components[]; .name == "mecmcp-audit" and .version == "0.3.7")
-            and any(.components[]; .name == "mecmcp-auth" and .version == "0.3.7")
-            and any(.components[]; .name == "mecmcp-changeset" and .version == "0.3.7")
-            and any(.components[]; .name == "mecmcp-runtime" and .version == "0.3.7")
-            and any(.components[]; .name == "mecmcp-transport" and .version == "0.3.7")
+            and (
+              ([
+                .components[]
+                | select(.name? | strings | startswith("mecmcp-"))
+                | [.name, .version]
+              ] | sort)
+              == [
+                ["mecmcp-audit", "0.3.7"],
+                ["mecmcp-auth", "0.3.7"],
+                ["mecmcp-changeset", "0.3.7"],
+                ["mecmcp-runtime", "0.3.7"],
+                ["mecmcp-transport", "0.3.7"]
+              ]
+            )
             and (tostring | contains("changeset-v0.3.6") | not)
             and (tostring | contains("93ab63d7c2fad649112807378f92fcc26cce73c6") | not)
           ' >/dev/null

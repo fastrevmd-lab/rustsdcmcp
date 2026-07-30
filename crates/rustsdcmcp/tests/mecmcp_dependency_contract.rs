@@ -15,29 +15,36 @@ const COMMIT: &str = "85137c509fe1803b87e8636462f0392ce05072ce";
 const REPOSITORY: &str = "https://github.com/fastrevmd-lab/mecmcp";
 
 fn validate_mecmcp_lockfile(lock: &str) -> Result<(), String> {
-    fn quoted_field<'a>(block: &'a str, key: &str) -> Option<&'a str> {
-        block.lines().find_map(|line| {
-            line.strip_prefix(key)?
-                .strip_prefix(" = \"")?
-                .strip_suffix('"')
-        })
-    }
-
     let source = format!("git+{REPOSITORY}?tag={TAG}#{COMMIT}");
     let mut expected = PACKAGES
         .map(|package| (package.to_owned(), VERSION.to_owned(), source.clone()))
         .to_vec();
+    let document = lock
+        .parse::<toml::Table>()
+        .map_err(|error| format!("lockfile must be valid TOML: {error}"))?;
+    let package_tables = document
+        .get("package")
+        .and_then(toml::Value::as_array)
+        .ok_or_else(|| "lockfile must contain package tables".to_owned())?;
     let mut actual = Vec::new();
-    for block in lock.split("[[package]]") {
-        let Some(name) = quoted_field(block, "name") else {
-            continue;
-        };
+    for (index, package) in package_tables.iter().enumerate() {
+        let table = package
+            .as_table()
+            .ok_or_else(|| format!("lockfile package {index} must be a table"))?;
+        let name = table
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .ok_or_else(|| format!("lockfile package {index} must have a string name"))?;
         if !name.starts_with("mecmcp-") {
             continue;
         }
-        let version = quoted_field(block, "version")
+        let version = table
+            .get("version")
+            .and_then(toml::Value::as_str)
             .ok_or_else(|| format!("{name} lockfile block lacks a version"))?;
-        let package_source = quoted_field(block, "source")
+        let package_source = table
+            .get("source")
+            .and_then(toml::Value::as_str)
             .ok_or_else(|| format!("{name} lockfile block lacks a source"))?;
         actual.push((
             name.to_owned(),
@@ -97,6 +104,53 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         validate_mecmcp_lockfile(&lock).is_err(),
         "an alternate-source mecmcp package must invalidate the dependency contract"
     );
+}
+
+#[test]
+fn rejects_noncanonical_toml_rogue_packages() {
+    let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lock =
+        fs::read_to_string(crate_root.join("../../Cargo.lock")).expect("read workspace lockfile");
+    let rogue_blocks = [
+        (
+            "indented keys",
+            r#"
+[[package]]
+    name = "mecmcp-indented"
+    version = "0.3.7"
+    source = "registry+https://github.com/rust-lang/crates.io-index"
+"#,
+        ),
+        (
+            "literal strings",
+            r#"
+[[package]]
+name = 'mecmcp-literal'
+version = '0.3.7'
+source = 'registry+https://github.com/rust-lang/crates.io-index'
+"#,
+        ),
+        (
+            "spaced array-table header",
+            r#"
+[[ package ]]
+name = "mecmcp-spaced-header"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+"#,
+        ),
+    ];
+
+    for (case, rogue_block) in rogue_blocks {
+        let candidate = format!("{lock}{rogue_block}");
+        candidate
+            .parse::<toml::Table>()
+            .unwrap_or_else(|error| panic!("{case} fixture must be valid TOML: {error}"));
+        assert!(
+            validate_mecmcp_lockfile(&candidate).is_err(),
+            "{case} must not hide a rogue mecmcp package"
+        );
+    }
 }
 
 #[test]

@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-count_exact_lines() {
-    local expected=$1 file=$2
-    awk -v expected="$expected" '$0 == expected { count += 1 } END { print count + 0 }' "$file"
+has_single_exact_key() {
+    local key=$1 expected=$2 file=$3
+    awk -F= -v key="$key" -v expected="$expected" '
+        $1 == key { count += 1; matches += ($0 == expected) }
+        END { exit !(count == 1 && matches == 1) }
+    ' "$file"
 }
 
 [[ $# -eq 1 ]] || {
@@ -115,7 +118,7 @@ done <"$members_file"
 
 build_info="$work_dir/BUILD-INFO"
 tar -xOf "$archive" "$package_root/BUILD-INFO" >"$build_info"
-[[ $(count_exact_lines 'mecmcp_ref=changeset-v0.3.7' "$build_info") -eq 1 ]] || {
+has_single_exact_key mecmcp_ref 'mecmcp_ref=changeset-v0.3.7' "$build_info" || {
     printf '%s\n' 'archive BUILD-INFO has the wrong mecmcp ref' >&2
     exit 1
 }
@@ -127,11 +130,20 @@ jq -e '
         and (.metadata.component.name == "rustsdcmcp")
         and (.components | type == "array" and length > 0)
         and any(.components[]; .name == "serde")
-        and any(.components[]; .name == "mecmcp-audit" and .version == "0.3.7")
-        and any(.components[]; .name == "mecmcp-auth" and .version == "0.3.7")
-        and any(.components[]; .name == "mecmcp-changeset" and .version == "0.3.7")
-        and any(.components[]; .name == "mecmcp-runtime" and .version == "0.3.7")
-        and any(.components[]; .name == "mecmcp-transport" and .version == "0.3.7")
+        and (
+            ([
+                .components[]
+                | select(.name? | strings | startswith("mecmcp-"))
+                | [.name, .version]
+            ] | sort)
+            == [
+                ["mecmcp-audit", "0.3.7"],
+                ["mecmcp-auth", "0.3.7"],
+                ["mecmcp-changeset", "0.3.7"],
+                ["mecmcp-runtime", "0.3.7"],
+                ["mecmcp-transport", "0.3.7"]
+            ]
+        )
         and (tostring | contains("changeset-v0.3.6") | not)
         and (tostring | contains("93ab63d7c2fad649112807378f92fcc26cce73c6") | not)
     ' "$sbom" >/dev/null || {

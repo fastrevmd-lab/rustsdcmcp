@@ -8,9 +8,12 @@ die() {
     exit 1
 }
 
-count_exact_lines() {
-    local expected=$1 file=$2
-    awk -v expected="$expected" '$0 == expected { count += 1 } END { print count + 0 }' "$file"
+has_single_exact_key() {
+    local key=$1 expected=$2 file=$3
+    awk -F= -v key="$key" -v expected="$expected" '
+        $1 == key { count += 1; matches += ($0 == expected) }
+        END { exit !(count == 1 && matches == 1) }
+    ' "$file"
 }
 
 [[ ! -L "$0" ]] || die 'installer must not be invoked through a symlink'
@@ -89,7 +92,7 @@ validate_build_info() {
     grep -Eq '^git_commit=[0-9a-f]{40}$' "$build_info" || die 'BUILD-INFO commit is invalid'
     grep -Eq '^source_date_epoch=[0-9]+$' "$build_info" || die 'BUILD-INFO epoch is invalid'
     grep -Fqx 'target=x86_64-unknown-linux-gnu' "$build_info" || die 'BUILD-INFO target is invalid'
-    [[ $(count_exact_lines 'mecmcp_ref=changeset-v0.3.7' "$build_info") -eq 1 ]] || die 'BUILD-INFO mecmcp ref is invalid'
+    has_single_exact_key mecmcp_ref 'mecmcp_ref=changeset-v0.3.7' "$build_info" || die 'BUILD-INFO mecmcp ref is invalid'
     grep -Eq '^glibc_floor=[0-9]+(\.[0-9]+)+$' "$build_info" || die 'BUILD-INFO GLIBC floor is invalid'
     grep -Eq '^rustc=rustc ' "$build_info" || die 'BUILD-INFO rustc metadata is invalid'
 }
@@ -101,11 +104,20 @@ validate_sbom() {
         and (.metadata.component.name == "rustsdcmcp")
         and (.components | type == "array" and length > 0)
         and any(.components[]; .name == "serde")
-        and any(.components[]; .name == "mecmcp-audit" and .version == "0.3.7")
-        and any(.components[]; .name == "mecmcp-auth" and .version == "0.3.7")
-        and any(.components[]; .name == "mecmcp-changeset" and .version == "0.3.7")
-        and any(.components[]; .name == "mecmcp-runtime" and .version == "0.3.7")
-        and any(.components[]; .name == "mecmcp-transport" and .version == "0.3.7")
+        and (
+            ([
+                .components[]
+                | select(.name? | strings | startswith("mecmcp-"))
+                | [.name, .version]
+            ] | sort)
+            == [
+                ["mecmcp-audit", "0.3.7"],
+                ["mecmcp-auth", "0.3.7"],
+                ["mecmcp-changeset", "0.3.7"],
+                ["mecmcp-runtime", "0.3.7"],
+                ["mecmcp-transport", "0.3.7"]
+            ]
+        )
         and (tostring | contains("changeset-v0.3.6") | not)
         and (tostring | contains("93ab63d7c2fad649112807378f92fcc26cce73c6") | not)
     ' "$sbom" >/dev/null || die 'SBOM lacks required CycloneDX metadata or components'
@@ -267,6 +279,7 @@ if (( live_install )); then
     fi
 fi
 command -v jq >/dev/null || die 'jq is required to validate package JSON'
+validate_config
 validate_sbom
 if (( live_install )) && [[ "$skip_user" != 1 ]]; then
     systemd-sysusers "$package_dir/packaging/systemd/rustsdcmcp.sysusers"
