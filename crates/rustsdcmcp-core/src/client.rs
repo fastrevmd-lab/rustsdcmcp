@@ -41,6 +41,7 @@ pub struct SdcClient {
     concurrency: Arc<Semaphore>,
     poll: crate::config::PollSettings,
     max_page_size: u32,
+    shutdown: CancellationToken,
 }
 
 impl std::fmt::Debug for SdcClient {
@@ -104,7 +105,20 @@ impl SdcClient {
                 .poll_settings()
                 .map_err(|error| SdcError::Config(error.to_string()))?,
             max_page_size: config.max_page_size,
+            shutdown: CancellationToken::new(),
         })
+    }
+
+    /// Bind this client to a process-wide shutdown signal.
+    ///
+    /// Every request and job poll then aborts when the process begins shutting
+    /// down, instead of holding a listener drain open for the remainder of
+    /// `poll_deadline_ms`. A client built without one carries a token that is
+    /// never cancelled.
+    #[must_use]
+    pub fn with_shutdown(mut self, shutdown: CancellationToken) -> Self {
+        self.shutdown = shutdown;
+        self
     }
 
     #[cfg(test)]
@@ -407,6 +421,7 @@ impl SdcClient {
             };
             let status = tokio::select! {
                 () = cancellation.cancelled() => return Err(SdcError::Cancelled),
+                () = self.shutdown.cancelled() => return Err(SdcError::Cancelled),
                 () = time::sleep_until(deadline) => return Err(SdcError::JobDeadline),
                 result = probe => result?,
             };
@@ -415,6 +430,7 @@ impl SdcClient {
             }
             tokio::select! {
                 () = cancellation.cancelled() => return Err(SdcError::Cancelled),
+                () = self.shutdown.cancelled() => return Err(SdcError::Cancelled),
                 () = time::sleep_until(deadline) => return Err(SdcError::JobDeadline),
                 () = time::sleep(interval) => {}
             }
@@ -535,6 +551,7 @@ impl SdcClient {
 
         let (status, body) = tokio::select! {
             () = cancellation.cancelled() => return Err(SdcError::Cancelled),
+            () = self.shutdown.cancelled() => return Err(SdcError::Cancelled),
             result = time::timeout(self.request_timeout, operation) => {
                 result.map_err(|_| SdcError::Timeout)??
             }
@@ -865,6 +882,46 @@ mod tests {
         assert!(
             started.elapsed() < Duration::from_secs(2),
             "cancellation must abandon the call, not wait for the 2s request timeout"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn process_shutdown_aborts_work_the_request_token_would_not() {
+        // systemd stops the unit with SIGTERM while a request token is still
+        // live. Without this the listener drain would block for the remainder
+        // of poll_deadline_ms and be SIGKILLed at TimeoutStopSec.
+        let app = Router::new().route(
+            "/api/v1/devices",
+            get(|| async {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                Json(serde_json::json!({"items": []}))
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        let shutdown = CancellationToken::new();
+        let trigger = shutdown.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            trigger.cancel();
+        });
+
+        // The per-request token stays uncancelled throughout.
+        let request_token = CancellationToken::new();
+        let started = std::time::Instant::now();
+        let error = client(base_url, 4096)
+            .with_shutdown(shutdown)
+            .list_devices(
+                ListRequest::new(0, 20, 100).expect("test page"),
+                &request_token,
+            )
+            .await
+            .expect_err("shutdown must abort the call");
+        assert!(matches!(error, SdcError::Cancelled));
+        assert!(!request_token.is_cancelled());
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "shutdown must abandon the call, not wait for the 2s request timeout"
         );
         server.abort();
     }

@@ -46,10 +46,44 @@ fn resolve_auth_mode(
     }
 }
 
+/// Cancel `shutdown` on the first SIGTERM or SIGINT.
+///
+/// `mecmcp_runtime::shutdown::GracefulShutdown` supplies the Ctrl-C half; the
+/// SIGTERM watcher beside it covers how systemd actually stops this unit.
+fn install_shutdown_signals(shutdown: CancellationToken) -> Result<()> {
+    let coordinator = mecmcp_runtime::shutdown::GracefulShutdown::new();
+    let interrupt = coordinator.subscribe();
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .context("installing SIGTERM handler")?;
+    tokio::spawn(async move {
+        // Hold the coordinator so its Ctrl-C sender stays alive.
+        let _coordinator = coordinator;
+        tokio::select! {
+            () = interrupt => tracing::info!("received SIGINT, shutting down"),
+            _ = terminate.recv() => tracing::info!("received SIGTERM, shutting down"),
+        }
+        shutdown.cancel();
+    });
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Cli::parse();
     mecmcp_runtime::cli_validate::validate(&args).map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    // Decide the listener's authentication boundary alongside the rest of the
+    // CLI refusals, before anything reads a credential or contacts SDC. Only
+    // loading the selected store is deferred, so an unusable flag combination
+    // is reported as itself rather than as a downstream credential error.
+    let auth_mode = match args.transport {
+        // Stdio has no HTTP boundary, so a token store would never be consulted.
+        Transport::Stdio => None,
+        Transport::StreamableHttp => Some(
+            resolve_auth_mode(args.tokens_file.as_deref(), args.allow_no_auth)
+                .map_err(|error| anyhow::anyhow!("{error}"))?,
+        ),
+    };
 
     let redaction = if args.audit_redact.trim().is_empty() {
         None
@@ -94,9 +128,18 @@ async fn main() -> Result<()> {
             config.credential_env
         )
     })?;
-    let client = SdcClient::new(&config, credential).context("building SDC client")?;
+    // `GracefulShutdown` installs a Ctrl-C handler only. systemd stops this
+    // unit with SIGTERM (`KillSignal=SIGTERM`), which that coordinator does not
+    // observe, so feed SIGTERM into the same trigger rather than standing up a
+    // second coordinator beside it. The upstream gap is mecmcp's to close.
+    let shutdown = CancellationToken::new();
+    install_shutdown_signals(shutdown.clone())?;
+
+    let client = SdcClient::new(&config, credential)
+        .context("building SDC client")?
+        .with_shutdown(shutdown.clone());
     client
-        .verify_tenant(&config.expected_tenant_id, &CancellationToken::new())
+        .verify_tenant(&config.expected_tenant_id, &shutdown)
         .await
         .context("verifying SDC credential tenant scope")?;
 
@@ -109,28 +152,21 @@ async fn main() -> Result<()> {
     )?);
     let handler = SdcHandler::new(Arc::<str>::from(config.tenant.as_str()), client, changes);
 
-    let token_store = match args.transport {
-        // Stdio has no HTTP boundary, so a token store would never be consulted.
-        Transport::Stdio => None,
-        Transport::StreamableHttp => {
-            match resolve_auth_mode(args.tokens_file.as_deref(), args.allow_no_auth)
-                .map_err(|error| anyhow::anyhow!("{error}"))?
-            {
-                AuthMode::Tokens(path) => {
-                    let store = Arc::new(
-                        TokenStoreFile::<NoGrant>::load(&path)
-                            .with_context(|| format!("loading {}", path.display()))?,
-                    );
-                    tracing::info!(tokens = store.store().len(), "token store loaded");
-                    Some(store)
-                }
-                AuthMode::NoAuth => {
-                    tracing::warn!(
-                        "--allow-no-auth: Streamable HTTP accepts unauthenticated requests on loopback"
-                    );
-                    None
-                }
-            }
+    let token_store = match auth_mode {
+        None => None,
+        Some(AuthMode::Tokens(path)) => {
+            let store = Arc::new(
+                TokenStoreFile::<NoGrant>::load(&path)
+                    .with_context(|| format!("loading {}", path.display()))?,
+            );
+            tracing::info!(tokens = store.store().len(), "token store loaded");
+            Some(store)
+        }
+        Some(AuthMode::NoAuth) => {
+            tracing::warn!(
+                "--allow-no-auth: Streamable HTTP accepts unauthenticated requests on loopback"
+            );
+            None
         }
     };
 
@@ -146,8 +182,15 @@ async fn main() -> Result<()> {
 
     match args.transport {
         Transport::Stdio => {
+            // serve_with_ct rather than serve: `serve` does not return until
+            // the client sends `initialize`, so a token installed afterwards
+            // would miss a signal arriving during the handshake and leave the
+            // process blocked on an open stdin. The token owns the service
+            // here, and cancelling it cascades to every in-flight request
+            // context, so a signal abandons running SDC work rather than
+            // waiting out the job-poll deadline.
             let service = handler
-                .serve((tokio::io::stdin(), tokio::io::stdout()))
+                .serve_with_ct((tokio::io::stdin(), tokio::io::stdout()), shutdown)
                 .await
                 .context("starting MCP stdio service")?;
             service
@@ -175,6 +218,7 @@ async fn main() -> Result<()> {
                 mecmcp_transport::LimitsConfig::default(),
                 false,
                 tls,
+                shutdown,
             )
             .await?;
         }
