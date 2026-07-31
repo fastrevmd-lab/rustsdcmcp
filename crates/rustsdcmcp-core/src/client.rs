@@ -817,13 +817,41 @@ mod tests {
 
     #[tokio::test]
     async fn path_parameters_remain_one_encoded_segment() {
-        let app = Router::new().fallback(|| async { Json(serde_json::json!({"ok": true})) });
+        // A hostile identifier must be percent-encoded into exactly one path
+        // segment. Route it explicitly rather than with a fallback: a fallback
+        // answers every path, so it would pass just as happily if the value
+        // were split across segments or leaked into the query string.
+        let app = Router::new()
+            .route(
+                "/api/v1/devices/{device_uuid}",
+                get(
+                    |axum::extract::Path(device_uuid): axum::extract::Path<String>,
+                     Query(query): Query<HashMap<String, String>>| async move {
+                        Json(serde_json::json!({
+                            "device_uuid": device_uuid,
+                            "query_keys": query.into_keys().collect::<Vec<_>>(),
+                        }))
+                    },
+                ),
+            )
+            .fallback(|uri: axum::http::Uri| async move {
+                // Reached only if the identifier escaped its single segment.
+                Json(serde_json::json!({"escaped_to": uri.to_string()}))
+            });
         let (base_url, server) = serve(app).await;
         let result = client(base_url, 4096)
-            .get_device("a/b?admin=true", &CancellationToken::new())
+            .get_device("a/b?admin=true#frag", &CancellationToken::new())
             .await
             .expect("encoded path succeeds");
-        assert_eq!(result["ok"], true);
+        assert_eq!(
+            result["device_uuid"], "a/b?admin=true#frag",
+            "identifier did not survive as one encoded segment: {result}"
+        );
+        assert_eq!(
+            result["query_keys"],
+            serde_json::json!([]),
+            "identifier leaked into the query string: {result}"
+        );
         server.abort();
     }
 
