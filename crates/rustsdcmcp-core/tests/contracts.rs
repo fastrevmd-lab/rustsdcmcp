@@ -1,26 +1,56 @@
 //! Product contract tests against the pinned SDC OpenAPI shapes.
 
 use rustsdcmcp_core::{
-    AuthScheme, DeploymentStatus, ListRequest, PolicyOperation, PolicyType, SdcConfig, Target,
+    AuthScheme, DeploymentStatus, ListRequest, PolicyOperation, PolicyType, SdcClient, SdcConfig,
+    Target,
 };
 
-#[test]
-fn config_uses_an_external_credential_and_never_serializes_the_secret() {
-    let config: SdcConfig = serde_json::from_value(serde_json::json!({
+fn test_config() -> SdcConfig {
+    serde_json::from_value(serde_json::json!({
         "version": 1,
         "tenant": "production",
         "expected_tenant_id": "tenant-123",
         "credential_env": "SDC_TOKEN",
-        "auth_scheme": "oauth2_token"
+        "auth_scheme": "oauth2_token",
+        "endpoint": "https://example.invalid/"
     }))
-    .expect("valid config");
+    .expect("valid config")
+}
 
+#[test]
+fn config_names_the_credential_variable_and_carries_no_field_for_its_value() {
+    let config = test_config();
     assert_eq!(config.auth_scheme, AuthScheme::Oauth2Token);
     assert_eq!(config.credential_env, "SDC_TOKEN");
 
+    // The config names the variable; the value lives only in the environment.
+    // `deny_unknown_fields` means a serialized config round-trips through the
+    // exact declared field set, so no additional key can smuggle a secret in.
     let serialized = serde_json::to_string(&config).expect("config serializes");
-    assert!(!serialized.contains("never-serialize-me"));
     assert!(serialized.contains("SDC_TOKEN"));
+    let round_trip: SdcConfig = serde_json::from_str(&serialized).expect("config round-trips");
+    assert_eq!(round_trip.credential_env, config.credential_env);
+    assert_eq!(round_trip.auth_scheme, config.auth_scheme);
+}
+
+#[test]
+fn a_credential_never_reaches_the_client_debug_representation() {
+    // This is the leak that matters: `SdcClient` is held across the handler and
+    // change manager, so any Debug/tracing render of it would put a tenant-wide
+    // credential into the audit log.
+    const SECRET: &str = "sdc-credential-that-must-never-be-rendered";
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let client = SdcClient::new(&test_config(), SECRET.to_owned()).expect("client builds");
+    let rendered = format!("{client:?}");
+    assert!(
+        !rendered.contains(SECRET),
+        "credential leaked into SdcClient Debug output: {rendered}"
+    );
+    assert!(
+        rendered.contains("REDACTED"),
+        "credential field must render as redacted, got: {rendered}"
+    );
 }
 
 #[test]
