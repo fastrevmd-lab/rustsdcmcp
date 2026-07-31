@@ -11,6 +11,7 @@ use rmcp::{
     },
 };
 use std::{net::SocketAddr, sync::Arc};
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone)]
 /// mecmcp-compat: type mecmcp_transport::HostOriginPolicy https://github.com/fastrevmd-lab/mecmcp/issues/114
@@ -42,14 +43,20 @@ pub(crate) struct HttpTransportConfig {
     host_origin: HostOriginPolicy,
     bearer: Option<BearerBoundary>,
     enable_metrics: bool,
+    shutdown: CancellationToken,
 }
 
 impl HttpTransportConfig {
     /// mecmcp-compat: method HttpTransportConfig::new https://github.com/fastrevmd-lab/mecmcp/issues/150
+    /// `shutdown` is a constructor argument rather than a builder step because
+    /// rmcp terminates every active session on that token: a listener built
+    /// without one leaks SSE streams past process shutdown, so it must not be
+    /// possible to forget it.
     pub(crate) fn new(
         identity: TransportIdentity,
         limits: LimitsConfig,
         host_origin: HostOriginPolicy,
+        shutdown: CancellationToken,
     ) -> Self {
         Self {
             identity,
@@ -57,6 +64,7 @@ impl HttpTransportConfig {
             host_origin,
             bearer: None,
             enable_metrics: false,
+            shutdown,
         }
     }
 
@@ -98,6 +106,7 @@ pub(crate) enum HttpServeError {
 /// mecmcp-compat: function mecmcp_transport::streamable_http_server_config https://github.com/fastrevmd-lab/mecmcp/issues/149
 pub(crate) fn streamable_http_server_config(
     policy: &HostOriginPolicy,
+    shutdown: CancellationToken,
 ) -> StreamableHttpServerConfig {
     let HostOriginPolicy::Enforced {
         allowed_hosts,
@@ -108,6 +117,7 @@ pub(crate) fn streamable_http_server_config(
     if !allowed_origins.is_empty() {
         config.allowed_origins = allowed_origins.clone();
     }
+    config.cancellation_token = shutdown;
     config
 }
 
@@ -129,7 +139,7 @@ where
     let service = StreamableHttpService::new(
         service_factory,
         sessions,
-        streamable_http_server_config(&config.host_origin),
+        streamable_http_server_config(&config.host_origin, config.shutdown.clone()),
     );
     let mut router =
         Router::new()
@@ -161,24 +171,51 @@ pub(crate) async fn serve_router(
     router: Router,
     address: SocketAddr,
     tls: Option<Arc<rustls::ServerConfig>>,
+    shutdown: CancellationToken,
 ) -> Result<(), HttpServeError> {
-    if let Some(tls) = tls {
-        let config = axum_server::tls_rustls::RustlsConfig::from_config(tls);
-        axum_server::bind_rustls(address, config)
-            .serve(router.into_make_service_with_connect_info::<SocketAddr>())
-            .await
-            .map_err(HttpServeError::Serve)
-    } else {
-        let listener = tokio::net::TcpListener::bind(address)
-            .await
-            .map_err(|error| HttpServeError::Bind { address, error })?;
-        axum::serve(
-            listener,
-            router.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .await
-        .map_err(HttpServeError::Serve)
+    // Both listeners run on axum_server so they share one forced deadline.
+    // `axum::serve`'s `with_graceful_shutdown` takes a signal but no deadline:
+    // it waits on every in-flight connection task forever, and an MCP SSE
+    // stream never ends on its own, so the plaintext listener -- the packaged
+    // default -- would hang until systemd's TimeoutStopSec SIGKILL.
+    let listener = std::net::TcpListener::bind(address)
+        .map_err(|error| HttpServeError::Bind { address, error })?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| HttpServeError::Bind { address, error })?;
+
+    // Backstop only. rmcp ends the sessions on the same token and the SDC
+    // client aborts its own work, so the drain is normally immediate; this
+    // bounds a stuck connection well under the unit's TimeoutStopSec=30s.
+    let shutdown_grace = std::time::Duration::from_secs(10);
+    let handle = axum_server::Handle::new();
+    tokio::spawn({
+        let handle = handle.clone();
+        async move {
+            shutdown.cancelled().await;
+            handle.graceful_shutdown(Some(shutdown_grace));
+        }
+    });
+    let service = router.into_make_service_with_connect_info::<SocketAddr>();
+
+    match tls {
+        Some(tls) => {
+            let config = axum_server::tls_rustls::RustlsConfig::from_config(tls);
+            axum_server::tls_rustls::from_tcp_rustls(listener, config)
+                .map_err(|error| HttpServeError::Bind { address, error })?
+                .handle(handle)
+                .serve(service)
+                .await
+        }
+        None => {
+            axum_server::from_tcp(listener)
+                .map_err(|error| HttpServeError::Bind { address, error })?
+                .handle(handle)
+                .serve(service)
+                .await
+        }
     }
+    .map_err(HttpServeError::Serve)
 }
 
 #[cfg(test)]
@@ -235,6 +272,7 @@ mod tests {
             TransportIdentity::new("testmcp", "test", "test", ["tenant"]),
             limits,
             HostOriginPolicy::enforced(Vec::<String>::new(), Vec::<String>::new()),
+            CancellationToken::new(),
         )
         .with_bearer(BearerBoundary::new(
             authenticator,
@@ -249,7 +287,13 @@ mod tests {
     fn host_origin_policy_preserves_loopback_defaults() {
         let policy =
             HostOriginPolicy::enforced(["mcp.example.test"], ["https://client.example.test"]);
-        let config = streamable_http_server_config(&policy);
+        let shutdown = CancellationToken::new();
+        let config = streamable_http_server_config(&policy, shutdown.clone());
+        // rmcp terminates every active session on this token, so an open SSE
+        // stream must not outlive process shutdown.
+        assert!(!config.cancellation_token.is_cancelled());
+        shutdown.cancel();
+        assert!(config.cancellation_token.is_cancelled());
         assert!(config.allowed_hosts.contains(&"localhost".to_owned()));
         assert!(
             config

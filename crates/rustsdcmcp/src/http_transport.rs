@@ -13,6 +13,7 @@ use axum::Router;
 use mecmcp_auth::{CallerCtx, NoGrant, TokenStoreFile};
 use mecmcp_transport::{LimitsConfig, TransportIdentity};
 use std::{net::SocketAddr, sync::Arc};
+use tokio_util::sync::CancellationToken;
 
 /// Build the complete shared HTTP router with SDC-owned identity and scope fields.
 pub fn build_http_router(
@@ -22,6 +23,7 @@ pub fn build_http_router(
     allowed_origins: Vec<String>,
     limits: LimitsConfig,
     enable_metrics: bool,
+    shutdown: CancellationToken,
 ) -> Result<Router> {
     let body_limit = limits.max_request_body_bytes;
     let identity = TransportIdentity::new("sdcmcp", "sdc", "rustsdcmcp", ["tenant"]);
@@ -29,6 +31,7 @@ pub fn build_http_router(
         identity,
         limits,
         HostOriginPolicy::enforced(allowed_hosts, allowed_origins),
+        shutdown,
     )
     .with_metrics(enable_metrics);
 
@@ -67,6 +70,7 @@ pub async fn serve_http(
     limits: LimitsConfig,
     enable_metrics: bool,
     tls: Option<Arc<rustls::ServerConfig>>,
+    shutdown: CancellationToken,
 ) -> Result<()> {
     let router = build_http_router(
         handler,
@@ -75,8 +79,9 @@ pub async fn serve_http(
         allowed_origins,
         limits,
         enable_metrics,
+        shutdown.clone(),
     )?;
-    serve_router(router, address, tls)
+    serve_router(router, address, tls, shutdown)
         .await
         .context("serving SDC Streamable HTTP")
 }

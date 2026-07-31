@@ -288,6 +288,7 @@ impl SdcHandler {
         &self,
         Parameters(args): Parameters<TenantArgs>,
         extensions: Extensions,
+        cancellation: CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let caller = caller_from_extensions::<NoGrant>(&extensions);
         let mut audit = audit_scope(
@@ -300,10 +301,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
-            audit,
-            self.client.tenant_scope(&CancellationToken::new()).await,
-        ))
+        Ok(finish(audit, self.client.tenant_scope(&cancellation).await))
     }
 
     #[tool(
@@ -314,6 +312,7 @@ impl SdcHandler {
         &self,
         Parameters(args): Parameters<ListArgs>,
         extensions: Extensions,
+        cancellation: CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let caller = caller_from_extensions::<NoGrant>(&extensions);
         let mut audit = audit_scope(
@@ -329,11 +328,7 @@ impl SdcHandler {
         let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
             .map_err(SdcError::from);
         let result = match result {
-            Ok(page) => {
-                self.client
-                    .list_devices(page, &CancellationToken::new())
-                    .await
-            }
+            Ok(page) => self.client.list_devices(page, &cancellation).await,
             Err(error) => Err(error),
         };
         Ok(finish(audit, result))
@@ -347,6 +342,7 @@ impl SdcHandler {
         &self,
         Parameters(args): Parameters<DeviceArgs>,
         extensions: Extensions,
+        cancellation: CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let caller = caller_from_extensions::<NoGrant>(&extensions);
         let mut audit = audit_scope(caller, "get_sdc_device", "read", vec![args.tenant.clone()]);
@@ -357,7 +353,7 @@ impl SdcHandler {
         Ok(finish(
             audit,
             self.client
-                .get_device(&args.device_uuid, &CancellationToken::new())
+                .get_device(&args.device_uuid, &cancellation)
                 .await,
         ))
     }
@@ -370,6 +366,7 @@ impl SdcHandler {
         &self,
         Parameters(args): Parameters<ListArgs>,
         extensions: Extensions,
+        cancellation: CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let caller = caller_from_extensions::<NoGrant>(&extensions);
         let mut audit = audit_scope(
@@ -387,7 +384,7 @@ impl SdcHandler {
         let result = match result {
             Ok(page) => {
                 self.client
-                    .list_firewall_policies(page, &CancellationToken::new())
+                    .list_firewall_policies(page, &cancellation)
                     .await
             }
             Err(error) => Err(error),
@@ -403,6 +400,7 @@ impl SdcHandler {
         &self,
         Parameters(args): Parameters<PolicyArgs>,
         extensions: Extensions,
+        cancellation: CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let caller = caller_from_extensions::<NoGrant>(&extensions);
         let mut audit = audit_scope(
@@ -418,7 +416,7 @@ impl SdcHandler {
         Ok(finish(
             audit,
             self.client
-                .get_firewall_policy(&args.policy_id, &CancellationToken::new())
+                .get_firewall_policy(&args.policy_id, &cancellation)
                 .await,
         ))
     }
@@ -431,6 +429,7 @@ impl SdcHandler {
         &self,
         Parameters(args): Parameters<ListArgs>,
         extensions: Extensions,
+        cancellation: CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let caller = caller_from_extensions::<NoGrant>(&extensions);
         let mut audit = audit_scope(
@@ -446,11 +445,7 @@ impl SdcHandler {
         let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
             .map_err(SdcError::from);
         let result = match result {
-            Ok(page) => {
-                self.client
-                    .list_nat_policies(page, &CancellationToken::new())
-                    .await
-            }
+            Ok(page) => self.client.list_nat_policies(page, &cancellation).await,
             Err(error) => Err(error),
         };
         Ok(finish(audit, result))
@@ -464,6 +459,7 @@ impl SdcHandler {
         &self,
         Parameters(args): Parameters<PolicyArgs>,
         extensions: Extensions,
+        cancellation: CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let caller = caller_from_extensions::<NoGrant>(&extensions);
         let mut audit = audit_scope(
@@ -479,7 +475,7 @@ impl SdcHandler {
         Ok(finish(
             audit,
             self.client
-                .get_nat_policy(&args.policy_id, &CancellationToken::new())
+                .get_nat_policy(&args.policy_id, &cancellation)
                 .await,
         ))
     }
@@ -492,6 +488,7 @@ impl SdcHandler {
         &self,
         Parameters(args): Parameters<ResourceListArgs>,
         extensions: Extensions,
+        cancellation: CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let caller = caller_from_extensions::<NoGrant>(&extensions);
         let mut audit = audit_scope(
@@ -509,7 +506,7 @@ impl SdcHandler {
         let result = match result {
             Ok(page) => {
                 self.client
-                    .list_resource(args.resource, page, &CancellationToken::new())
+                    .list_resource(args.resource, page, &cancellation)
                     .await
             }
             Err(error) => Err(error),
@@ -525,6 +522,7 @@ impl SdcHandler {
         &self,
         Parameters(args): Parameters<ResourceArgs>,
         extensions: Extensions,
+        cancellation: CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let caller = caller_from_extensions::<NoGrant>(&extensions);
         let mut audit = audit_scope(
@@ -540,7 +538,7 @@ impl SdcHandler {
         Ok(finish(
             audit,
             self.client
-                .get_resource(args.resource, &args.uuid, &CancellationToken::new())
+                .get_resource(args.resource, &args.uuid, &cancellation)
                 .await,
         ))
     }
@@ -553,6 +551,7 @@ impl SdcHandler {
         &self,
         Parameters(args): Parameters<JobArgs>,
         extensions: Extensions,
+        cancellation: CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let caller = caller_from_extensions::<NoGrant>(&extensions);
         let mut audit = audit_scope(
@@ -568,7 +567,7 @@ impl SdcHandler {
         Ok(finish(
             audit,
             self.client
-                .preview_status(&args.job_id, &CancellationToken::new())
+                .preview_status(&args.job_id, &cancellation)
                 .await,
         ))
     }
@@ -581,6 +580,7 @@ impl SdcHandler {
         &self,
         Parameters(args): Parameters<JobArgs>,
         extensions: Extensions,
+        cancellation: CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let caller = caller_from_extensions::<NoGrant>(&extensions);
         let mut audit = audit_scope(
@@ -595,9 +595,7 @@ impl SdcHandler {
         }
         Ok(finish(
             audit,
-            self.client
-                .deploy_status(&args.job_id, &CancellationToken::new())
-                .await,
+            self.client.deploy_status(&args.job_id, &cancellation).await,
         ))
     }
 
@@ -609,6 +607,7 @@ impl SdcHandler {
         &self,
         Parameters(args): Parameters<JobDeviceArgs>,
         extensions: Extensions,
+        cancellation: CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let caller = caller_from_extensions::<NoGrant>(&extensions);
         let mut audit = audit_scope(
@@ -624,7 +623,7 @@ impl SdcHandler {
         Ok(finish(
             audit,
             self.client
-                .preview_device_result(&args.job_id, &args.device_id, &CancellationToken::new())
+                .preview_device_result(&args.job_id, &args.device_id, &cancellation)
                 .await,
         ))
     }
@@ -637,6 +636,7 @@ impl SdcHandler {
         &self,
         Parameters(args): Parameters<JobDeviceArgs>,
         extensions: Extensions,
+        cancellation: CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let caller = caller_from_extensions::<NoGrant>(&extensions);
         let mut audit = audit_scope(
@@ -652,7 +652,7 @@ impl SdcHandler {
         Ok(finish(
             audit,
             self.client
-                .deploy_device_result(&args.job_id, &args.device_id, &CancellationToken::new())
+                .deploy_device_result(&args.job_id, &args.device_id, &cancellation)
                 .await,
         ))
     }
@@ -665,6 +665,7 @@ impl SdcHandler {
         &self,
         Parameters(args): Parameters<PrepareArgs>,
         extensions: Extensions,
+        cancellation: CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let caller = caller_from_extensions::<NoGrant>(&extensions);
         let mut audit = audit_scope(
@@ -680,7 +681,7 @@ impl SdcHandler {
         Ok(finish(
             audit,
             self.changes
-                .prepare(owner(caller), args.policies, &CancellationToken::new())
+                .prepare(owner(caller), args.policies, &cancellation)
                 .await,
         ))
     }
@@ -721,6 +722,7 @@ impl SdcHandler {
         &self,
         Parameters(args): Parameters<ApplyArgs>,
         extensions: Extensions,
+        cancellation: CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let caller = caller_from_extensions::<NoGrant>(&extensions);
         let mut audit = audit_scope(
@@ -743,7 +745,7 @@ impl SdcHandler {
                     args.expected_digest,
                     args.expected_preview_digest,
                     &attribution,
-                    &CancellationToken::new(),
+                    &cancellation,
                 )
                 .await,
         ))
@@ -802,6 +804,32 @@ impl ServerHandler for SdcHandler {
 mod tests {
     use super::*;
     use mecmcp_auth::{ActorType, ScopeSet};
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn known_tools_matches_the_registered_router_exactly() {
+        // `KNOWN_TOOLS` is what `token_cmd` validates minted token scopes against.
+        // If it drifts from the router, a real tool becomes unmintable and a
+        // deleted one stays mintable, both without any other test failing.
+        let registered = SdcHandler::sdc_tool_router()
+            .list_all()
+            .iter()
+            .map(|tool| tool.name.to_string())
+            .collect::<BTreeSet<_>>();
+        let known = KNOWN_TOOLS
+            .iter()
+            .map(|tool| (*tool).to_owned())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(registered, known);
+    }
+
+    #[test]
+    fn every_write_tool_is_a_registered_tool() {
+        let known = KNOWN_TOOLS.iter().copied().collect::<BTreeSet<_>>();
+        for tool in WRITE_TOOLS {
+            assert!(known.contains(tool), "{tool} is not a registered tool");
+        }
+    }
 
     fn caller(targets: ScopeSet, tools: ScopeSet) -> CallerCtx<NoGrant> {
         CallerCtx {
