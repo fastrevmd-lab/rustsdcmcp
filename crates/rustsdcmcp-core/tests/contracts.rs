@@ -1,8 +1,8 @@
 //! Product contract tests against the pinned SDC OpenAPI shapes.
 
 use rustsdcmcp_core::{
-    AuthScheme, DeploymentStatus, ListRequest, PolicyOperation, PolicyType, SdcClient, SdcConfig,
-    Target,
+    AuthScheme, DeploymentStatus, DeviceDeploymentStatus, JobStatus, ListRequest, PolicyOperation,
+    PolicyType, SdcClient, SdcConfig, Target,
 };
 
 fn test_config() -> SdcConfig {
@@ -85,6 +85,65 @@ fn preview_operation_matches_the_pinned_openapi_shape() {
             "undeploy_targets": []
         })
     );
+}
+
+#[test]
+fn an_undocumented_status_is_preserved_rather_than_failing_the_read() {
+    // SDC adds states over time. A status this build predates must degrade one
+    // classification, not fail every tool that returns a job status.
+    let job: JobStatus = serde_json::from_value(serde_json::json!({
+        "status": "ROLLBACK_IN_PROGRESS",
+        "device_deployment_status": [{
+            "device_id": "device-1",
+            "status": "DEVICE_STATUS_QUARANTINED",
+            "message": ""
+        }],
+        "message": ""
+    }))
+    .expect("an unknown status must not fail deserialization");
+
+    assert_eq!(
+        job.status,
+        DeploymentStatus::Unrecognized("ROLLBACK_IN_PROGRESS".to_owned())
+    );
+    assert_eq!(
+        job.device_deployment_status[0].status,
+        DeviceDeploymentStatus::Unrecognized("DEVICE_STATUS_QUARANTINED".to_owned())
+    );
+
+    // Never terminal, never successful: polling reports an indeterminate
+    // outcome instead of inventing a verdict for a state it cannot classify.
+    assert!(!job.status.is_terminal());
+    assert!(!job.status.succeeded());
+
+    // The vendor's own string survives into the audit and preview artifacts.
+    let round_trip = serde_json::to_value(&job).expect("job serializes");
+    assert_eq!(round_trip["status"], "ROLLBACK_IN_PROGRESS");
+    assert_eq!(
+        round_trip["device_deployment_status"][0]["status"],
+        "DEVICE_STATUS_QUARANTINED"
+    );
+}
+
+#[test]
+fn documented_statuses_round_trip_to_their_exact_wire_values() {
+    for (status, wire) in [
+        (DeploymentStatus::Unknown, "DEPLOY_STATUS_UNKNOWN"),
+        (DeploymentStatus::Pending, "PENDING"),
+        (DeploymentStatus::InProgress, "IN_PROGRESS"),
+        (DeploymentStatus::Completed, "COMPLETED"),
+        (DeploymentStatus::PartialSuccess, "PARTIAL_SUCCESS"),
+        (DeploymentStatus::Failed, "FAILED"),
+    ] {
+        assert_eq!(status.as_wire(), wire);
+        assert_eq!(
+            serde_json::to_value(&status).expect("serializes"),
+            serde_json::json!(wire)
+        );
+        let parsed: DeploymentStatus =
+            serde_json::from_value(serde_json::json!(wire)).expect("deserializes");
+        assert_eq!(parsed, status);
+    }
 }
 
 #[test]

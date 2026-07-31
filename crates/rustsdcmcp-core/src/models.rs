@@ -150,66 +150,150 @@ pub struct TenantScope {
 }
 
 /// Overall preview/deploy state documented by SDC.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// SDC is a management plane whose API adds states over time. An unrecognized
+/// value is preserved verbatim rather than rejected, so a vendor-side addition
+/// degrades one classification instead of failing every read tool that returns
+/// a job status. It is never treated as terminal or successful.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeploymentStatus {
     /// SDC could not classify the operation.
-    #[serde(rename = "DEPLOY_STATUS_UNKNOWN")]
     Unknown,
     /// Queued but not started.
-    #[serde(rename = "PENDING")]
     Pending,
     /// Work is in progress.
-    #[serde(rename = "IN_PROGRESS")]
     InProgress,
     /// All targets completed.
-    #[serde(rename = "COMPLETED")]
     Completed,
     /// Some targets failed.
-    #[serde(rename = "PARTIAL_SUCCESS")]
     PartialSuccess,
     /// All targets failed.
-    #[serde(rename = "FAILED")]
     Failed,
+    /// A state absent from the pinned OpenAPI document, kept verbatim.
+    Unrecognized(String),
 }
 
 impl DeploymentStatus {
-    /// Whether SDC declares this state terminal.
+    /// Exact wire value from the pinned OpenAPI document.
     #[must_use]
-    pub const fn is_terminal(self) -> bool {
+    pub fn as_wire(&self) -> &str {
+        match self {
+            Self::Unknown => "DEPLOY_STATUS_UNKNOWN",
+            Self::Pending => "PENDING",
+            Self::InProgress => "IN_PROGRESS",
+            Self::Completed => "COMPLETED",
+            Self::PartialSuccess => "PARTIAL_SUCCESS",
+            Self::Failed => "FAILED",
+            Self::Unrecognized(value) => value,
+        }
+    }
+
+    fn from_wire(value: &str) -> Self {
+        match value {
+            "DEPLOY_STATUS_UNKNOWN" => Self::Unknown,
+            "PENDING" => Self::Pending,
+            "IN_PROGRESS" => Self::InProgress,
+            "COMPLETED" => Self::Completed,
+            "PARTIAL_SUCCESS" => Self::PartialSuccess,
+            "FAILED" => Self::Failed,
+            other => Self::Unrecognized(other.to_owned()),
+        }
+    }
+
+    /// Whether SDC declares this state terminal.
+    ///
+    /// An unrecognized state is not terminal: polling continues to its
+    /// deadline and reports an indeterminate outcome rather than inventing a
+    /// verdict for a state this build cannot classify.
+    #[must_use]
+    pub fn is_terminal(&self) -> bool {
         matches!(self, Self::Completed | Self::PartialSuccess | Self::Failed)
     }
 
     /// Whether every target completed successfully.
     #[must_use]
-    pub const fn succeeded(self) -> bool {
+    pub fn succeeded(&self) -> bool {
         matches!(self, Self::Completed)
     }
 }
 
+impl Serialize for DeploymentStatus {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_wire())
+    }
+}
+
+impl<'de> Deserialize<'de> for DeploymentStatus {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self::from_wire(&String::deserialize(deserializer)?))
+    }
+}
+
 /// Per-device deployment state documented by SDC.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Preserves unrecognized values for the same reason as [`DeploymentStatus`]:
+/// one device reporting a state this build predates must not fail the whole
+/// job-status read.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeviceDeploymentStatus {
     /// Unknown state.
-    #[serde(rename = "DEVICE_STATUS_UNKNOWN")]
     Unknown,
     /// Work is in progress.
-    #[serde(rename = "DEVICE_STATUS_IN_PROGRESS")]
     InProgress,
     /// Work completed.
-    #[serde(rename = "DEVICE_STATUS_COMPLETED")]
     Completed,
     /// Work failed.
-    #[serde(rename = "DEVICE_STATUS_FAILED")]
     Failed,
     /// Work is pending.
-    #[serde(rename = "DEVICE_STATUS_PENDING")]
     Pending,
     /// Target was skipped.
-    #[serde(rename = "DEVICE_STATUS_SKIPPED")]
     Skipped,
     /// Target failure was explicitly ignored by SDC.
-    #[serde(rename = "DEVICE_STATUS_IGNORED_FAILURE")]
     IgnoredFailure,
+    /// A state absent from the pinned OpenAPI document, kept verbatim.
+    Unrecognized(String),
+}
+
+impl DeviceDeploymentStatus {
+    /// Exact wire value from the pinned OpenAPI document.
+    #[must_use]
+    pub fn as_wire(&self) -> &str {
+        match self {
+            Self::Unknown => "DEVICE_STATUS_UNKNOWN",
+            Self::InProgress => "DEVICE_STATUS_IN_PROGRESS",
+            Self::Completed => "DEVICE_STATUS_COMPLETED",
+            Self::Failed => "DEVICE_STATUS_FAILED",
+            Self::Pending => "DEVICE_STATUS_PENDING",
+            Self::Skipped => "DEVICE_STATUS_SKIPPED",
+            Self::IgnoredFailure => "DEVICE_STATUS_IGNORED_FAILURE",
+            Self::Unrecognized(value) => value,
+        }
+    }
+
+    fn from_wire(value: &str) -> Self {
+        match value {
+            "DEVICE_STATUS_UNKNOWN" => Self::Unknown,
+            "DEVICE_STATUS_IN_PROGRESS" => Self::InProgress,
+            "DEVICE_STATUS_COMPLETED" => Self::Completed,
+            "DEVICE_STATUS_FAILED" => Self::Failed,
+            "DEVICE_STATUS_PENDING" => Self::Pending,
+            "DEVICE_STATUS_SKIPPED" => Self::Skipped,
+            "DEVICE_STATUS_IGNORED_FAILURE" => Self::IgnoredFailure,
+            other => Self::Unrecognized(other.to_owned()),
+        }
+    }
+}
+
+impl Serialize for DeviceDeploymentStatus {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_wire())
+    }
+}
+
+impl<'de> Deserialize<'de> for DeviceDeploymentStatus {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self::from_wire(&String::deserialize(deserializer)?))
+    }
 }
 
 /// Per-device entry in a preview/deploy status response.
