@@ -82,6 +82,14 @@ impl DeviceTransaction for SdcTransaction {
         Ok(self.expected_preview_digest.clone())
     }
 
+    /// Sole validation point for the envelope.
+    ///
+    /// `stage` is the trust boundary: it is where a persisted or caller-supplied
+    /// action enters, and the coordinator always runs it before `diff`,
+    /// `validate`, or `commit` receive the staged value. Revalidating in each of
+    /// those recomputes a SHA-256 over the canonicalized preview and reserializes
+    /// the whole envelope -- up to `MAX_ARTIFACT_BYTES` (8 MiB) -- four times per
+    /// apply, which scales with estate size for no additional guarantee.
     async fn stage(&self, actions: &[Self::Action]) -> Result<Self::Staged, Self::Error> {
         let [prepared] = actions else {
             return Err(SdcError::InvalidInput(
@@ -102,16 +110,12 @@ impl DeviceTransaction for SdcTransaction {
     }
 
     async fn diff(&self, staged: &Self::Staged) -> Result<Self::Diff, Self::Error> {
-        staged
-            .validate()
-            .map_err(|error| SdcError::PreparedChange(error.to_string()))?;
+        // Validated in `stage`; see the note there.
         Ok(staged.preview().clone())
     }
 
     async fn validate(&self, staged: &Self::Staged) -> Result<Self::Validation, Self::Error> {
-        staged
-            .validate()
-            .map_err(|error| SdcError::PreparedChange(error.to_string()))?;
+        // Validated in `stage`; see the note there.
         let status: JobStatus =
             serde_json::from_value(staged.preview().get("status").cloned().ok_or(
                 SdcError::PreparedChange("preview artifact is missing terminal status".to_owned()),
@@ -142,9 +146,9 @@ impl DeviceTransaction for SdcTransaction {
                 "SDC does not support confirmed deployment",
             ));
         }
-        staged
-            .validate()
-            .map_err(|error| SdcError::PreparedChange(error.to_string()))?;
+        // Validated in `stage`; see the note there. The deploy request itself is
+        // bound by the change-set digest that approval checked, not by the
+        // preview digest, so revalidating here would not cover it either.
         let request: DeployRequest = serde_json::from_value(staged.request().clone())
             .map_err(|_| SdcError::PreparedChange("deploy request is invalid".to_owned()))?;
         match self
@@ -419,6 +423,53 @@ mod tests {
             Url::parse(&format!("http://{address}/")).expect("test URL"),
             task,
         )
+    }
+
+    fn prepared_fixture() -> SdcPreparedChange {
+        SdcPreparedChange::new(
+            vec![crate::SdcPreparedTarget::new("device", "device-1").expect("target")],
+            json!({"policies": [{"policy_id": "policy-1", "policy_type": "FIREWALL"}]}),
+            json!({"status": {"status": "COMPLETED", "device_deployment_status": [], "message": ""}}),
+            "preview-1".to_owned(),
+        )
+        .expect("prepared change")
+    }
+
+    #[tokio::test]
+    async fn stage_still_rejects_a_tampered_envelope() {
+        // `diff`, `validate`, and `commit` no longer revalidate, so `stage` is
+        // the only place a persisted envelope is checked against its digest.
+        // If that check ever weakens, a mutated preview reaches deployment.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = SdcClient::from_test_parts(
+            Url::parse("https://example.invalid/").expect("url"),
+            "test-secret".to_owned(),
+            64 * 1024,
+            100,
+        );
+        let prepared = prepared_fixture();
+        let transaction = SdcTransaction::new(
+            client,
+            prepared.preview_digest().to_owned(),
+            CancellationToken::new(),
+        );
+
+        // The untouched envelope stages, so the rejection below is not vacuous.
+        transaction
+            .stage(std::slice::from_ref(&prepared))
+            .await
+            .expect("an intact envelope stages");
+
+        let mut raw = serde_json::to_value(&prepared).expect("serializes");
+        raw["preview"]["status"]["message"] = json!("tampered after approval");
+        let tampered: SdcPreparedChange =
+            serde_json::from_value(raw).expect("tampered envelope still deserializes");
+
+        let error = transaction
+            .stage(&[tampered])
+            .await
+            .expect_err("a preview that no longer matches its digest must be refused");
+        assert!(matches!(error, SdcError::PreparedChange(_)), "{error:?}");
     }
 
     #[tokio::test]
