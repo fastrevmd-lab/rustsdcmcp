@@ -126,8 +126,12 @@ glibc_floor=$glibc_floor
 rustc=$rustc_metadata
 EOF
 
+# Skip every directory .gitignore already excludes, plus the two places a git
+# worktree lands. A nested checkout carries its own Cargo.lock, which Trivy
+# reports as a second copy of every dependency -- the SBOM assertions below
+# then fail on duplicates that are not in the shipped artifact at all.
 trivy filesystem --scanners vuln --format cyclonedx \
-    --skip-dirs target,dist,.git \
+    --skip-dirs target,dist,.git,.worktrees,.claude \
     --output "$stage_dir/SBOM.cdx.json" "$repo_root"
 sbom_tmp="$stage_dir/SBOM.cdx.json.tmp"
 jq '.metadata.component.name = "rustsdcmcp"' "$stage_dir/SBOM.cdx.json" >"$sbom_tmp"
@@ -153,7 +157,16 @@ jq -e '
     )
     and (tostring | contains("changeset-v0.3.6") | not)
     and (tostring | contains("93ab63d7c2fad649112807378f92fcc26cce73c6") | not)
-' "$stage_dir/SBOM.cdx.json" >/dev/null || fail 'normalized SBOM lacks required metadata or dependencies'
+' "$stage_dir/SBOM.cdx.json" >/dev/null || {
+    sbom_mecmcp=$(jq -r '
+        [.components[]? | select(.name? | strings | startswith("mecmcp-")) | .name]
+        | length
+    ' "$stage_dir/SBOM.cdx.json" 2>/dev/null || printf '?')
+    if [[ $sbom_mecmcp =~ ^[0-9]+$ ]] && ((sbom_mecmcp > 5)); then
+        fail "normalized SBOM lists $sbom_mecmcp mecmcp components, expected 5; a nested checkout under the repo root was scanned as a second copy"
+    fi
+    fail 'normalized SBOM lacks required metadata or dependencies'
+}
 ! grep -Fq -- "$repo_root" "$stage_dir/SBOM.cdx.json" \
     || fail 'SBOM contains an absolute repository or worktree path'
 chmod 0644 "$stage_dir/SBOM.cdx.json"
