@@ -802,6 +802,32 @@ impl ServerHandler for SdcHandler {
 mod tests {
     use super::*;
     use mecmcp_auth::{ActorType, ScopeSet};
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn known_tools_matches_the_registered_router_exactly() {
+        // `KNOWN_TOOLS` is what `token_cmd` validates minted token scopes against.
+        // If it drifts from the router, a real tool becomes unmintable and a
+        // deleted one stays mintable, both without any other test failing.
+        let registered = SdcHandler::sdc_tool_router()
+            .list_all()
+            .iter()
+            .map(|tool| tool.name.to_string())
+            .collect::<BTreeSet<_>>();
+        let known = KNOWN_TOOLS
+            .iter()
+            .map(|tool| (*tool).to_owned())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(registered, known);
+    }
+
+    #[test]
+    fn every_write_tool_is_a_registered_tool() {
+        let known = KNOWN_TOOLS.iter().copied().collect::<BTreeSet<_>>();
+        for tool in WRITE_TOOLS {
+            assert!(known.contains(tool), "{tool} is not a registered tool");
+        }
+    }
 
     fn caller(targets: ScopeSet, tools: ScopeSet) -> CallerCtx<NoGrant> {
         CallerCtx {
