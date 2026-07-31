@@ -834,6 +834,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancelling_the_request_token_aborts_an_in_flight_call() {
+        // The MCP handler feeds each tool the per-request `RequestContext::ct`,
+        // so a client `notifications/cancelled` must abandon the SDC call
+        // instead of running to the whole-request timeout.
+        let app = Router::new().route(
+            "/api/v1/devices",
+            get(|| async {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                Json(serde_json::json!({"items": []}))
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        let cancellation = CancellationToken::new();
+        let trigger = cancellation.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            trigger.cancel();
+        });
+
+        let started = std::time::Instant::now();
+        let error = client(base_url, 4096)
+            .list_devices(
+                ListRequest::new(0, 20, 100).expect("test page"),
+                &cancellation,
+            )
+            .await
+            .expect_err("a cancelled request must fail");
+        assert!(matches!(error, SdcError::Cancelled));
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "cancellation must abandon the call, not wait for the 2s request timeout"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn response_limit_is_enforced_while_streaming() {
         let app = Router::new().route(
             "/api/v1/devices",
