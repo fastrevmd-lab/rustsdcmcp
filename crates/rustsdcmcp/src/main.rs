@@ -7,8 +7,44 @@ use mecmcp_runtime::cli::{Cli, Command, Transport};
 use rmcp::ServiceExt as _;
 use rustsdcmcp::{KNOWN_TOOLS, SdcHandler, serve_http};
 use rustsdcmcp_core::{ChangeManager, SdcClient, SdcConfig};
-use std::{sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use tokio_util::sync::CancellationToken;
+
+/// Bearer-token boundary selected for the Streamable HTTP listener.
+#[derive(Debug, PartialEq, Eq)]
+enum AuthMode {
+    /// Load and enforce this bearer-token store.
+    Tokens(PathBuf),
+    /// Serve unauthenticated. `mecmcp_runtime::cli_validate` confines this to loopback.
+    NoAuth,
+}
+
+/// Decide the listener's authentication boundary, refusing every combination
+/// that would otherwise resolve to a silently unauthenticated listener.
+///
+/// `mecmcp_runtime::cli_validate` already refuses a listener with neither flag
+/// and confines `--allow-no-auth` to loopback, but it accepts both flags
+/// together. Selecting a mode here rather than falling through to `None` keeps
+/// that combination from dropping the token store without a diagnostic.
+fn resolve_auth_mode(
+    tokens_file: Option<&Path>,
+    allow_no_auth: bool,
+) -> Result<AuthMode, &'static str> {
+    match (tokens_file, allow_no_auth) {
+        (Some(path), false) => Ok(AuthMode::Tokens(path.to_owned())),
+        (None, true) => Ok(AuthMode::NoAuth),
+        (Some(_), true) => Err(
+            "--tokens-file and --allow-no-auth are mutually exclusive: pass --tokens-file for an authenticated listener, or --allow-no-auth alone for an unauthenticated loopback one",
+        ),
+        (None, false) => Err(
+            "--transport streamable-http requires --tokens-file (or --allow-no-auth on loopback)",
+        ),
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -73,22 +109,29 @@ async fn main() -> Result<()> {
     )?);
     let handler = SdcHandler::new(Arc::<str>::from(config.tenant.as_str()), client, changes);
 
-    let token_store = match (&args.tokens_file, args.allow_no_auth) {
-        (Some(path), false) => {
-            let store = Arc::new(
-                TokenStoreFile::<NoGrant>::load(path)
-                    .with_context(|| format!("loading {}", path.display()))?,
-            );
-            tracing::info!(tokens = store.store().len(), "token store loaded");
-            Some(store)
+    let token_store = match args.transport {
+        // Stdio has no HTTP boundary, so a token store would never be consulted.
+        Transport::Stdio => None,
+        Transport::StreamableHttp => {
+            match resolve_auth_mode(args.tokens_file.as_deref(), args.allow_no_auth)
+                .map_err(|error| anyhow::anyhow!("{error}"))?
+            {
+                AuthMode::Tokens(path) => {
+                    let store = Arc::new(
+                        TokenStoreFile::<NoGrant>::load(&path)
+                            .with_context(|| format!("loading {}", path.display()))?,
+                    );
+                    tracing::info!(tokens = store.store().len(), "token store loaded");
+                    Some(store)
+                }
+                AuthMode::NoAuth => {
+                    tracing::warn!(
+                        "--allow-no-auth: Streamable HTTP accepts unauthenticated requests on loopback"
+                    );
+                    None
+                }
+            }
         }
-        (None, true) => {
-            tracing::warn!(
-                "--allow-no-auth: Streamable HTTP accepts unauthenticated requests on loopback"
-            );
-            None
-        }
-        _ => None,
     };
 
     if let Some(store) = token_store.clone() {
@@ -137,4 +180,37 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AuthMode, resolve_auth_mode};
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn a_tokens_file_alone_selects_an_authenticated_listener() {
+        assert_eq!(
+            resolve_auth_mode(Some(Path::new("/etc/rustsdcmcp/tokens.json")), false),
+            Ok(AuthMode::Tokens(PathBuf::from(
+                "/etc/rustsdcmcp/tokens.json"
+            ))),
+        );
+    }
+
+    #[test]
+    fn allow_no_auth_alone_selects_the_unauthenticated_listener() {
+        assert_eq!(resolve_auth_mode(None, true), Ok(AuthMode::NoAuth));
+    }
+
+    #[test]
+    fn a_tokens_file_is_never_silently_dropped_by_allow_no_auth() {
+        let refusal = resolve_auth_mode(Some(Path::new("/etc/rustsdcmcp/tokens.json")), true)
+            .expect_err("supplying a token store and --allow-no-auth must be refused");
+        assert!(refusal.contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn a_listener_with_no_authentication_decision_is_refused() {
+        assert!(resolve_auth_mode(None, false).is_err());
+    }
 }
