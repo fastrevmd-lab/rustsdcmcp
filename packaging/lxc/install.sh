@@ -323,6 +323,67 @@ if (( live_install )) && [[ "$skip_reload" != 1 ]]; then
     systemctl daemon-reload
 fi
 
+# Prove whether systemd's IPAddress* filters actually attach here, rather than
+# assuming the unit's declaration means anything. systemd implements them with
+# cgroup eBPF and FAILS OPEN when it cannot load the program -- typical in an
+# unprivileged LXC without host delegation -- so the unit can declare a full
+# egress policy while enforcing none of it. `systemd-analyze security` reads the
+# declaration and cannot tell the difference.
+#
+# Informational by default: a hypervisor that withholds BPF is a legitimate
+# deployment, and the operator needs to know rather than be blocked. Set
+# SDCMCP_REQUIRE_EGRESS_FILTER=1 to make a non-enforcing host fatal.
+report_egress_enforcement() {
+    local require=${SDCMCP_REQUIRE_EGRESS_FILTER:-0}
+    local probe_unit="rustsdcmcp-egress-probe-$$"
+
+    if ! command -v systemd-run >/dev/null; then
+        printf '%s\n' 'egress filter: UNKNOWN (systemd-run unavailable; cannot probe)' >&2
+        return 0
+    fi
+
+    # IP accounting rides the same cgroup BPF attachment as IPAddressAllow/Deny,
+    # so a populated byte counter proves the filter attached and `[no data]`
+    # proves it did not. A connect-based probe cannot do this: any address
+    # reachable enough to distinguish allow from deny is also a real egress,
+    # and an unroutable one fails identically in both cases.
+    local counters=''
+    if systemd-run --quiet --collect --unit="$probe_unit" \
+        --property=IPAccounting=yes --property=RemainAfterExit=yes \
+        /bin/true >/dev/null 2>&1
+    then
+        counters=$(systemctl show "$probe_unit.service" -p IPEgressBytes --value 2>/dev/null || printf '')
+        systemctl stop "$probe_unit.service" >/dev/null 2>&1 || true
+        systemctl reset-failed "$probe_unit.service" >/dev/null 2>&1 || true
+    else
+        # Distinct from "not enforced": nothing was measured, so claim nothing.
+        printf '%s\n' 'egress filter: UNKNOWN (probe unit would not start; run as root to determine)' >&2
+        return 0
+    fi
+
+    if [[ -n "$counters" && "$counters" != '[no data]' ]]; then
+        printf '%s\n' 'egress filter: ENFORCED'
+        return 0
+    fi
+
+    printf '%s\n' \
+        'egress filter: NOT ENFORCED' \
+        '  systemd cannot attach its cgroup BPF program here, so the IPAddressAllow/' \
+        '  IPAddressDeny lines in rustsdcmcp.service have no effect. This is normal in' \
+        '  an unprivileged LXC. The unit still applies every other sandbox directive.' \
+        '  Enforce egress at the hypervisor or host firewall instead -- deny' \
+        '  169.254.0.0/16 and the local subnet except your resolver, allow 443 out.' \
+        '  See docs/operations.md, "Egress policy".' >&2
+    if [[ "$require" == 1 ]]; then
+        die 'SDCMCP_REQUIRE_EGRESS_FILTER=1 and systemd IP filtering is not enforced here'
+    fi
+    return 0
+}
+
+if (( live_install )); then
+    report_egress_enforcement
+fi
+
 printf '%s\n' \
     'Installation complete. Next steps:' \
     '1. Create config: install -o root -g rustsdcmcp -m 0640 /etc/rustsdcmcp/sdc.json.example /etc/rustsdcmcp/sdc.json, then edit /etc/rustsdcmcp/sdc.json.' \

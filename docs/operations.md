@@ -57,34 +57,73 @@ open.
 
 ## Egress policy
 
-Inbound is loopback-only, but the service also holds a tenant-wide SDC
-credential, so its *outbound* reach matters. The unit denies the ranges it
-provably never needs:
+> **The systemd egress directives are probably inert on the recommended
+> deployment.** Read this section before treating them as a control.
+
+Inbound is loopback-only, but the service holds a tenant-wide SDC credential,
+so its *outbound* reach matters. The unit declares:
 
 ```
 IPAddressAllow=localhost
-IPAddressDeny=169.254.0.0/16 fe80::/10 fc00::/7 10.0.0.0/8 172.16.0.0/12
+IPAddressDeny=169.254.0.0/16 fe80::/10
+IPAccounting=yes
 ```
 
-`169.254.0.0/16` is the one that matters most: it covers the cloud metadata
-endpoint, the standard target for turning a compromised HTTP client into
-credential theft. The RFC1918 ranges blunt lateral movement from this container
-into the rest of a network.
+### Whether it enforces at all
 
-This is a denylist, not an allowlist, and that is deliberate. The SDC API is a
+systemd implements `IPAddress*` with cgroup eBPF. An **unprivileged LXC — the
+container type this project recommends — usually cannot attach those programs
+without host delegation, and systemd fails open**: it logs a warning and runs
+the unit with no filter whatsoever. Nothing about the service's behaviour
+reveals this, and `systemd-analyze security` cannot either — it scores the
+*declaration*, so the unit looks hardened whether or not a single packet is
+filtered.
+
+The installer therefore probes actual enforcement and prints one of:
+
+- `egress filter: ENFORCED`
+- `egress filter: NOT ENFORCED` — with guidance to enforce at the hypervisor
+- `egress filter: UNKNOWN` — the probe could not run; nothing is claimed
+
+It uses IP accounting, which rides the same BPF attachment, so a populated
+counter proves the filter attached. Check it any time:
+
+```console
+systemctl show rustsdcmcp.service -p IPEgressBytes --value
+```
+
+`[no data]` means the egress directives are doing nothing. Set
+`SDCMCP_REQUIRE_EGRESS_FILTER=1` to make the installer refuse a host that
+cannot enforce.
+
+**When it is not enforced, put the control at the hypervisor.** On Proxmox,
+that is the container's interface firewall: deny `169.254.0.0/16`, deny the
+local subnet except your resolver, allow 443 outbound. That layer actually
+holds for an unprivileged container; the unit directives are defence in depth
+for hosts where they attach (VMs, bare metal, privileged containers).
+
+### What is denied, and what is not
+
+`169.254.0.0/16` covers the cloud metadata endpoint — the standard route from a
+compromised HTTP client to stolen credentials — and no legitimate resolver
+lives there, so it is safe to deny on any install. `fe80::/10` is the IPv6
+equivalent.
+
+**RFC1918 ranges are deliberately not denied by default.** This package
+installs on networks whose resolver may sit in any of `10.0.0.0/8`,
+`172.16.0.0/12`, or `192.168.0.0/16`; denying the resolver stops the service
+resolving the SDC endpoint at all — a hard outage, not a hardening. Add them
+per-site, together with an explicit allow for the resolver you actually use.
+
+A denylist rather than an allowlist is deliberate regardless: the SDC API is a
 cloud address whose IPs rotate, so `IPAddressDeny=any` plus an allowlist would
-fail on the first rotation. `systemd-analyze security` will report
-"Service does not define an IP address allow list" for this reason — expected,
-not an oversight.
+fail on the first rotation. `systemd-analyze security` reports "Service does
+not define an IP address allow list" for this reason — expected, not an
+oversight.
 
-**`192.168.0.0/16` is deliberately not denied.** The packaged deployment
-resolves DNS through its LAN gateway (`192.168.1.1` for VMID 606), and denying
-that range stops the service resolving the SDC endpoint at all — a hard outage,
-not a hardening. The consequence is that the local `/24` stays reachable from
-this container.
+### Tightening per site
 
-If your resolver is external, or you know its address, tighten this with a
-drop-in rather than editing the shipped unit — the installer replaces it:
+Use a drop-in rather than editing the shipped unit — the installer replaces it:
 
 ```console
 sudo systemctl edit rustsdcmcp.service
@@ -93,11 +132,20 @@ sudo systemctl edit rustsdcmcp.service
 ```ini
 [Service]
 IPAddressAllow=192.168.1.1
-IPAddressDeny=192.168.0.0/16
+IPAddressDeny=10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 fc00::/7
 ```
 
-More specific rules win, so the resolver stays reachable while the rest of the
-LAN is refused. Confirm DNS still resolves before considering the change good:
+Substitute your own resolver address. This only has effect on a host where the
+probe above reports `ENFORCED`.
+
+systemd checks `IPAddressAllow=` **first** and grants on any match, then checks
+`IPAddressDeny=`, then defaults to granting. It is allow-before-deny, *not*
+longest-prefix — so the `/32` above works because it is an allow, not because
+it is narrower. The practical consequence when adapting this: a broad
+`IPAddressAllow=` silently defeats every narrower deny, so keep allow entries
+as tight as possible.
+
+Confirm DNS still resolves before considering the change good:
 
 ```console
 sudo systemctl restart rustsdcmcp.service
