@@ -53,21 +53,36 @@ RestrictRealtime=true
 RestrictSUIDSGID=true
 RemoveIPC=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-# Egress policy. This service talks to exactly two places: its own loopback
-# listener, and the SDC API over public HTTPS. It never has a reason to reach
-# link-local or most private space, so those are denied to blunt lateral
-# movement and cloud-metadata credential theft by a compromised process.
+# Egress policy -- DEFENCE IN DEPTH ONLY. Read this before relying on it.
 #
-# The SDC endpoint is a cloud address that changes, so a strict
-# `IPAddressDeny=any` allowlist is not viable -- it would break on the first
-# rotation. This is a denylist of what the service provably never needs.
+# systemd implements IPAddress* with cgroup eBPF. An unprivileged LXC -- the
+# deployment target recommended in README.md -- usually cannot attach those
+# programs without host delegation, and systemd then FAILS OPEN: it logs a
+# warning and runs the unit with no filter at all. `systemd-analyze security`
+# cannot detect this; it only scores the declaration. The installer probes
+# actual enforcement and reports which case you are in.
 #
-# 192.168.0.0/16 is deliberately NOT denied: the packaged deployment resolves
-# DNS through its LAN gateway, and denying that range stops the service
-# resolving the SDC endpoint at all. Operators whose resolver sits elsewhere
-# should tighten this with a drop-in -- see docs/operations.md.
+# Where it does attach (VM, bare metal, privileged container) this denies the
+# cloud metadata endpoints and IPv6 link-local -- none is ever a legitimate
+# resolver, so the default is safe to ship anywhere.
+#
+# fd00:ec2::254 is denied as a single /128 rather than via fc00::/7. IPv6 IMDS
+# lives inside the ULA range, so dropping the whole range would have left the
+# credential endpoint reachable, but denying all of fc00::/7 would break any
+# site whose resolver is ULA-addressed. The host route is the precise fix.
+#
+# RFC1918 ranges are deliberately NOT denied by default: this package installs
+# on networks whose resolver may live in any of them, and denying the resolver
+# stops the service resolving the SDC endpoint at all. docs/operations.md has
+# the opt-in drop-in that adds them alongside an explicit resolver allow.
+#
+# A strict IPAddressDeny=any allowlist is not viable either way: the SDC API is
+# a cloud address whose IPs rotate.
 IPAddressAllow=localhost
-IPAddressDeny=169.254.0.0/16 fe80::/10 fc00::/7 10.0.0.0/8 172.16.0.0/12
+IPAddressDeny=169.254.0.0/16 fe80::/10 fd00:ec2::254/128
+# Makes enforcement observable: the byte counters below are populated only when
+# the BPF program actually attached. `[no data]` means the filters are inert.
+IPAccounting=yes
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @obsolete @mount @swap @reboot @module
