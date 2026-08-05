@@ -137,9 +137,10 @@ than a recipe here — these are the layers, not instructions:
 |---|---|
 | Proxmox LXC / VM | per-guest interface firewall |
 | libvirt / KVM | `nwfilter` on the guest interface |
-| Docker / Podman | host packet filter on the container's bridge |
+| Docker / Podman, rootful | host packet filter on the container's bridge |
+| Docker / Podman, rootless | the user-space network backend (pasta, slirp4netns, RootlessKit) — there is no host-visible bridge to filter |
 | Kubernetes | `NetworkPolicy` egress, on a CNI that implements it |
-| Cloud instance | in-guest packet filter, plus security groups for non-link-local traffic |
+| Cloud instance | in-guest packet filter for **both** metadata addresses, plus security groups for everything else |
 | Bare metal, VM with working systemd | the unit directives; this section does not apply |
 
 Two properties are worth checking whatever you choose, because both are common
@@ -147,11 +148,13 @@ and both produce a control that reads as present and is not:
 
 - **Some layers accept egress policy without enforcing it.** Container network
   attachment and some CNI implementations are the usual cases.
-- **Cloud metadata often bypasses the cloud firewall.** On EC2, link-local
-  traffic to the IMDS address is handled below the security group and NACL
-  layer, so an egress rule there does not block it — the control has to be
-  in-guest, or IMDS disabled outright. Consult your provider's current
-  metadata-hardening guidance; it changes, and getting it wrong is silent.
+- **Cloud metadata often bypasses the cloud firewall.** On EC2, IMDS traffic is
+  handled below the security group and NACL layer, so an egress rule there does
+  not block it. This applies to the IPv6 endpoint too — `fd00:ec2::254` is ULA
+  rather than link-local, so it is easy to file mentally under "ordinary routed
+  traffic the firewall sees", and it is not. The control has to be in-guest, or
+  IMDS disabled outright. Consult your provider's current metadata-hardening
+  guidance; it changes, and getting it wrong is silent.
 
 Whichever you pick, a rule that has not been exercised from inside the workload
 is an assumption. Verify it, and re-verify after a reboot — in-kernel firewall
