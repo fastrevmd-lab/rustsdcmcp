@@ -8,6 +8,10 @@ upstream `mecmcp` release replaces all 59 compatibility ledger entries. The
 
 ### Fixed since `v0.1.0-lab.2`
 
+- Generate the package README instead of copying the repository one. Every
+  archive previously shipped download instructions for the *previous* release,
+  because a release is built from a commit predating the docs describing it.
+
 - Refuse `--tokens-file` together with `--allow-no-auth`. The pair previously
   fell through to a catch-all arm that dropped the token store, producing an
   unauthenticated listener on any bind address with no diagnostic.
