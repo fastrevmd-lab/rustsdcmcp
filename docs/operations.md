@@ -137,10 +137,17 @@ than a recipe here — these are the layers, not instructions:
 |---|---|
 | Proxmox LXC / VM | per-guest interface firewall |
 | libvirt / KVM | `nwfilter` on the guest interface |
-| Docker / Podman | wherever the configured network driver puts the data path — a host bridge, a user-space backend, or the host stack itself under `--network host`. Identify the driver before writing a rule; the answer differs between rootful and rootless and between drivers. |
 | Kubernetes | `NetworkPolicy` egress, on a CNI that implements it |
 | Cloud instance | in-guest packet filter for **both** metadata addresses, plus security groups for everything else |
 | Bare metal, VM with working systemd | the unit directives; this section does not apply |
+
+**Container runtimes are deliberately absent from that table.** Docker and
+Podman place the data path differently depending on driver, rootful versus
+rootless, and nesting — rootless Docker runs inside RootlessKit's own network
+namespace, so even `--network host` is not the initial host stack. Seven
+attempts to state that mapping accurately all failed review. Trace your own
+path with `ip netns` / `nsenter` and the runtime's documentation, and confirm it
+with the check below rather than trusting any table, including this one.
 
 Two properties are worth checking whatever you choose, because both are common
 and both produce a control that reads as present and is not:
