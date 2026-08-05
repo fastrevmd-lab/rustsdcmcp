@@ -1,7 +1,14 @@
 name: CI
 
 on:
+  # `push` is scoped to main. A bare `push:` fires on every branch, so a push
+  # to a PR branch triggered this workflow twice -- once as `push`, once as
+  # `pull_request`. The two carry different `github.ref` values, so the
+  # concurrency group below did not collapse them and both ran to completion,
+  # doubling Actions minutes for identical checks. Branch pushes are covered by
+  # the `pull_request` event; main is covered here after merge.
   push:
+    branches: [main]
   pull_request:
 
 permissions:

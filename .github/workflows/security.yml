@@ -1,7 +1,11 @@
 name: Security
 
 on:
+  # Scoped to main for the same reason as ci.yml: a bare `push:` doubled every
+  # PR-branch run against the `pull_request` event without the concurrency
+  # group collapsing them.
   push:
+    branches: [main]
   pull_request:
 
 permissions:
