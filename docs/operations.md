@@ -137,8 +137,7 @@ than a recipe here — these are the layers, not instructions:
 |---|---|
 | Proxmox LXC / VM | per-guest interface firewall |
 | libvirt / KVM | `nwfilter` on the guest interface |
-| Docker / Podman, rootful | host packet filter on the container's bridge |
-| Docker / Podman, rootless | the user-space network backend (pasta, slirp4netns, RootlessKit) — there is no host-visible bridge to filter |
+| Docker / Podman | wherever the configured network driver puts the data path — a host bridge, a user-space backend, or the host stack itself under `--network host`. Identify the driver before writing a rule; the answer differs between rootful and rootless and between drivers. |
 | Kubernetes | `NetworkPolicy` egress, on a CNI that implements it |
 | Cloud instance | in-guest packet filter for **both** metadata addresses, plus security groups for everything else |
 | Bare metal, VM with working systemd | the unit directives; this section does not apply |
