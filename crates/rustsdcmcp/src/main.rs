@@ -189,10 +189,23 @@ async fn main() -> Result<()> {
             // here, and cancelling it cascades to every in-flight request
             // context, so a signal abandons running SDC work rather than
             // waiting out the job-poll deadline.
-            let service = handler
+            let service = match handler
                 .serve_with_ct((tokio::io::stdin(), tokio::io::stdout()), shutdown)
                 .await
-                .context("starting MCP stdio service")?;
+            {
+                Ok(service) => service,
+                // A signal arriving before the client sends `initialize` is the
+                // exact case this cancellation path exists for. rmcp reports it
+                // as ServerInitializeError::Cancelled; propagating that would
+                // exit non-zero and record a clean stop as a startup failure.
+                Err(rmcp::service::ServerInitializeError::Cancelled) => {
+                    tracing::info!("shutdown signalled before initialization; exiting cleanly");
+                    return Ok(());
+                }
+                Err(error) => {
+                    return Err(anyhow::Error::new(error)).context("starting MCP stdio service");
+                }
+            };
             service
                 .waiting()
                 .await
