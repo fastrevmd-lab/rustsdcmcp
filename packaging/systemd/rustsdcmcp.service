@@ -53,8 +53,24 @@ RestrictRealtime=true
 RestrictSUIDSGID=true
 RemoveIPC=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Egress policy. This service talks to exactly two places: its own loopback
+# listener, and the SDC API over public HTTPS. It never has a reason to reach
+# link-local or most private space, so those are denied to blunt lateral
+# movement and cloud-metadata credential theft by a compromised process.
+#
+# The SDC endpoint is a cloud address that changes, so a strict
+# `IPAddressDeny=any` allowlist is not viable -- it would break on the first
+# rotation. This is a denylist of what the service provably never needs.
+#
+# 192.168.0.0/16 is deliberately NOT denied: the packaged deployment resolves
+# DNS through its LAN gateway, and denying that range stops the service
+# resolving the SDC endpoint at all. Operators whose resolver sits elsewhere
+# should tighten this with a drop-in -- see docs/operations.md.
+IPAddressAllow=localhost
+IPAddressDeny=169.254.0.0/16 fe80::/10 fc00::/7 10.0.0.0/8 172.16.0.0/12
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @obsolete @mount @swap @reboot @module
 SystemCallErrorNumber=EPERM
 TasksMax=256
 LimitNOFILE=4096
