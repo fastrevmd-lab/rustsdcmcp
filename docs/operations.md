@@ -65,7 +65,7 @@ so its *outbound* reach matters. The unit declares:
 
 ```
 IPAddressAllow=localhost
-IPAddressDeny=169.254.0.0/16 fe80::/10
+IPAddressDeny=169.254.0.0/16 fe80::/10 fd00:ec2::254/128
 IPAccounting=yes
 ```
 
@@ -81,9 +81,16 @@ filtered.
 
 The installer therefore probes actual enforcement and prints one of:
 
-- `egress filter: ENFORCED`
-- `egress filter: NOT ENFORCED` — with guidance to enforce at the hypervisor
+- `egress filter: ENFORCED` — the host attaches the BPF program *and* the
+  installed unit declares a policy
+- `egress filter: NOT ENFORCED` — the host cannot attach it; guidance follows
+- `egress filter: NO POLICY` — the host could enforce, but the installed unit
+  declares no `IPAddressDeny` (a preserved customized unit overrides the
+  packaged one; re-install with `SDCMCP_FORCE_UNIT=1`)
 - `egress filter: UNKNOWN` — the probe could not run; nothing is claimed
+
+Both conditions matter. A host-capability check alone would report success over
+a service filtering nothing.
 
 It uses IP accounting, which rides the same BPF attachment, so a populated
 counter proves the filter attached. Check it any time:
@@ -93,8 +100,9 @@ systemctl show rustsdcmcp.service -p IPEgressBytes --value
 ```
 
 `[no data]` means the egress directives are doing nothing. Set
-`SDCMCP_REQUIRE_EGRESS_FILTER=1` to make the installer refuse a host that
-cannot enforce.
+`SDCMCP_REQUIRE_EGRESS_FILTER=1` to make the installer refuse anything short of
+`ENFORCED` — including `UNKNOWN`, since an unmeasurable host is exactly as
+unguaranteed as a non-enforcing one.
 
 **When it is not enforced, put the control at the hypervisor.** On Proxmox,
 that is the container's interface firewall: deny `169.254.0.0/16`, deny the
@@ -104,10 +112,15 @@ for hosts where they attach (VMs, bare metal, privileged containers).
 
 ### What is denied, and what is not
 
-`169.254.0.0/16` covers the cloud metadata endpoint — the standard route from a
-compromised HTTP client to stolen credentials — and no legitimate resolver
-lives there, so it is safe to deny on any install. `fe80::/10` is the IPv6
-equivalent.
+`169.254.0.0/16` covers the IPv4 cloud metadata endpoint — the standard route
+from a compromised HTTP client to stolen credentials — and no legitimate
+resolver lives there, so it is safe to deny on any install. `fe80::/10` is IPv6
+link-local.
+
+`fd00:ec2::254/128` is denied as a single host route. IPv6 IMDS sits inside the
+ULA range `fc00::/7`, so denying that whole range would cover it — but would
+also break any site whose resolver is ULA-addressed. The /128 gets the metadata
+endpoint without that cost.
 
 **RFC1918 ranges are deliberately not denied by default.** This package
 installs on networks whose resolver may sit in any of `10.0.0.0/8`,
