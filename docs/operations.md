@@ -148,9 +148,21 @@ Three traps worth naming, all of which look configured and enforce nothing:
   traffic to `169.254.169.254` is intercepted below the security group and NACL
   layer, so no egress rule you write there can block it. Disable IMDS entirely
   where the workload does not need it (`--metadata-options
-  HttpEndpoint=disabled`), or block it in-guest with `nftables`/`iptables`.
-  IMDSv2 raises the bar — a plain SSRF cannot mint the required token — but the
-  endpoint stays reachable, so it is defence in depth, not the deny.
+  HttpEndpoint=disabled`), or block it in-guest — covering **both** families,
+  since `iptables` alone leaves the IPv6 endpoint open:
+
+  ```console
+  nft add rule inet filter output ip  daddr 169.254.169.254 drop
+  nft add rule inet filter output ip6 daddr fd00:ec2::254   drop
+  ```
+
+  With legacy tools that is `iptables` *and* `ip6tables`, not one of them.
+
+  `HttpTokens=required` raises the bar — a plain SSRF cannot mint the token —
+  but the endpoint stays reachable, so it is defence in depth, not the deny.
+  Under the default `HttpTokens=optional`, IMDSv1 still answers tokenless
+  requests and SSRF remains viable, so "IMDSv2 is enabled" is not the control;
+  `required` is.
 
 ### Verifying it, from inside the workload
 
@@ -159,24 +171,37 @@ already shipped. Test both address families, and assert the connection never
 completed rather than that it returned an error:
 
 ```console
-for url in 'http://169.254.169.254/' 'http://[fd00:ec2::254]/'; do
-  code=$(curl -s -o /dev/null --noproxy '*' --max-time 3 -w '%{http_code}' "$url" || true)
-  printf '%s -> %s\n' "$url" "${code:-000}"   # 000 = blocked; anything else is reachable
+for url in 'http://169.254.169.254/' 'http://[fd00:ec2::254]/' \
+           'https://api.sdcloud.juniperclouds.net/'; do
+  curl -s -o /dev/null --noproxy '*' --max-time 3 \
+    -w "$url  http=%{http_code} connects=%{num_connects} curl=%{exitcode}\n" "$url"
 done
-curl -sS --noproxy '*' --max-time 5 -o /dev/null -w 'sdc -> %{http_code}\n' \
-  https://api.sdcloud.juniperclouds.net/
 ```
 
-Two details that decide whether this test means anything:
+Read `connects`, not `http`:
 
-- **`000` is the only pass.** With IMDSv2 enabled the endpoint answers an
-  unauthenticated GET with `401`, and plain `curl -sS` exits `0` and prints
-  nothing — which reads exactly like a successful block while the route is
-  wide open. Only a connection-level failure proves the deny.
+| Result | Meaning |
+|---|---|
+| `connects=0`, `curl=7` or `28` | **blocked** — no TCP connection was established |
+| `connects=1` | **reachable** — the route is open regardless of `http` |
+| `curl=6`, `45`, or `2` | the probe never ran; this is not evidence either way |
+
+Three details decide whether this test means anything:
+
+- **`http=000` alone does not prove a block.** A timeout that expires *after*
+  the TCP handshake also yields `000` while `connects=1`, and a curl built
+  without IPv6 fails locally with `000` having probed nothing. `num_connects`
+  separates the three; `%{exitcode}` needs curl 7.75+.
+- **A reachable metadata endpoint may answer `401`.** With
+  `HttpTokens=required` an unauthenticated GET is rejected, so a naive check
+  that only looks for a non-2xx status reads a live route as blocked.
 - **`--noproxy '*'` is required.** With `HTTP_PROXY`/`ALL_PROXY` set, curl tests
   the proxy's egress rather than the workload's, which can show metadata blocked
   and SDC reachable when neither is true of the service. `SdcClient` disables
   environment proxies, so the test must too.
+
+The SDC endpoint answering `403` is a pass — it proves reachability; the request
+simply carries no credential.
 
 ### What is denied, and what is not
 
