@@ -116,9 +116,11 @@ unguaranteed as a non-enforcing one.
 
 ### Enforcing it where systemd cannot
 
-When the probe reports anything but `ENFORCED`, the unit directives are
-decoration and the control has to move outward — to whatever layer actually
-sees this workload's packets. That layer differs per runtime, and none of it is
+Any result other than `ENFORCED` means the unit directives are **unproven**, and
+the control should move outward — to whatever layer actually sees this
+workload's packets. `NOT ENFORCED` and `NO POLICY` mean they are demonstrably
+doing nothing; `UNKNOWN` means nothing was measured and they may well be
+working. Do not treat the last as the first. None of the layers below is
 something this package can configure for you.
 
 The policy is the same everywhere; only the mechanism changes:
@@ -135,25 +137,46 @@ The policy is the same everywhere; only the mechanism changes:
 | libvirt / KVM | `nwfilter` on the guest interface |
 | Docker / Podman | a user-defined network plus host `nftables`/`iptables` on its bridge; `--network` alone does not restrict egress |
 | Kubernetes | a `NetworkPolicy` with an egress rule, on a CNI that enforces egress (Calico, Cilium); several CNIs silently ignore egress policy |
-| Cloud instance | security group / VPC firewall egress rules, plus the provider's own metadata protection (IMDSv2 on EC2) |
+| Cloud instance | in-guest `nftables`/`iptables` for metadata (see below), security group / VPC egress rules for everything else |
 | Bare metal, VM with working systemd | the unit directives already do it; this section does not apply |
 
-Two traps worth naming. A Docker `--network` or a Kubernetes `NetworkPolicy`
-can look configured and enforce nothing — Docker does not filter egress by
-network membership, and several CNIs accept egress policy without implementing
-it. And on EC2, IMDSv2 is a better metadata control than any address deny,
-because it defeats the SSRF pattern rather than blocking one address.
+Three traps worth naming, all of which look configured and enforce nothing:
 
-Whatever you choose, verify it the same way: from inside the workload, confirm
-the metadata address is unreachable and the SDC endpoint is.
+- A Docker `--network` does not filter egress by network membership.
+- Several CNIs accept a `NetworkPolicy` egress rule without implementing it.
+- **Cloud metadata does not traverse the cloud firewall.** On EC2, link-local
+  traffic to `169.254.169.254` is intercepted below the security group and NACL
+  layer, so no egress rule you write there can block it. Disable IMDS entirely
+  where the workload does not need it (`--metadata-options
+  HttpEndpoint=disabled`), or block it in-guest with `nftables`/`iptables`.
+  IMDSv2 raises the bar — a plain SSRF cannot mint the required token — but the
+  endpoint stays reachable, so it is defence in depth, not the deny.
+
+### Verifying it, from inside the workload
+
+An untested deny is an assumption, and this section exists because one of those
+already shipped. Test both address families, and assert the connection never
+completed rather than that it returned an error:
 
 ```console
-curl -sS --max-time 3 http://169.254.169.254/  # must fail
-curl -sS --max-time 5 -o /dev/null -w '%{http_code}\n' https://api.sdcloud.juniperclouds.net/
+for url in 'http://169.254.169.254/' 'http://[fd00:ec2::254]/'; do
+  code=$(curl -s -o /dev/null --noproxy '*' --max-time 3 -w '%{http_code}' "$url" || true)
+  printf '%s -> %s\n' "$url" "${code:-000}"   # 000 = blocked; anything else is reachable
+done
+curl -sS --noproxy '*' --max-time 5 -o /dev/null -w 'sdc -> %{http_code}\n' \
+  https://api.sdcloud.juniperclouds.net/
 ```
 
-A deny that has not been tested from inside the workload is an assumption, and
-this section exists because one of those already shipped.
+Two details that decide whether this test means anything:
+
+- **`000` is the only pass.** With IMDSv2 enabled the endpoint answers an
+  unauthenticated GET with `401`, and plain `curl -sS` exits `0` and prints
+  nothing — which reads exactly like a successful block while the route is
+  wide open. Only a connection-level failure proves the deny.
+- **`--noproxy '*'` is required.** With `HTTP_PROXY`/`ALL_PROXY` set, curl tests
+  the proxy's egress rather than the workload's, which can show metadata blocked
+  and SDC reachable when neither is true of the service. `SdcClient` disables
+  environment proxies, so the test must too.
 
 ### What is denied, and what is not
 
