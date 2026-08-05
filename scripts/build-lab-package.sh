@@ -104,7 +104,7 @@ install -m 0644 packaging/systemd/rustsdcmcp.service "$stage_dir/packaging/syste
 install -m 0644 packaging/systemd/rustsdcmcp.sysusers "$stage_dir/packaging/systemd/rustsdcmcp.sysusers"
 install -m 0644 packaging/systemd/rustsdcmcp.tmpfiles "$stage_dir/packaging/systemd/rustsdcmcp.tmpfiles"
 install -m 0644 packaging/journald/mecmcp.conf "$stage_dir/packaging/journald/mecmcp.conf"
-install -m 0644 README.md LICENSE SECURITY.md "$stage_dir/"
+install -m 0644 LICENSE SECURITY.md "$stage_dir/"
 install -m 0644 docs/operations.md "$stage_dir/docs/operations.md"
 
 glibc_floor=$(objdump -T "$stage_dir/bin/rustsdcmcp" \
@@ -115,16 +115,132 @@ glibc_floor=$(objdump -T "$stage_dir/bin/rustsdcmcp" \
     exit 1
 }
 rustc_metadata=$(rustc -vV | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+# Single-sourced from the manifest that actually pins it. Hardcoding this in
+# both generated files is how stale package documentation comes back: the next
+# mecmcp bump updates one literal and silently leaves the other behind.
+mapfile -t mecmcp_refs < <(grep -oP 'tag = "\K[^"]+' Cargo.toml | sort -u)
+[[ ${#mecmcp_refs[@]} -eq 1 ]] \
+    || fail "expected exactly one mecmcp tag in Cargo.toml, found: ${mecmcp_refs[*]-none}"
+mecmcp_ref=${mecmcp_refs[0]}
 cat >"$stage_dir/BUILD-INFO" <<EOF
 release_status=lab-only
 version=0.1.0
 git_commit=$git_commit
 source_date_epoch=$source_date_epoch
 target=x86_64-unknown-linux-gnu
-mecmcp_ref=changeset-v0.3.7
+mecmcp_ref=$mecmcp_ref
 glibc_floor=$glibc_floor
 rustc=$rustc_metadata
 EOF
+
+# The package carries a README describing *itself*, not the repository's, which
+# pins whichever prerelease was current when it was written. Copying that file
+# shipped every archive with download instructions for the previous release --
+# lab.3 told its reader to fetch lab.1. Instructions for obtaining an archive
+# are meaningless inside that archive; what a reader here needs is what this is
+# and where to go next.
+cat >"$stage_dir/README.md" <<EOF
+# rustsdcmcp — lab package \`$package_root\`
+
+Security Director Cloud MCP server, built from source commit
+\`$git_commit\` with the shared \`mecmcp\` crates pinned to
+\`$mecmcp_ref\`.
+
+**Lab-only.** This is not a public release.
+
+> **Unofficial / community project.** This is an independent community project
+> and does not claim affiliation with or endorsement by Hewlett Packard
+> Enterprise or Juniper Networks. Product names and trademarks are used only to
+> identify the systems with which the software interoperates.
+
+## Prerequisites
+
+- Debian 13 AMD64; an unprivileged LXC is recommended.
+- GLIBC $glibc_floor or newer — this binary will not run on an older host.
+- 1 vCPU, 512 MiB RAM, 512 MiB swap, 4 GiB disk for the lab profile.
+- Working DNS and time sync, plus outbound HTTPS to
+  \`api.sdcloud.juniperclouds.net\`.
+- Root or equivalent operator access.
+
+The installer checks only for \`/etc/debian_version\`; it cannot detect an
+unsupported release or an insufficient GLIBC. Confirm both before installing.
+
+## Verify before installing
+
+Integrity is established against the archive checksum published beside this
+package, **not** from inside it — the \`.sha256\` lives next to the tarball, one
+level above this extracted directory.
+
+**Take the checksum from the GitHub release page over an authenticated
+connection**, not from whatever channel delivered the archive. A \`.sha256\`
+carried alongside the tarball only proves the two files agree; an attacker who
+supplied both supplies a matching pair, and the next step runs as root.
+
+If you have not already verified it:
+
+\`\`\`console
+(cd .. && sha256sum -c $package_root.tar.gz.sha256)
+\`\`\`
+
+Adjust the path if you extracted somewhere other than beside the archive.
+
+**If you extracted before verifying, discard this tree and re-extract.** The
+checksum covers the archive, not the files already on disk, so a modified
+extraction survives a passing check and would then run as root:
+
+\`\`\`console
+cd .. && rm -rf $package_root && tar -xzf $package_root.tar.gz && cd $package_root
+\`\`\`
+
+\`BUILD-INFO\` and \`SBOM.cdx.json\` record provenance — source commit,
+toolchain, GLIBC floor, dependency set — and are **metadata only**. They confirm
+what this package claims to be; they do not detect a modified binary. This one
+runs here, in the package root:
+
+\`\`\`console
+grep -Fx 'git_commit=$git_commit' BUILD-INFO
+\`\`\`
+
+## Install
+
+From this package root, and only after the checksum above verifies:
+
+\`\`\`console
+sudo packaging/lxc/install.sh
+\`\`\`
+
+The installer never enables the service: configuration and credentials must be
+in place first. See \`docs/operations.md\`.
+
+## Contents
+
+| Path | What it is |
+|---|---|
+| \`bin/rustsdcmcp\` | the server binary |
+| \`packaging/lxc/install.sh\` | installer; run as root |
+| \`packaging/systemd/\` | unit, sysusers, tmpfiles |
+| \`config/sdc.json.example\` | configuration template |
+| \`docs/operations.md\` | **start here** — install layout, tokens, egress, deployment |
+| \`BUILD-INFO\`, \`SBOM.cdx.json\` | provenance |
+
+## Security model
+
+Credentials come from the environment and never belong in JSON; startup verifies
+the credential against \`expected_tenant_id\`; bearer tokens carry exact tool and
+tenant scopes; request, response and page sizes are bounded; there is no direct
+deploy tool and no unauthenticated write path — mutations require a
+two-principal prepare → approve → apply change control.
+
+\`SECURITY.md\` in this directory and \`docs/operations.md\` carry the detail.
+
+## License
+
+MIT — see \`LICENSE\` in this directory.
+
+Full project documentation:
+<https://github.com/fastrevmd-lab/rustsdcmcp>
+EOF
+chmod 0644 "$stage_dir/README.md"
 
 # Skip every directory .gitignore already excludes, plus the two places a git
 # worktree lands. A nested checkout carries its own Cargo.lock, which Trivy

@@ -309,9 +309,16 @@ fi
 if ! grep -Fq 's#/var/lib/sdcmcp/changeset-state.json#/var/lib/rustsdcmcp/changeset-state.json#' scripts/build-lab-package.sh; then
     fail 'builder does not package the canonical state path'
 fi
-source_has_single_exact_key \
-    mecmcp_ref 'mecmcp_ref=changeset-v0.3.7' scripts/build-lab-package.sh \
-    || fail 'builder must emit one exact mecmcp BUILD-INFO key'
+# The builder derives this from Cargo.toml rather than repeating a literal, so
+# assert the value it actually produces. That is the property this guard wants --
+# a source-text match would pass while the manifest said something else, and it
+# would forbid single-sourcing the ref into the generated package README.
+mapfile -t builder_mecmcp_refs < <(grep -oP 'tag = "\K[^"]+' Cargo.toml | sort -u)
+[[ ${#builder_mecmcp_refs[@]} -eq 1 && ${builder_mecmcp_refs[0]} == 'changeset-v0.3.7' ]] \
+    || fail "Cargo.toml must pin exactly one approved mecmcp tag, found: ${builder_mecmcp_refs[*]-none}"
+# shellcheck disable=SC2016  # literal source fragment, not an expansion
+grep -Fq 'mecmcp_ref=$mecmcp_ref' scripts/build-lab-package.sh \
+    || fail 'builder must emit the derived mecmcp BUILD-INFO key'
 require_logical_line \
     "has_single_exact_key mecmcp_ref 'mecmcp_ref=changeset-v0.3.7' \"\$build_info\" || die 'BUILD-INFO mecmcp ref is invalid'" \
     "$installer"
