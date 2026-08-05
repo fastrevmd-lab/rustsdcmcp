@@ -31,8 +31,8 @@ therefore protect the management plane rather than merely decorate it.
 ## Current status
 
 `rustsdcmcp` is available to repository collaborators as the private
-[`v0.1.0-lab.1` prerelease](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.1.0-lab.1),
-which targets `65135e29484be4487f5ba58bdf70ec0ef7518288`. It exposes 17 MCP
+[`v0.1.0-lab.3` prerelease](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.1.0-lab.3),
+which targets `37db74a5a0b959444d335793297d3f7b07224009`. It exposes 17 MCP
 tools: 14 bounded read tools and three write tools—`prepare_sdc_policy_deploy`,
 `approve_sdc_change_set`, and `apply_sdc_change_set`—that can be used only
 through prepare → independent approval → apply.
@@ -40,28 +40,32 @@ through prepare → independent approval → apply.
 Live, read-only validation against SDC has verified credential-based startup
 tenant validation, `get_sdc_tenant_scope`, and `list_sdc_devices` with
 `from=0,size=1`. Authentication and the tenant-scope check also succeeded
-after a service restart. No preview, approval, apply, deployment, or other SDC
-mutation was attempted; the remaining endpoint questions are tracked in
+after a service restart. **That validation was performed against the
+`v0.1.0-lab.1` build and has not been repeated since**; the read path has
+changed in the interim, so treat it as evidence about the approach rather than
+about this archive. No preview, approval, apply, deployment, or other SDC
+mutation has ever been attempted against a live tenant, and the remaining
+endpoint questions are tracked in
 [`docs/sdc-api/README.md`](docs/sdc-api/README.md#still-unverified).
 
 ## Private prerelease
 
 Repository collaborators can download the private
-[`v0.1.0-lab.1` prerelease](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.1.0-lab.1)
+[`v0.1.0-lab.3` prerelease](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.1.0-lab.3)
 and verify its archive:
 
 ```console
-gh release download v0.1.0-lab.1 \
+gh release download v0.1.0-lab.3 \
   --repo fastrevmd-lab/rustsdcmcp \
-  --pattern 'rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz*'
-sha256sum -c rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz.sha256
-sha256sum rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz
+  --pattern 'rustsdcmcp_0.1.0-lab.20260805.37db74a5a0b9_amd64.tar.gz*'
+sha256sum -c rustsdcmcp_0.1.0-lab.20260805.37db74a5a0b9_amd64.tar.gz.sha256
+sha256sum rustsdcmcp_0.1.0-lab.20260805.37db74a5a0b9_amd64.tar.gz
 ```
 
 The final command must print:
 
 ```text
-f3497192cb6fe8c83cfad8014fadc787ff16de7bca89a2302b565331e4f21848  rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz
+96308e7e5884a399e482b996761f7ca1ff56f99695c6eaa563f82d39138f34d6  rustsdcmcp_0.1.0-lab.20260805.37db74a5a0b9_amd64.tar.gz
 ```
 
 ## Build from approved source
@@ -71,7 +75,7 @@ the authorized commit, operators must first bind their detached checkout to
 that commit before building, testing, or packaging:
 
 ```console
-approved_commit=65135e29484be4487f5ba58bdf70ec0ef7518288
+approved_commit=37db74a5a0b959444d335793297d3f7b07224009
 git checkout --detach "$approved_commit"
 test "$(git rev-parse HEAD)" = "$approved_commit"
 cargo build --release --locked
@@ -88,7 +92,7 @@ records only the archive basename:
 
 ```console
 artifact_dir="dist/$approved_commit"
-archive="$artifact_dir/rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz"
+archive="$artifact_dir/rustsdcmcp_0.1.0-lab.20260805.37db74a5a0b9_amd64.tar.gz"
 (cd "$artifact_dir" && sha256sum -c "$(basename "$archive").sha256")
 package_root=$(tar -tzf "$archive" | sed -n '1s#/.*##p')
 test -n "$package_root"
@@ -109,7 +113,7 @@ After downloading the release assets, install the verified package:
 
 ```bash
 set -euo pipefail
-archive=rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz
+archive=rustsdcmcp_0.1.0-lab.20260805.37db74a5a0b9_amd64.tar.gz
 sha256sum -c "$archive.sha256"
 package_root=$(tar -tzf "$archive" | sed -n '1s#/.*##p')
 test -n "$package_root"
@@ -200,9 +204,9 @@ or runtime state.
 
 [`mecmcp`](https://github.com/fastrevmd-lab/mecmcp) is the vendor-neutral Rust
 foundation shared by the mechub MCP server family. This repository consumes it,
-rather than forking it. Current source and the next lab-package build pin all
-five shared crates to `changeset-v0.3.7`. The existing private
-`v0.1.0-lab.1` prerelease and VMID 606 were built with `changeset-v0.3.6`, as
+rather than forking it. Current source and the `v0.1.0-lab.3` prerelease pin all
+five shared crates to `changeset-v0.3.7`. The older `v0.1.0-lab.1` prerelease
+and VMID 606 were built with `changeset-v0.3.6`, as
 recorded in [`docs/lab-deployment-606.md`](docs/lab-deployment-606.md).
 The 59 temporary compatibility declarations remain tracked in the
 [`mecmcp compatibility ledger`](docs/mecmcp-compatibility.md); public `v0.1.0`

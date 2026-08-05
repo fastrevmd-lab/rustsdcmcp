@@ -16,9 +16,9 @@ test "${#archives[@]}" -eq 1
 (cd "$artifact_dir" && sha256sum -c "$(basename "${archives[0]}").sha256")
 ```
 
-Current source and future lab packages pin all five shared `mecmcp` crates to
-`changeset-v0.3.7`. The existing private `v0.1.0-lab.1` prerelease and VMID
-606 remain `changeset-v0.3.6` artifacts; their immutable acceptance record is
+Current source and the `v0.1.0-lab.3` prerelease pin all five shared `mecmcp`
+crates to `changeset-v0.3.7`. The older `v0.1.0-lab.1` prerelease and VMID 606
+remain `changeset-v0.3.6` artifacts; their immutable acceptance record is
 [`lab-deployment-606.md`](lab-deployment-606.md). This repository still has 59
 temporary compatibility symbols, each tracked in
 [`mecmcp-compatibility.tsv`](mecmcp-compatibility.tsv). There is no public
