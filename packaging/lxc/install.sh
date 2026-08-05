@@ -330,7 +330,7 @@ fi
 # egress policy while enforcing none of it. `systemd-analyze security` reads the
 # declaration and cannot tell the difference.
 #
-# Informational by default: a hypervisor that withholds BPF is a legitimate
+# Informational by default: a runtime that withholds BPF is a legitimate
 # deployment, and the operator needs to know rather than be blocked. Set
 # SDCMCP_REQUIRE_EGRESS_FILTER=1 to make a non-enforcing host fatal.
 egress_probe_unknown() {
@@ -378,9 +378,11 @@ report_egress_enforcement() {
             '  systemd cannot attach its cgroup BPF program here, so the IPAddressAllow/' \
             '  IPAddressDeny lines in rustsdcmcp.service have no effect. This is normal in' \
             '  an unprivileged LXC. The unit still applies every other sandbox directive.' \
-            '  Enforce egress at the hypervisor or host firewall instead -- deny' \
-            '  169.254.0.0/16 and the local subnet except your resolver, allow 443 out.' \
-            '  See docs/operations.md, "Egress policy".' >&2
+            '  Move the control outward to whatever layer sees this workload'"'"'s packets --' \
+            '  guest firewall, host nftables, NetworkPolicy, or cloud security group -- and' \
+            '  deny 169.254.0.0/16 plus the local subnet except your resolver, allow 443 out.' \
+            '  docs/operations.md, "Enforcing it where systemd cannot", has the per-runtime' \
+            '  mechanism and a verification command.' >&2
         [[ "$require" == 1 ]] \
             && die 'SDCMCP_REQUIRE_EGRESS_FILTER=1 and systemd IP filtering is not enforced here'
         return 0

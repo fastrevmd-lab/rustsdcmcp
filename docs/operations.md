@@ -71,13 +71,23 @@ IPAccounting=yes
 
 ### Whether it enforces at all
 
-systemd implements `IPAddress*` with cgroup eBPF. An **unprivileged LXC — the
-container type this project recommends — usually cannot attach those programs
-without host delegation, and systemd fails open**: it logs a warning and runs
-the unit with no filter whatsoever. Nothing about the service's behaviour
-reveals this, and `systemd-analyze security` cannot either — it scores the
+systemd implements `IPAddress*` with cgroup eBPF, and **a container that cannot
+attach those programs makes systemd fail open**: it logs a warning and runs the
+unit with no filter whatsoever. Nothing about the service's behaviour reveals
+this, and `systemd-analyze security` cannot either — it scores the
 *declaration*, so the unit looks hardened whether or not a single packet is
 filtered.
+
+Whether it attaches depends on the runtime, not on this package:
+
+| Environment | `IPAddress*` attaches? |
+|---|---|
+| Bare metal, VM | yes |
+| Privileged LXC, systemd-nspawn with BPF delegation | usually |
+| **Unprivileged LXC** (what this project recommends) | **usually not** |
+| Docker / Podman / Kubernetes | not applicable — no systemd inside the container |
+
+Do not infer from the table. Probe the actual host.
 
 The installer therefore probes actual enforcement and prints one of:
 
@@ -104,11 +114,95 @@ systemctl show rustsdcmcp.service -p IPEgressBytes --value
 `ENFORCED` — including `UNKNOWN`, since an unmeasurable host is exactly as
 unguaranteed as a non-enforcing one.
 
-**When it is not enforced, put the control at the hypervisor.** On Proxmox,
-that is the container's interface firewall: deny `169.254.0.0/16`, deny the
-local subnet except your resolver, allow 443 outbound. That layer actually
-holds for an unprivileged container; the unit directives are defence in depth
-for hosts where they attach (VMs, bare metal, privileged containers).
+### Enforcing it where systemd cannot
+
+Any result other than `ENFORCED` means the unit directives are **unproven**, and
+the control should move outward — to whatever layer actually sees this
+workload's packets. `NOT ENFORCED` and `NO POLICY` mean they are demonstrably
+doing nothing; `UNKNOWN` means nothing was measured and they may well be
+working. Do not treat the last as the first.
+
+The policy does not change with the runtime:
+
+1. deny `169.254.0.0/16` and `fd00:ec2::254` — cloud metadata, the route from a
+   compromised HTTP client to a stolen credential
+2. deny the local subnet **except** your DNS resolver — blocks lateral movement
+   while keeping name resolution working
+3. allow 443 outbound — the SDC API, whose addresses rotate
+
+The mechanism does. Configure it with your platform's own documentation rather
+than a recipe here — these are the layers, not instructions:
+
+| Runtime | Layer that sees this workload's packets |
+|---|---|
+| Proxmox LXC / VM | per-guest interface firewall |
+| libvirt / KVM | `nwfilter` on the guest interface |
+| Kubernetes | `NetworkPolicy` egress, on a CNI that implements it |
+| Cloud instance | in-guest packet filter for **both** metadata addresses, plus security groups for everything else |
+| Bare metal, VM with working systemd | the unit directives; this section does not apply |
+
+**Container runtimes are deliberately absent from that table.** Docker and
+Podman place the data path differently depending on network driver, rootful
+versus rootless, daemon configuration, and version — and the mapping changes
+between releases. Eight attempts to state it accurately here all failed review,
+including one whose only purpose was to explain that it could not be stated.
+Trace your own path with `ip netns` / `nsenter` against your actual
+configuration, and confirm it with the check below rather than trusting any
+table, including this one.
+
+Two properties are worth checking whatever you choose, because both are common
+and both produce a control that reads as present and is not:
+
+- **Some layers accept egress policy without enforcing it.** Container network
+  attachment and some CNI implementations are the usual cases.
+- **Cloud metadata often bypasses the cloud firewall.** On EC2, IMDS traffic is
+  handled below the security group and NACL layer, so an egress rule there does
+  not block it. This applies to the IPv6 endpoint too — `fd00:ec2::254` is ULA
+  rather than link-local, so it is easy to file mentally under "ordinary routed
+  traffic the firewall sees", and it is not. The control has to be in-guest, or
+  IMDS disabled outright. Consult your provider's current metadata-hardening
+  guidance; it changes, and getting it wrong is silent.
+
+Whichever you pick, a rule that has not been exercised from inside the workload
+is an assumption. Verify it, and re-verify after a reboot — in-kernel firewall
+rules are not persistent unless you made them so.
+
+### Verifying it, from inside the workload
+
+An untested deny is an assumption, and this section exists because one of those
+already shipped.
+
+```console
+curl --version | grep -qw IPv6 || echo 'NOTE: curl lacks IPv6; the v6 line below proves nothing'
+for url in 'http://169.254.169.254/' 'http://[fd00:ec2::254]/' \
+           'https://api.sdcloud.juniperclouds.net/'; do
+  curl -s -o /dev/null --noproxy '*' --max-time 3 \
+    -w "$url  http=%{http_code} connects=%{num_connects} curl=%{exitcode}\n" "$url"
+done
+```
+
+Read `connects`, not `http`:
+
+| Result | Meaning |
+|---|---|
+| `connects=0` | **blocked** — no TCP connection was established |
+| `connects=1` | **reachable** — the route is open regardless of `http` |
+| `curl=6`, `45`, or `2` | the probe never ran; not evidence either way |
+
+Three things decide whether this test means anything:
+
+- **`http=000` alone does not prove a block.** A timeout expiring *after* the
+  TCP handshake also yields `000`, with `connects=1`. Read `connects`.
+- **A curl without IPv6 support fails locally**, producing `connects=0` — the
+  same signature as a block, having probed nothing. Hence the capability check
+  above; without it the v6 line is not evidence.
+- **`--noproxy '*'` is required.** With `HTTP_PROXY`/`ALL_PROXY` set, curl tests
+  the proxy's egress rather than the workload's. `SdcClient` disables
+  environment proxies, so the test must too.
+
+A metadata endpoint answering `401` is **reachable**, not blocked. The SDC
+endpoint answering `403` is a pass — it proves reachability; the request simply
+carries no credential.
 
 ### What is denied, and what is not
 
