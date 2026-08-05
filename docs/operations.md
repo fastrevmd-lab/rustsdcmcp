@@ -55,6 +55,58 @@ ssh -N -L 30032:127.0.0.1:30032 root@rustsdcmcp.mechub.org
 Point the local MCP client at `http://127.0.0.1:30032/mcp` while the tunnel is
 open.
 
+## Egress policy
+
+Inbound is loopback-only, but the service also holds a tenant-wide SDC
+credential, so its *outbound* reach matters. The unit denies the ranges it
+provably never needs:
+
+```
+IPAddressAllow=localhost
+IPAddressDeny=169.254.0.0/16 fe80::/10 fc00::/7 10.0.0.0/8 172.16.0.0/12
+```
+
+`169.254.0.0/16` is the one that matters most: it covers the cloud metadata
+endpoint, the standard target for turning a compromised HTTP client into
+credential theft. The RFC1918 ranges blunt lateral movement from this container
+into the rest of a network.
+
+This is a denylist, not an allowlist, and that is deliberate. The SDC API is a
+cloud address whose IPs rotate, so `IPAddressDeny=any` plus an allowlist would
+fail on the first rotation. `systemd-analyze security` will report
+"Service does not define an IP address allow list" for this reason — expected,
+not an oversight.
+
+**`192.168.0.0/16` is deliberately not denied.** The packaged deployment
+resolves DNS through its LAN gateway (`192.168.1.1` for VMID 606), and denying
+that range stops the service resolving the SDC endpoint at all — a hard outage,
+not a hardening. The consequence is that the local `/24` stays reachable from
+this container.
+
+If your resolver is external, or you know its address, tighten this with a
+drop-in rather than editing the shipped unit — the installer replaces it:
+
+```console
+sudo systemctl edit rustsdcmcp.service
+```
+
+```ini
+[Service]
+IPAddressAllow=192.168.1.1
+IPAddressDeny=192.168.0.0/16
+```
+
+More specific rules win, so the resolver stays reachable while the rest of the
+LAN is refused. Confirm DNS still resolves before considering the change good:
+
+```console
+sudo systemctl restart rustsdcmcp.service
+sudo journalctl -u rustsdcmcp.service -n 20 --no-pager
+```
+
+A startup that fails at `verifying SDC credential tenant scope` is the symptom
+of a denied resolver.
+
 ## Initial read-only token
 
 Create the initial token as root, and redirect the one-time token value to a
