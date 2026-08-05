@@ -96,8 +96,14 @@ IPAddressAllow=192.168.1.1
 IPAddressDeny=192.168.0.0/16
 ```
 
-More specific rules win, so the resolver stays reachable while the rest of the
-LAN is refused. Confirm DNS still resolves before considering the change good:
+systemd checks `IPAddressAllow=` **first** and grants on any match, then checks
+`IPAddressDeny=`, then defaults to granting. It is allow-before-deny, *not*
+longest-prefix — so the `/32` above works because it is an allow, not because
+it is narrower. The practical consequence when adapting this: a broad
+`IPAddressAllow=` silently defeats every narrower deny, so keep allow entries
+as tight as possible.
+
+Confirm DNS still resolves before considering the change good:
 
 ```console
 sudo systemctl restart rustsdcmcp.service
