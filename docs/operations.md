@@ -142,12 +142,13 @@ than a recipe here — these are the layers, not instructions:
 | Bare metal, VM with working systemd | the unit directives; this section does not apply |
 
 **Container runtimes are deliberately absent from that table.** Docker and
-Podman place the data path differently depending on driver, rootful versus
-rootless, and nesting — rootless Docker runs inside RootlessKit's own network
-namespace, so even `--network host` is not the initial host stack. Seven
-attempts to state that mapping accurately all failed review. Trace your own
-path with `ip netns` / `nsenter` and the runtime's documentation, and confirm it
-with the check below rather than trusting any table, including this one.
+Podman place the data path differently depending on network driver, rootful
+versus rootless, daemon configuration, and version — and the mapping changes
+between releases. Eight attempts to state it accurately here all failed review,
+including one whose only purpose was to explain that it could not be stated.
+Trace your own path with `ip netns` / `nsenter` against your actual
+configuration, and confirm it with the check below rather than trusting any
+table, including this one.
 
 Two properties are worth checking whatever you choose, because both are common
 and both produce a control that reads as present and is not:
