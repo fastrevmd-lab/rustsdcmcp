@@ -31,7 +31,7 @@ futures = "0.3"
 hex = "0.4"
 http = "1"
 reqwest = { version = "0.13", default-features = false, features = ["json", "query", "stream", "rustls-no-provider"] }
-rmcp = { version = "2", features = ["server", "transport-io", "transport-streamable-http-server", "transport-streamable-http-server-session"] }
+rmcp = { version = "3", features = ["server", "transport-io", "transport-streamable-http-server", "transport-streamable-http-server-session"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
@@ -46,11 +46,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 zeroize = "1"
 
-mecmcp-audit = { version = "0.3.7", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.7" }
-mecmcp-auth = { version = "0.3.7", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.7" }
-mecmcp-changeset = { version = "0.3.7", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.7" }
-mecmcp-runtime = { version = "0.3.7", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.7" }
-mecmcp-transport = { version = "0.3.7", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.7" }
+mecmcp-audit = { version = "0.5.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.5.0" }
+mecmcp-auth = { version = "0.5.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.5.0" }
+mecmcp-changeset = { version = "0.5.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.5.0" }
+mecmcp-runtime = { version = "0.5.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.5.0" }
+mecmcp-transport = { version = "0.5.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.5.0" }
 
 [profile.release]
 lto = "thin"

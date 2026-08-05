@@ -4,11 +4,8 @@ use mecmcp_transport::{
     ConcurrencyState, LimitedSessionManager, LimitsConfig, LimitsConfigError, PrometheusRuntime,
     TransportIdentity, apply_body_limit, apply_rate_limit, concurrency_middleware,
 };
-use rmcp::{
-    RoleServer,
-    transport::streamable_http_server::{
-        StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
-    },
+use rmcp::transport::streamable_http_server::{
+    StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
 use std::{net::SocketAddr, sync::Arc};
 use tokio_util::sync::CancellationToken;
@@ -107,12 +104,17 @@ pub(crate) enum HttpServeError {
 pub(crate) fn streamable_http_server_config(
     policy: &HostOriginPolicy,
     shutdown: CancellationToken,
+    limits: &mecmcp_transport::LimitsConfig,
 ) -> StreamableHttpServerConfig {
     let HostOriginPolicy::Enforced {
         allowed_hosts,
         allowed_origins,
     } = policy;
-    let mut config = StreamableHttpServerConfig::default();
+    // Not `StreamableHttpServerConfig::default()`. rmcp 3 added its own
+    // `max_request_body_bytes`, defaulting to 4 MiB and enforced *inside* rmcp
+    // after `apply_body_limit` has already accepted the request, so `default()`
+    // silently overrides whatever limit the operator configured.
+    let mut config = mecmcp_transport::streamable_http_server_config(limits);
     config.allowed_hosts.extend(allowed_hosts.iter().cloned());
     if !allowed_origins.is_empty() {
         config.allowed_origins = allowed_origins.clone();
@@ -127,7 +129,7 @@ pub(crate) fn build_streamable_http_router<S>(
     config: HttpTransportConfig,
 ) -> Result<Router, HttpTransportBuildError>
 where
-    S: rmcp::Service<RoleServer> + Send + 'static,
+    S: rmcp::ServerHandler + Send + 'static,
 {
     config.limits.validate()?;
     let sessions = LimitedSessionManager::new(LocalSessionManager::default(), &config.limits);
@@ -139,7 +141,7 @@ where
     let service = StreamableHttpService::new(
         service_factory,
         sessions,
-        streamable_http_server_config(&config.host_origin, config.shutdown.clone()),
+        streamable_http_server_config(&config.host_origin, config.shutdown.clone(), &config.limits),
     );
     let mut router =
         Router::new()
@@ -288,7 +290,11 @@ mod tests {
         let policy =
             HostOriginPolicy::enforced(["mcp.example.test"], ["https://client.example.test"]);
         let shutdown = CancellationToken::new();
-        let config = streamable_http_server_config(&policy, shutdown.clone());
+        let config = streamable_http_server_config(
+            &policy,
+            shutdown.clone(),
+            &mecmcp_transport::LimitsConfig::default(),
+        );
         // rmcp terminates every active session on this token, so an open SSE
         // stream must not outlive process shutdown.
         assert!(!config.cancellation_token.is_cancelled());
