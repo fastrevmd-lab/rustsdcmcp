@@ -71,13 +71,23 @@ IPAccounting=yes
 
 ### Whether it enforces at all
 
-systemd implements `IPAddress*` with cgroup eBPF. An **unprivileged LXC — the
-container type this project recommends — usually cannot attach those programs
-without host delegation, and systemd fails open**: it logs a warning and runs
-the unit with no filter whatsoever. Nothing about the service's behaviour
-reveals this, and `systemd-analyze security` cannot either — it scores the
+systemd implements `IPAddress*` with cgroup eBPF, and **a container that cannot
+attach those programs makes systemd fail open**: it logs a warning and runs the
+unit with no filter whatsoever. Nothing about the service's behaviour reveals
+this, and `systemd-analyze security` cannot either — it scores the
 *declaration*, so the unit looks hardened whether or not a single packet is
 filtered.
+
+Whether it attaches depends on the runtime, not on this package:
+
+| Environment | `IPAddress*` attaches? |
+|---|---|
+| Bare metal, VM | yes |
+| Privileged LXC, systemd-nspawn with BPF delegation | usually |
+| **Unprivileged LXC** (what this project recommends) | **usually not** |
+| Docker / Podman / Kubernetes | not applicable — no systemd inside the container |
+
+Do not infer from the table. Probe the actual host.
 
 The installer therefore probes actual enforcement and prints one of:
 
@@ -104,11 +114,46 @@ systemctl show rustsdcmcp.service -p IPEgressBytes --value
 `ENFORCED` — including `UNKNOWN`, since an unmeasurable host is exactly as
 unguaranteed as a non-enforcing one.
 
-**When it is not enforced, put the control at the hypervisor.** On Proxmox,
-that is the container's interface firewall: deny `169.254.0.0/16`, deny the
-local subnet except your resolver, allow 443 outbound. That layer actually
-holds for an unprivileged container; the unit directives are defence in depth
-for hosts where they attach (VMs, bare metal, privileged containers).
+### Enforcing it where systemd cannot
+
+When the probe reports anything but `ENFORCED`, the unit directives are
+decoration and the control has to move outward — to whatever layer actually
+sees this workload's packets. That layer differs per runtime, and none of it is
+something this package can configure for you.
+
+The policy is the same everywhere; only the mechanism changes:
+
+1. deny `169.254.0.0/16` and `fd00:ec2::254` — cloud metadata, the route from a
+   compromised HTTP client to a stolen credential
+2. deny the local subnet **except** your DNS resolver — blocks lateral movement
+   while keeping name resolution working
+3. allow 443 outbound — the SDC API, whose addresses rotate
+
+| Runtime | Where to apply it |
+|---|---|
+| Proxmox LXC / VM | per-guest interface firewall (Datacenter → guest → Firewall) |
+| libvirt / KVM | `nwfilter` on the guest interface |
+| Docker / Podman | a user-defined network plus host `nftables`/`iptables` on its bridge; `--network` alone does not restrict egress |
+| Kubernetes | a `NetworkPolicy` with an egress rule, on a CNI that enforces egress (Calico, Cilium); several CNIs silently ignore egress policy |
+| Cloud instance | security group / VPC firewall egress rules, plus the provider's own metadata protection (IMDSv2 on EC2) |
+| Bare metal, VM with working systemd | the unit directives already do it; this section does not apply |
+
+Two traps worth naming. A Docker `--network` or a Kubernetes `NetworkPolicy`
+can look configured and enforce nothing — Docker does not filter egress by
+network membership, and several CNIs accept egress policy without implementing
+it. And on EC2, IMDSv2 is a better metadata control than any address deny,
+because it defeats the SSRF pattern rather than blocking one address.
+
+Whatever you choose, verify it the same way: from inside the workload, confirm
+the metadata address is unreachable and the SDC endpoint is.
+
+```console
+curl -sS --max-time 3 http://169.254.169.254/  # must fail
+curl -sS --max-time 5 -o /dev/null -w '%{http_code}\n' https://api.sdcloud.juniperclouds.net/
+```
+
+A deny that has not been tested from inside the workload is an assumption, and
+this section exists because one of those already shipped.
 
 ### What is denied, and what is not
 
