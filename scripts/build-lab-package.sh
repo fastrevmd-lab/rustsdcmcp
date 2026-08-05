@@ -158,12 +158,17 @@ jq -e '
     and (tostring | contains("changeset-v0.3.6") | not)
     and (tostring | contains("93ab63d7c2fad649112807378f92fcc26cce73c6") | not)
 ' "$stage_dir/SBOM.cdx.json" >/dev/null || {
-    sbom_mecmcp=$(jq -r '
-        [.components[]? | select(.name? | strings | startswith("mecmcp-")) | .name]
-        | length
-    ' "$stage_dir/SBOM.cdx.json" 2>/dev/null || printf '?')
-    if [[ $sbom_mecmcp =~ ^[0-9]+$ ]] && ((sbom_mecmcp > 5)); then
-        fail "normalized SBOM lists $sbom_mecmcp mecmcp components, expected 5; a nested checkout under the repo root was scanned as a second copy"
+    # Only blame a nested checkout when the same name@version actually appears
+    # more than once. An oversized set has other causes -- a genuinely new
+    # mecmcp crate, or mixed 0.3.6/0.3.7 entries -- and naming the wrong one
+    # buries a real provenance failure under a scan-path explanation.
+    sbom_dupes=$(jq -r '
+        [.components[]? | select(.name? | strings | startswith("mecmcp-"))
+            | (.name + "@" + (.version // "unknown"))]
+        | group_by(.) | map(select(length > 1)) | flatten | unique | join(", ")
+    ' "$stage_dir/SBOM.cdx.json" 2>/dev/null || printf '')
+    if [[ -n $sbom_dupes ]]; then
+        fail "normalized SBOM lists duplicate mecmcp components ($sbom_dupes); a nested checkout under the repo root was scanned as a second copy"
     fi
     fail 'normalized SBOM lacks required metadata or dependencies'
 }
