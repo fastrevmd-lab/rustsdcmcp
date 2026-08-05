@@ -24,13 +24,29 @@ fn config_names_the_credential_variable_and_carries_no_field_for_its_value() {
     assert_eq!(config.credential_env, "SDC_TOKEN");
 
     // The config names the variable; the value lives only in the environment.
-    // `deny_unknown_fields` means a serialized config round-trips through the
-    // exact declared field set, so no additional key can smuggle a secret in.
     let serialized = serde_json::to_string(&config).expect("config serializes");
     assert!(serialized.contains("SDC_TOKEN"));
-    let round_trip: SdcConfig = serde_json::from_str(&serialized).expect("config round-trips");
-    assert_eq!(round_trip.credential_env, config.credential_env);
-    assert_eq!(round_trip.auth_scheme, config.auth_scheme);
+
+    // Feed in a key the struct does not declare. Round-tripping the struct's
+    // own output would prove nothing here -- serialization can only emit
+    // declared fields, so that assertion passes with or without
+    // `deny_unknown_fields`. Rejection of injected input is the actual
+    // invariant: no key can smuggle a secret into a config file.
+    let smuggled = serde_json::json!({
+        "version": 1,
+        "tenant": "production",
+        "expected_tenant_id": "tenant-123",
+        "credential_env": "SDC_TOKEN",
+        "auth_scheme": "oauth2_token",
+        "endpoint": "https://example.invalid/",
+        "credential": "smuggled-secret-value"
+    });
+    let rejected = serde_json::from_value::<SdcConfig>(smuggled)
+        .expect_err("an undeclared credential field must be refused");
+    assert!(
+        rejected.to_string().contains("credential"),
+        "rejection should name the offending key, got: {rejected}"
+    );
 }
 
 #[test]
