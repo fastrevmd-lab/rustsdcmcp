@@ -120,10 +120,9 @@ Any result other than `ENFORCED` means the unit directives are **unproven**, and
 the control should move outward — to whatever layer actually sees this
 workload's packets. `NOT ENFORCED` and `NO POLICY` mean they are demonstrably
 doing nothing; `UNKNOWN` means nothing was measured and they may well be
-working. Do not treat the last as the first. None of the layers below is
-something this package can configure for you.
+working. Do not treat the last as the first.
 
-The policy is the same everywhere; only the mechanism changes:
+The policy does not change with the runtime:
 
 1. deny `169.254.0.0/16` and `fd00:ec2::254` — cloud metadata, the route from a
    compromised HTTP client to a stolen credential
@@ -131,46 +130,40 @@ The policy is the same everywhere; only the mechanism changes:
    while keeping name resolution working
 3. allow 443 outbound — the SDC API, whose addresses rotate
 
-| Runtime | Where to apply it |
+The mechanism does. Configure it with your platform's own documentation rather
+than a recipe here — these are the layers, not instructions:
+
+| Runtime | Layer that sees this workload's packets |
 |---|---|
-| Proxmox LXC / VM | per-guest interface firewall (Datacenter → guest → Firewall) |
+| Proxmox LXC / VM | per-guest interface firewall |
 | libvirt / KVM | `nwfilter` on the guest interface |
-| Docker / Podman | a user-defined network plus host `nftables`/`iptables` on its bridge; `--network` alone does not restrict egress |
-| Kubernetes | a `NetworkPolicy` with an egress rule, on a CNI that enforces egress (Calico, Cilium); several CNIs silently ignore egress policy |
-| Cloud instance | in-guest `nftables`/`iptables` for metadata (see below), security group / VPC egress rules for everything else |
-| Bare metal, VM with working systemd | the unit directives already do it; this section does not apply |
+| Docker / Podman | host packet filter on the container's bridge |
+| Kubernetes | `NetworkPolicy` egress, on a CNI that implements it |
+| Cloud instance | in-guest packet filter, plus security groups for non-link-local traffic |
+| Bare metal, VM with working systemd | the unit directives; this section does not apply |
 
-Three traps worth naming, all of which look configured and enforce nothing:
+Two properties are worth checking whatever you choose, because both are common
+and both produce a control that reads as present and is not:
 
-- A Docker `--network` does not filter egress by network membership.
-- Several CNIs accept a `NetworkPolicy` egress rule without implementing it.
-- **Cloud metadata does not traverse the cloud firewall.** On EC2, link-local
-  traffic to `169.254.169.254` is intercepted below the security group and NACL
-  layer, so no egress rule you write there can block it. Disable IMDS entirely
-  where the workload does not need it (`--metadata-options
-  HttpEndpoint=disabled`), or block it in-guest — covering **both** families,
-  since `iptables` alone leaves the IPv6 endpoint open:
+- **Some layers accept egress policy without enforcing it.** Container network
+  attachment and some CNI implementations are the usual cases.
+- **Cloud metadata often bypasses the cloud firewall.** On EC2, link-local
+  traffic to the IMDS address is handled below the security group and NACL
+  layer, so an egress rule there does not block it — the control has to be
+  in-guest, or IMDS disabled outright. Consult your provider's current
+  metadata-hardening guidance; it changes, and getting it wrong is silent.
 
-  ```console
-  nft add rule inet filter output ip  daddr 169.254.169.254 drop
-  nft add rule inet filter output ip6 daddr fd00:ec2::254   drop
-  ```
-
-  With legacy tools that is `iptables` *and* `ip6tables`, not one of them.
-
-  `HttpTokens=required` raises the bar — a plain SSRF cannot mint the token —
-  but the endpoint stays reachable, so it is defence in depth, not the deny.
-  Under the default `HttpTokens=optional`, IMDSv1 still answers tokenless
-  requests and SSRF remains viable, so "IMDSv2 is enabled" is not the control;
-  `required` is.
+Whichever you pick, a rule that has not been exercised from inside the workload
+is an assumption. Verify it, and re-verify after a reboot — in-kernel firewall
+rules are not persistent unless you made them so.
 
 ### Verifying it, from inside the workload
 
 An untested deny is an assumption, and this section exists because one of those
-already shipped. Test both address families, and assert the connection never
-completed rather than that it returned an error:
+already shipped.
 
 ```console
+curl --version | grep -qw IPv6 || echo 'NOTE: curl lacks IPv6; the v6 line below proves nothing'
 for url in 'http://169.254.169.254/' 'http://[fd00:ec2::254]/' \
            'https://api.sdcloud.juniperclouds.net/'; do
   curl -s -o /dev/null --noproxy '*' --max-time 3 \
@@ -182,26 +175,24 @@ Read `connects`, not `http`:
 
 | Result | Meaning |
 |---|---|
-| `connects=0`, `curl=7` or `28` | **blocked** — no TCP connection was established |
+| `connects=0` | **blocked** — no TCP connection was established |
 | `connects=1` | **reachable** — the route is open regardless of `http` |
-| `curl=6`, `45`, or `2` | the probe never ran; this is not evidence either way |
+| `curl=6`, `45`, or `2` | the probe never ran; not evidence either way |
 
-Three details decide whether this test means anything:
+Three things decide whether this test means anything:
 
-- **`http=000` alone does not prove a block.** A timeout that expires *after*
-  the TCP handshake also yields `000` while `connects=1`, and a curl built
-  without IPv6 fails locally with `000` having probed nothing. `num_connects`
-  separates the three; `%{exitcode}` needs curl 7.75+.
-- **A reachable metadata endpoint may answer `401`.** With
-  `HttpTokens=required` an unauthenticated GET is rejected, so a naive check
-  that only looks for a non-2xx status reads a live route as blocked.
+- **`http=000` alone does not prove a block.** A timeout expiring *after* the
+  TCP handshake also yields `000`, with `connects=1`. Read `connects`.
+- **A curl without IPv6 support fails locally**, producing `connects=0` — the
+  same signature as a block, having probed nothing. Hence the capability check
+  above; without it the v6 line is not evidence.
 - **`--noproxy '*'` is required.** With `HTTP_PROXY`/`ALL_PROXY` set, curl tests
-  the proxy's egress rather than the workload's, which can show metadata blocked
-  and SDC reachable when neither is true of the service. `SdcClient` disables
+  the proxy's egress rather than the workload's. `SdcClient` disables
   environment proxies, so the test must too.
 
-The SDC endpoint answering `403` is a pass — it proves reachability; the request
-simply carries no credential.
+A metadata endpoint answering `401` is **reachable**, not blocked. The SDC
+endpoint answering `403` is a pass — it proves reachability; the request simply
+carries no credential.
 
 ### What is denied, and what is not
 
