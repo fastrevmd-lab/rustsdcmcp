@@ -74,11 +74,11 @@ source_has_single_exact_key() {
 assert_build_info_key_contract() {
     local fixture
     fixture=$(mktemp)
-    printf '%s\n' 'mecmcp_ref=changeset-v0.3.7' >"$fixture"
-    has_single_exact_key mecmcp_ref 'mecmcp_ref=changeset-v0.3.7' "$fixture" \
+    printf '%s\n' 'mecmcp_ref=v0.5.0' >"$fixture"
+    has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.5.0' "$fixture" \
         || fail 'singular expected BUILD-INFO mecmcp key was rejected'
-    printf '%s\n' 'mecmcp_ref=changeset-v0.3.6' >>"$fixture"
-    if has_single_exact_key mecmcp_ref 'mecmcp_ref=changeset-v0.3.7' "$fixture"; then
+    printf '%s\n' 'mecmcp_ref=v0.4.0' >>"$fixture"
+    if has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.5.0' "$fixture"; then
         fail 'conflicting BUILD-INFO mecmcp key was accepted'
     fi
     rm -f -- "$fixture"
@@ -129,9 +129,9 @@ assert_exact_mecmcp_sbom_set() {
     local -a cases=(duplicate extra mixed-registry wrong-version)
     local -a mutations=(
         '.components += [.components[] | select(.name == "mecmcp-auth")]'
-        '.components += [{"name":"mecmcp-extra","version":"0.3.7"}]'
-        '.components += [{"name":"mecmcp-auth","version":"0.3.6","purl":"pkg:cargo/mecmcp-auth@0.3.6"}]'
-        '(.components[] | select(.name == "mecmcp-auth") | .version) = "0.3.6"'
+        '.components += [{"name":"mecmcp-extra","version":"0.5.0"}]'
+        '.components += [{"name":"mecmcp-auth","version":"0.4.0","purl":"pkg:cargo/mecmcp-auth@0.4.0"}]'
+        '(.components[] | select(.name == "mecmcp-auth") | .version) = "0.4.0"'
     )
     filter=$(extract_builder_sbom_filter)
     [[ -n "$filter" ]] || fail 'could not extract builder SBOM jq filter'
@@ -140,11 +140,12 @@ assert_exact_mecmcp_sbom_set() {
         metadata: {component: {name: "rustsdcmcp"}},
         components: [
             {name: "serde", version: "1.0.0"},
-            {name: "mecmcp-audit", version: "0.3.7"},
-            {name: "mecmcp-auth", version: "0.3.7"},
-            {name: "mecmcp-changeset", version: "0.3.7"},
-            {name: "mecmcp-runtime", version: "0.3.7"},
-            {name: "mecmcp-transport", version: "0.3.7"}
+            {name: "mecmcp-audit", version: "0.5.0"},
+            {name: "mecmcp-auth", version: "0.5.0"},
+            {name: "mecmcp-changeset", version: "0.5.0"},
+            {name: "mecmcp-runtime", version: "0.5.0"},
+            {name: "mecmcp-secret", version: "0.5.0"},
+            {name: "mecmcp-transport", version: "0.5.0"}
         ]
     }')
     jq -e "$filter" <<<"$valid" >/dev/null \
@@ -314,16 +315,16 @@ fi
 # a source-text match would pass while the manifest said something else, and it
 # would forbid single-sourcing the ref into the generated package README.
 mapfile -t builder_mecmcp_refs < <(grep -oP 'tag = "\K[^"]+' Cargo.toml | sort -u)
-[[ ${#builder_mecmcp_refs[@]} -eq 1 && ${builder_mecmcp_refs[0]} == 'changeset-v0.3.7' ]] \
+[[ ${#builder_mecmcp_refs[@]} -eq 1 && ${builder_mecmcp_refs[0]} == 'v0.5.0' ]] \
     || fail "Cargo.toml must pin exactly one approved mecmcp tag, found: ${builder_mecmcp_refs[*]-none}"
 # shellcheck disable=SC2016  # literal source fragment, not an expansion
 grep -Fq 'mecmcp_ref=$mecmcp_ref' scripts/build-lab-package.sh \
     || fail 'builder must emit the derived mecmcp BUILD-INFO key'
 require_logical_line \
-    "has_single_exact_key mecmcp_ref 'mecmcp_ref=changeset-v0.3.7' \"\$build_info\" || die 'BUILD-INFO mecmcp ref is invalid'" \
+    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.5.0' \"\$build_info\" || die 'BUILD-INFO mecmcp ref is invalid'" \
     "$installer"
 require_logical_line \
-    "has_single_exact_key mecmcp_ref 'mecmcp_ref=changeset-v0.3.7' \"\$build_info\" || {" \
+    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.5.0' \"\$build_info\" || {" \
     packaging/tests/package-smoke.sh
 for build_info_consumer in "$installer" packaging/tests/package-smoke.sh; do
     # shellcheck disable=SC2016
@@ -335,7 +336,7 @@ for build_info_consumer in "$installer" packaging/tests/package-smoke.sh; do
         "$build_info_consumer"
 done
 require_logical_line \
-    "printf '%s\n' \"\$build_info\" | awk -F= -v expected='mecmcp_ref=changeset-v0.3.7' '\$1 == \"mecmcp_ref\" { count += 1; matches += (\$0 == expected) } END { exit !(count == 1 && matches == 1) }'" \
+    "printf '%s\n' \"\$build_info\" | awk -F= -v expected='mecmcp_ref=v0.5.0' '\$1 == \"mecmcp_ref\" { count += 1; matches += (\$0 == expected) } END { exit !(count == 1 && matches == 1) }'" \
     "$ci"
 sbom_validators=(
     scripts/build-lab-package.sh
@@ -344,11 +345,12 @@ sbom_validators=(
     "$ci"
 )
 required_mecmcp_pairs=(
-    '["mecmcp-audit", "0.3.7"],'
-    '["mecmcp-auth", "0.3.7"],'
-    '["mecmcp-changeset", "0.3.7"],'
-    '["mecmcp-runtime", "0.3.7"],'
-    '["mecmcp-transport", "0.3.7"]'
+    '["mecmcp-audit", "0.5.0"],'
+    '["mecmcp-auth", "0.5.0"],'
+    '["mecmcp-changeset", "0.5.0"],'
+    '["mecmcp-runtime", "0.5.0"],'
+    '["mecmcp-secret", "0.5.0"],'
+    '["mecmcp-transport", "0.5.0"]'
 )
 for validator in "${sbom_validators[@]}"; do
     require_logical_line \
@@ -361,10 +363,10 @@ for validator in "${sbom_validators[@]}"; do
         require_logical_line "$pair" "$validator"
     done
     require_logical_line \
-        'and (tostring | contains("changeset-v0.3.6") | not)' \
+        'and (tostring | contains("v0.4.0") | not)' \
         "$validator"
     require_logical_line \
-        'and (tostring | contains("93ab63d7c2fad649112807378f92fcc26cce73c6") | not)' \
+        'and (tostring | contains("85137c509fe1803b87e8636462f0392ce05072ce") | not)' \
         "$validator"
 done
 

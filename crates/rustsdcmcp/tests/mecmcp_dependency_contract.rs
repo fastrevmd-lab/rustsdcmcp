@@ -2,6 +2,7 @@
 
 use std::{fs, path::Path};
 
+/// Declared directly in the workspace manifest. Each must appear verbatim.
 const PACKAGES: [&str; 5] = [
     "mecmcp-audit",
     "mecmcp-auth",
@@ -9,14 +10,30 @@ const PACKAGES: [&str; 5] = [
     "mecmcp-runtime",
     "mecmcp-transport",
 ];
-const VERSION: &str = "0.3.7";
-const TAG: &str = "changeset-v0.3.7";
-const COMMIT: &str = "85137c509fe1803b87e8636462f0392ce05072ce";
+
+/// Every `mecmcp-*` crate the lockfile may contain, including ones reached
+/// transitively rather than declared here. `mecmcp-secret` is pulled in by
+/// `mecmcp-auth`, `-changeset` and `-transport` as the workspace's single
+/// hardened file/secret reader; it has no direct declaration, but it must still
+/// come from the one approved tag. Checking only the declared five would let a
+/// transitive mecmcp crate enter from a different source unnoticed, which is
+/// the exact thing this file exists to prevent.
+const LOCKED_PACKAGES: [&str; 6] = [
+    "mecmcp-audit",
+    "mecmcp-auth",
+    "mecmcp-changeset",
+    "mecmcp-runtime",
+    "mecmcp-secret",
+    "mecmcp-transport",
+];
+const VERSION: &str = "0.5.0";
+const TAG: &str = "v0.5.0";
+const COMMIT: &str = "82ad9b51210436be706a443775cee7f9d8b775d6";
 const REPOSITORY: &str = "https://github.com/fastrevmd-lab/mecmcp";
 
 fn validate_mecmcp_lockfile(lock: &str) -> Result<(), String> {
     let source = format!("git+{REPOSITORY}?tag={TAG}#{COMMIT}");
-    let mut expected = PACKAGES
+    let mut expected = LOCKED_PACKAGES
         .map(|package| (package.to_owned(), VERSION.to_owned(), source.clone()))
         .to_vec();
     let document = lock
@@ -177,13 +194,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
     let missing = lock.replacen(&format!("[[package]]{auth_block}"), "", 1);
     let wrong_source = lock.replacen(
         &approved_source,
-        "git+https://example.invalid/mecmcp?tag=changeset-v0.3.7#85137c509fe1803b87e8636462f0392ce05072ce",
+        "git+https://example.invalid/mecmcp?tag=v0.0.0#0000000000000000000000000000000000000000",
         1,
     );
+    // Derived from VERSION rather than written out: hardcoding the version here
+    // meant that when the pin moved, `replacen` silently matched nothing, the
+    // "different version" case stopped mutating anything, and this test began
+    // asserting that an *unmodified* lockfile is invalid. A negative test that
+    // quietly stops testing is worse than no negative test.
     let wrong_version = lock.replacen(
-        "name = \"mecmcp-auth\"\nversion = \"0.3.7\"",
-        "name = \"mecmcp-auth\"\nversion = \"0.3.8\"",
+        &format!("name = \"mecmcp-auth\"\nversion = \"{VERSION}\""),
+        "name = \"mecmcp-auth\"\nversion = \"0.0.0-not-the-pin\"",
         1,
+    );
+    assert_ne!(
+        wrong_version, lock,
+        "the different-version mutation must actually change the lockfile"
     );
 
     for (case, candidate) in [

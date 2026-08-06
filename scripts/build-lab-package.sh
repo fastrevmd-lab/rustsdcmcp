@@ -264,15 +264,16 @@ jq -e '
             | [.name, .version]
         ] | sort)
         == [
-            ["mecmcp-audit", "0.3.7"],
-            ["mecmcp-auth", "0.3.7"],
-            ["mecmcp-changeset", "0.3.7"],
-            ["mecmcp-runtime", "0.3.7"],
-            ["mecmcp-transport", "0.3.7"]
+            ["mecmcp-audit", "0.5.0"],
+            ["mecmcp-auth", "0.5.0"],
+            ["mecmcp-changeset", "0.5.0"],
+            ["mecmcp-runtime", "0.5.0"],
+            ["mecmcp-secret", "0.5.0"],
+            ["mecmcp-transport", "0.5.0"]
         ]
     )
-    and (tostring | contains("changeset-v0.3.6") | not)
-    and (tostring | contains("93ab63d7c2fad649112807378f92fcc26cce73c6") | not)
+    and (tostring | contains("v0.4.0") | not)
+    and (tostring | contains("85137c509fe1803b87e8636462f0392ce05072ce") | not)
 ' "$stage_dir/SBOM.cdx.json" >/dev/null || {
     # Only blame a nested checkout when the same name@version actually appears
     # more than once. An oversized set has other causes -- a genuinely new

@@ -92,7 +92,7 @@ validate_build_info() {
     grep -Eq '^git_commit=[0-9a-f]{40}$' "$build_info" || die 'BUILD-INFO commit is invalid'
     grep -Eq '^source_date_epoch=[0-9]+$' "$build_info" || die 'BUILD-INFO epoch is invalid'
     grep -Fqx 'target=x86_64-unknown-linux-gnu' "$build_info" || die 'BUILD-INFO target is invalid'
-    has_single_exact_key mecmcp_ref 'mecmcp_ref=changeset-v0.3.7' "$build_info" || die 'BUILD-INFO mecmcp ref is invalid'
+    has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.5.0' "$build_info" || die 'BUILD-INFO mecmcp ref is invalid'
     grep -Eq '^glibc_floor=[0-9]+(\.[0-9]+)+$' "$build_info" || die 'BUILD-INFO GLIBC floor is invalid'
     grep -Eq '^rustc=rustc ' "$build_info" || die 'BUILD-INFO rustc metadata is invalid'
 }
@@ -111,15 +111,16 @@ validate_sbom() {
                 | [.name, .version]
             ] | sort)
             == [
-                ["mecmcp-audit", "0.3.7"],
-                ["mecmcp-auth", "0.3.7"],
-                ["mecmcp-changeset", "0.3.7"],
-                ["mecmcp-runtime", "0.3.7"],
-                ["mecmcp-transport", "0.3.7"]
+                ["mecmcp-audit", "0.5.0"],
+                ["mecmcp-auth", "0.5.0"],
+                ["mecmcp-changeset", "0.5.0"],
+                ["mecmcp-runtime", "0.5.0"],
+                ["mecmcp-secret", "0.5.0"],
+                ["mecmcp-transport", "0.5.0"]
             ]
         )
-        and (tostring | contains("changeset-v0.3.6") | not)
-        and (tostring | contains("93ab63d7c2fad649112807378f92fcc26cce73c6") | not)
+        and (tostring | contains("v0.4.0") | not)
+        and (tostring | contains("85137c509fe1803b87e8636462f0392ce05072ce") | not)
     ' "$sbom" >/dev/null || die 'SBOM lacks required CycloneDX metadata or components'
     ! grep -Eq '"/(home|workspace|workspaces)/' "$sbom" \
         || die 'SBOM contains an absolute repository or worktree path'
