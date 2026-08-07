@@ -41,10 +41,10 @@ through prepare → independent approval → apply.
 Live, read-only validation against SDC has verified credential-based startup
 tenant validation, `get_sdc_tenant_scope`, and `list_sdc_devices` with
 `from=0,size=1`. Authentication and the tenant-scope check also succeeded
-after a service restart. **That validation was performed against the
-`v0.1.0-lab.1` build and has not been repeated since**; the read path has
-changed in the interim, so treat it as evidence about the approach rather than
-about this archive. No preview, approval, apply, deployment, or other SDC
+after a service restart. **That validation was performed against an untagged
+build that differs from `v0.1.0-lab.1` only in one documentation file, and has
+not been repeated since**; the read path has changed in the interim, so treat
+it as evidence about the approach rather than about this archive. No preview, approval, apply, deployment, or other SDC
 mutation has ever been attempted against a live tenant, and the remaining
 endpoint questions are tracked in
 [`docs/sdc-api/README.md`](docs/sdc-api/README.md#still-unverified).
@@ -158,13 +158,12 @@ Start the service and access it through an authenticated SSH tunnel:
 sudo systemctl enable --now rustsdcmcp.service
 sudo systemctl --no-pager --full status rustsdcmcp.service
 sudo ss -ltnp 'sport = :30032'
-ssh -N -L 30032:127.0.0.1:30032 root@rustsdcmcp.mechub.org
+ssh -N -L 30032:127.0.0.1:30032 root@your-deployment-host
 ```
 
 The expected listener is only `127.0.0.1:30032`. While the tunnel is active,
-the local MCP client uses `http://127.0.0.1:30032/mcp`.
-`rustsdcmcp.mechub.org` is the current lab deployment; other installations use
-their own SSH host.
+the local MCP client uses `http://127.0.0.1:30032/mcp`. Each installation
+supplies its own SSH host; the server is never exposed directly.
 
 ## Security commitments
 
@@ -179,16 +178,24 @@ their own SSH host.
 Detailed deployment, recovery, audit-retention, and write-workflow guidance is
 in [`docs/operations.md`](docs/operations.md).
 
-## Completed lab work
+## Deployment maturity
 
-The qualified Debian lab package deployment runs on VMID 606 on `pve2`, with
-Debian 13 and DNS `rustsdcmcp.mechub.org`; VMID 606 runs under the packaged
-`rustsdcmcp.service` systemd unit. It uses a loopback-only endpoint, the private
-prerelease and SBOM, and the qualified live read-only results described above.
-The detailed acceptance record is
-[`docs/lab-deployment-606.md`](docs/lab-deployment-606.md). It intentionally
-does not reproduce tenant identifiers, credentials, bearer tokens, HMAC keys,
-or runtime state.
+The Debian 13 package has been installed and run end to end, but only from an
+untagged, commit-addressed lab archive built from
+`44a28f55598ad038389d9f734e11e0f520b82837`, which pinned `changeset-v0.3.6`.
+That deployment starts under the packaged `rustsdcmcp.service` unit as a
+non-root account, binds a loopback-only endpoint, enforces the bearer boundary,
+and passes the startup tenant-scope check against live SDC.
+
+That archive differs from `v0.1.0-lab.1` only in one documentation file, so it
+is equivalent to lab.1 for every buildable input. **No later prerelease has
+been deployed, including `v0.1.0-lab.4`**, so treat this as evidence about the
+packaging approach rather than about the current archive. Deployment, recovery,
+and audit-retention procedure is in
+[`docs/operations.md`](docs/operations.md).
+
+Specific hosts, addresses, and container identifiers are deliberately not
+published here; each operator supplies their own.
 
 ## Roadmap
 
@@ -207,8 +214,7 @@ or runtime state.
 foundation shared by the mechub MCP server family. This repository consumes it,
 rather than forking it. Current source and the `v0.1.0-lab.4` prerelease pin all
 five shared crates to `changeset-v0.3.7`. The older `v0.1.0-lab.1` prerelease
-and VMID 606 were built with `changeset-v0.3.6`, as
-recorded in [`docs/lab-deployment-606.md`](docs/lab-deployment-606.md).
+was built with `changeset-v0.3.6`.
 The 59 temporary compatibility declarations remain tracked in the
 [`mecmcp compatibility ledger`](docs/mecmcp-compatibility.md); public `v0.1.0`
 remains blocked until all 59 are replaced by one coherent upstream release.
