@@ -129,9 +129,9 @@ assert_exact_mecmcp_sbom_set() {
     local -a cases=(duplicate extra mixed-registry wrong-version)
     local -a mutations=(
         '.components += [.components[] | select(.name == "mecmcp-auth")]'
-        '.components += [{"name":"mecmcp-extra","version":"0.5.0"}]'
-        '.components += [{"name":"mecmcp-auth","version":"0.4.0","purl":"pkg:cargo/mecmcp-auth@0.4.0"}]'
-        '(.components[] | select(.name == "mecmcp-auth") | .version) = "0.4.0"'
+        '.components += [{"name":"mecmcp-extra","version":"0.7.3"}]'
+        '.components += [{"name":"mecmcp-auth","version":"0.5.0","purl":"pkg:cargo/mecmcp-auth@0.5.0"}]'
+        '(.components[] | select(.name == "mecmcp-auth") | .version) = "0.5.0"'
     )
     filter=$(extract_builder_sbom_filter)
     [[ -n "$filter" ]] || fail 'could not extract builder SBOM jq filter'
@@ -140,12 +140,13 @@ assert_exact_mecmcp_sbom_set() {
         metadata: {component: {name: "rustsdcmcp"}},
         components: [
             {name: "serde", version: "1.0.0"},
-            {name: "mecmcp-audit", version: "0.5.0"},
-            {name: "mecmcp-auth", version: "0.5.0"},
-            {name: "mecmcp-changeset", version: "0.5.0"},
-            {name: "mecmcp-runtime", version: "0.5.0"},
-            {name: "mecmcp-secret", version: "0.5.0"},
-            {name: "mecmcp-transport", version: "0.5.0"}
+            {name: "mecmcp-audit", version: "0.7.3"},
+            {name: "mecmcp-auth", version: "0.7.3"},
+            {name: "mecmcp-changeset", version: "0.7.3"},
+            {name: "mecmcp-runtime", version: "0.7.3"},
+            {name: "mecmcp-secret", version: "0.7.3"},
+            {name: "mecmcp-server", version: "0.7.3"},
+            {name: "mecmcp-transport", version: "0.7.3"}
         ]
     }')
     jq -e "$filter" <<<"$valid" >/dev/null \
@@ -345,12 +346,13 @@ sbom_validators=(
     "$ci"
 )
 required_mecmcp_pairs=(
-    '["mecmcp-audit", "0.5.0"],'
-    '["mecmcp-auth", "0.5.0"],'
-    '["mecmcp-changeset", "0.5.0"],'
-    '["mecmcp-runtime", "0.5.0"],'
-    '["mecmcp-secret", "0.5.0"],'
-    '["mecmcp-transport", "0.5.0"]'
+    '["mecmcp-audit", "0.7.3"],'
+    '["mecmcp-auth", "0.7.3"],'
+    '["mecmcp-changeset", "0.7.3"],'
+    '["mecmcp-runtime", "0.7.3"],'
+    '["mecmcp-secret", "0.7.3"],'
+    '["mecmcp-server", "0.7.3"],'
+    '["mecmcp-transport", "0.7.3"]'
 )
 for validator in "${sbom_validators[@]}"; do
     require_logical_line \
@@ -363,10 +365,10 @@ for validator in "${sbom_validators[@]}"; do
         require_logical_line "$pair" "$validator"
     done
     require_logical_line \
-        'and (tostring | contains("v0.4.0") | not)' \
+        'and (tostring | contains("v0.5.0") | not)' \
         "$validator"
     require_logical_line \
-        'and (tostring | contains("85137c509fe1803b87e8636462f0392ce05072ce") | not)' \
+        'and (tostring | contains("82ad9b51210436be706a443775cee7f9d8b775d6") | not)' \
         "$validator"
 done
 
