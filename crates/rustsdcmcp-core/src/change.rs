@@ -1,6 +1,10 @@
 //! SDC adapter for the shared preview-bound, two-person change lifecycle.
 
-use crate::{DeployRequest, JobStatus, PolicyOperation, SdcClient, SdcError, SdcPreparedChange};
+use crate::{
+    DeployRequest, JobStatus, ObjectValidationReport, ObjectWriteAction, PolicyOperation,
+    ResourceKind, SdcClient, SdcError, SdcObjectTransaction, SdcPreparedChange,
+    SdcPreparedObjectWrite,
+};
 use async_trait::async_trait;
 use mecmcp_audit::Attribution;
 use mecmcp_changeset::{
@@ -188,6 +192,28 @@ impl DeviceTransaction for SdcTransaction {
     }
 }
 
+/// Output of the SDC object-write plan phase.
+#[derive(Debug, Clone, Serialize)]
+pub struct ObjectPrepareResult {
+    /// Shared two-person change-set record.
+    pub change_set: ChangeSetOutput,
+    /// Exact object write bound by the plan digest.
+    pub prepared_change: SdcPreparedObjectWrite,
+}
+
+/// Result of applying one approved SDC object write.
+#[derive(Debug, Clone, Serialize)]
+pub struct ObjectApplyResult {
+    /// Shared operation identifier.
+    pub operation_id: String,
+    /// Before/after plan used as the management-plane diff.
+    pub plan: Value,
+    /// Drift and envelope validation result.
+    pub validation: ObjectValidationReport,
+    /// Known, detached, or indeterminate commit disposition.
+    pub outcome: CommitOutcome,
+}
+
 /// Product adapter around the shared change-set coordinator.
 pub struct ChangeManager {
     coordinator: Arc<ChangesetCoordinator>,
@@ -195,6 +221,7 @@ pub struct ChangeManager {
     tenant: String,
     endpoint: String,
     policy_signature: String,
+    object_signature: String,
 }
 
 impl ChangeManager {
@@ -214,6 +241,8 @@ impl ChangeManager {
         let endpoint = endpoint.into();
         let policy_signature =
             mutation_policy_signature(format!("sdc-policy-deploy-v1:{tenant}:{endpoint}"));
+        let object_signature =
+            mutation_policy_signature(format!("sdc-object-write-v1:{tenant}:{endpoint}"));
         let coordinator = ChangesetCoordinator::load_with_recovery(
             state_path,
             OperationLimits::default(),
@@ -228,6 +257,145 @@ impl ChangeManager {
             tenant,
             endpoint,
             policy_signature,
+            object_signature,
+        })
+    }
+
+    /// Resolve an object's current state and create its digest-bound plan.
+    ///
+    /// Create carries no prior state; update and delete read the live object
+    /// so the plan records exactly what the write would replace or remove.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the target cannot be read, the envelope is
+    /// invalid, or change-control state cannot be written.
+    pub async fn prepare_object_write(
+        &self,
+        owner: String,
+        action: ObjectWriteAction,
+        resource: ResourceKind,
+        uuid: Option<String>,
+        request: Value,
+        cancellation: &CancellationToken,
+    ) -> Result<ObjectPrepareResult, SdcError> {
+        let before = match (action, uuid.as_deref()) {
+            (ObjectWriteAction::Create, _) => Value::Null,
+            (_, Some(identifier)) => {
+                self.client
+                    .get_resource(resource, identifier, cancellation)
+                    .await?
+            }
+            (ObjectWriteAction::Update | ObjectWriteAction::Delete, None) => {
+                return Err(SdcError::InvalidInput(
+                    "update and delete require the target object UUID",
+                ));
+            }
+        };
+        let prepared = SdcPreparedObjectWrite::new(action, resource, uuid, request, before)?;
+        let change_set = self
+            .coordinator
+            .create_change_set(
+                self.tenant.clone(),
+                vec![prepared.clone()],
+                owner,
+                prepared.plan_digest().to_owned(),
+                self.object_signature.clone(),
+            )
+            .await
+            .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        Ok(ObjectPrepareResult {
+            change_set,
+            prepared_change: prepared,
+        })
+    }
+
+    /// Apply, diff, drift-check, and commit one exact approved object write.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when approval does not match, the object drifted since
+    /// prepare, or the SDC write fails.
+    pub async fn apply_object_write(
+        &self,
+        change_set_id: String,
+        owner: String,
+        expected_digest: String,
+        expected_plan_digest: String,
+        attribution: &Attribution,
+        cancellation: &CancellationToken,
+    ) -> Result<ObjectApplyResult, SdcError> {
+        let transaction = SdcObjectTransaction::new(
+            self.client.clone(),
+            expected_plan_digest.clone(),
+            cancellation.clone(),
+        );
+        let applied = self
+            .coordinator
+            .apply_change_set(
+                change_set_id,
+                self.tenant.clone(),
+                self.endpoint.clone(),
+                owner.clone(),
+                expected_digest,
+                expected_plan_digest.clone(),
+                &transaction,
+                "object_write",
+                None,
+                attribution,
+                cancellation,
+            )
+            .await
+            .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        let operation_id = applied.operation_id;
+        let staged = applied.staged;
+        let plan = self
+            .coordinator
+            .diff_operation(
+                &operation_id,
+                &self.tenant,
+                &owner,
+                &expected_plan_digest,
+                &transaction,
+                &staged,
+                cancellation,
+            )
+            .await
+            .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        let validation = self
+            .coordinator
+            .validate_operation(
+                &operation_id,
+                &self.tenant,
+                &owner,
+                &expected_plan_digest,
+                &transaction,
+                &staged,
+                cancellation,
+            )
+            .await
+            .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        let outcome = self
+            .coordinator
+            .commit_operation(
+                &operation_id,
+                &self.tenant,
+                &owner,
+                &expected_plan_digest,
+                &self.object_signature,
+                &transaction,
+                &staged,
+                attribution,
+                &CommitOptions::default(),
+                cancellation,
+            )
+            .await
+            .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        Ok(ObjectApplyResult {
+            operation_id,
+            plan,
+            validation,
+            outcome,
         })
     }
 
@@ -566,6 +734,149 @@ mod tests {
             }
         ));
         assert_eq!(calls.deploys.load(Ordering::SeqCst), 1);
+        server.abort();
+    }
+
+    fn object_fixture(before: Value) -> SdcPreparedObjectWrite {
+        SdcPreparedObjectWrite::new(
+            ObjectWriteAction::Update,
+            ResourceKind::Addresses,
+            Some("addr-1".to_owned()),
+            json!({"name": "lab-net", "address_type": "IPV4"}),
+            before,
+        )
+        .expect("prepared object write")
+    }
+
+    #[test]
+    fn a_prepared_object_write_must_match_the_shape_of_its_action() {
+        // Create carries no UUID and no prior state; update and delete require
+        // both. A mismatch means the envelope was built or persisted wrong.
+        assert!(
+            SdcPreparedObjectWrite::new(
+                ObjectWriteAction::Create,
+                ResourceKind::Addresses,
+                Some("addr-1".to_owned()),
+                json!({"name": "x"}),
+                Value::Null,
+            )
+            .is_err(),
+            "create must not carry a target UUID"
+        );
+        assert!(
+            SdcPreparedObjectWrite::new(
+                ObjectWriteAction::Delete,
+                ResourceKind::Addresses,
+                Some("addr-1".to_owned()),
+                json!({"name": "x"}),
+                json!({"uuid": "addr-1"}),
+            )
+            .is_err(),
+            "delete must not carry a request body"
+        );
+        assert!(
+            SdcPreparedObjectWrite::new(
+                ObjectWriteAction::Update,
+                ResourceKind::Addresses,
+                None,
+                json!({"name": "x"}),
+                json!({"uuid": "addr-1"}),
+            )
+            .is_err(),
+            "update must carry a target UUID"
+        );
+    }
+
+    #[tokio::test]
+    async fn object_write_stage_rejects_a_tampered_envelope() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = SdcClient::from_test_parts(
+            Url::parse("https://example.invalid/").expect("url"),
+            "test-secret".to_owned(),
+            64 * 1024,
+            100,
+        );
+        let prepared = object_fixture(json!({"uuid": "addr-1", "name": "as-prepared"}));
+        let transaction = SdcObjectTransaction::new(
+            client,
+            prepared.plan_digest().to_owned(),
+            CancellationToken::new(),
+        );
+
+        transaction
+            .stage(std::slice::from_ref(&prepared))
+            .await
+            .expect("an intact envelope stages");
+
+        let mut raw = serde_json::to_value(&prepared).expect("serializes");
+        raw["request"]["name"] = json!("swapped after approval");
+        let tampered: SdcPreparedObjectWrite =
+            serde_json::from_value(raw).expect("tampered envelope still deserializes");
+
+        transaction
+            .stage(std::slice::from_ref(&tampered))
+            .await
+            .expect_err("a mutated request must not reach commit");
+    }
+
+    #[tokio::test]
+    async fn object_write_refuses_a_target_that_drifted_since_prepare() {
+        // An object write has no SDC preview to bind, so this drift check is
+        // what makes the approved digest meaningful at apply time.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let app = Router::new().route(
+            "/api/v1/addresses/addr-1",
+            get(|| async { Json(json!({"uuid": "addr-1", "name": "changed-by-someone-else"})) }),
+        );
+        let (base_url, server) = serve(app).await;
+        let client = SdcClient::from_test_parts(base_url, "test-secret".to_owned(), 64 * 1024, 100);
+        let prepared = object_fixture(json!({"uuid": "addr-1", "name": "as-prepared"}));
+        let transaction = SdcObjectTransaction::new(
+            client,
+            prepared.plan_digest().to_owned(),
+            CancellationToken::new(),
+        );
+        let staged = transaction
+            .stage(std::slice::from_ref(&prepared))
+            .await
+            .expect("stages");
+        let error = transaction
+            .validate(&staged)
+            .await
+            .expect_err("a drifted target must refuse");
+        assert!(
+            matches!(&error, SdcError::PreparedChange(message)
+                if message.contains("changed since it was prepared")),
+            "unexpected error: {error:?}"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn object_write_validates_when_the_target_is_unchanged() {
+        // Guards against the drift check above passing vacuously.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let app = Router::new().route(
+            "/api/v1/addresses/addr-1",
+            get(|| async { Json(json!({"uuid": "addr-1", "name": "as-prepared"})) }),
+        );
+        let (base_url, server) = serve(app).await;
+        let client = SdcClient::from_test_parts(base_url, "test-secret".to_owned(), 64 * 1024, 100);
+        let prepared = object_fixture(json!({"uuid": "addr-1", "name": "as-prepared"}));
+        let transaction = SdcObjectTransaction::new(
+            client,
+            prepared.plan_digest().to_owned(),
+            CancellationToken::new(),
+        );
+        let staged = transaction
+            .stage(std::slice::from_ref(&prepared))
+            .await
+            .expect("stages");
+        let report = transaction
+            .validate(&staged)
+            .await
+            .expect("an unchanged target validates");
+        assert!(report.valid && report.target_unchanged);
         server.abort();
     }
 }

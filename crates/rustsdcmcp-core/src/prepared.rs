@@ -145,7 +145,11 @@ impl SdcPreparedChange {
     }
 }
 
-fn canonical_digest(value: &Value) -> Result<String, PreparedError> {
+/// Canonical SHA-256 digest of a JSON value with object keys ordered.
+///
+/// Shared with the object-write envelope so both change-controlled paths bind
+/// their plans the same way.
+pub(crate) fn canonical_digest(value: &Value) -> Result<String, PreparedError> {
     let bytes =
         serde_json::to_vec(&canonicalize(value)).map_err(|_| PreparedError::Serialization)?;
     Ok(format!("sha256:{}", hex::encode(Sha256::digest(bytes))))
