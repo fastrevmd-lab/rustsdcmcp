@@ -358,6 +358,13 @@ impl DeviceTransaction for SdcObjectTransaction {
         _attribution: &Attribution,
         options: &CommitOptions,
     ) -> Result<CommitOutcome, Self::Error> {
+        // Every exit path from here until the request is issued is a pre-write
+        // refusal: nothing has been sent, so the caller may safely discard the
+        // operation instead of leaving a non-terminal record that blocks the
+        // tenant. This covers the fallible recheck read below -- a target
+        // deleted by someone else, or a transient failure -- not just an
+        // explicit drift refusal.
+        self.refused_before_write.store(true, Ordering::SeqCst);
         if options.confirm_timeout.is_some() {
             return Err(SdcError::InvalidInput(
                 "SDC does not support confirmed object writes",
@@ -377,10 +384,12 @@ impl DeviceTransaction for SdcObjectTransaction {
         // conditional write, so a change landing between this read and the
         // request below is still possible.
         if !self.target_unchanged(staged).await? {
-            self.refused_before_write.store(true, Ordering::SeqCst);
             return Err(SdcError::TargetDrifted);
         }
         let resource = staged.resource();
+        // The mutation is about to go out. Past this point its outcome is no
+        // longer knowably clean, so the operation must not be auto-discarded.
+        self.refused_before_write.store(false, Ordering::SeqCst);
         let result = match (staged.action(), staged.uuid()) {
             (ObjectWriteAction::Create, _) => {
                 self.client

@@ -999,6 +999,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_failed_pre_write_recheck_is_still_discardable() {
+        // The recheck read itself can fail -- another actor deletes the target,
+        // or the read errors transiently. Nothing was sent, so that must remain
+        // discardable rather than stranding the tenant on a Failed record.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let app = Router::new().route(
+            "/api/v1/addresses/addr-1",
+            get(|| async { (axum::http::StatusCode::NOT_FOUND, Json(json!({}))) }),
+        );
+        let (base_url, server) = serve(app).await;
+        let client = SdcClient::from_test_parts(base_url, "test-secret".to_owned(), 64 * 1024, 100);
+        let prepared = object_fixture(json!({"uuid": "addr-1", "name": "as-prepared"}));
+        let transaction = SdcObjectTransaction::new(
+            client,
+            prepared.plan_digest().to_owned(),
+            CancellationToken::new(),
+        );
+        transaction
+            .commit(
+                &prepared,
+                &Attribution::stdio(),
+                &mecmcp_changeset::CommitOptions::default(),
+            )
+            .await
+            .expect_err("a target that vanished must not be written");
+        assert!(
+            transaction.refused_before_write(),
+            "a failed pre-write read must still be discardable"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn object_write_validates_when_the_target_is_unchanged() {
         // Guards against the drift check above passing vacuously.
         let _ = rustls::crypto::ring::default_provider().install_default();
