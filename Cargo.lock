@@ -162,28 +162,6 @@ dependencies = [
 
 [[package]]
 name = "axum-server"
-version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1ab4a3ec9ea8a657c72d99a03a824af695bd0fb5ec639ccbd9cd3543b41a5f9"
-dependencies = [
- "arc-swap",
- "bytes",
- "fs-err",
- "http",
- "http-body",
- "hyper",
- "hyper-util",
- "pin-project-lite",
- "rustls",
- "rustls-pemfile",
- "rustls-pki-types",
- "tokio",
- "tokio-rustls",
- "tower-service",
-]
-
-[[package]]
-name = "axum-server"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1df331683d982a0b9492b38127151e6453639cd34926eb9c07d4cd8c6d22bfc"
@@ -1131,8 +1109,8 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "mecmcp-audit"
-version = "0.7.2"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.2#2ef93487822009e3305243f60314bc994d73a0c5"
+version = "0.7.3"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.3#3eac1100b02f31254967cd07c926acf89994b287"
 dependencies = [
  "hmac",
  "log",
@@ -1151,8 +1129,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-auth"
-version = "0.7.2"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.2#2ef93487822009e3305243f60314bc994d73a0c5"
+version = "0.7.3"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.3#3eac1100b02f31254967cd07c926acf89994b287"
 dependencies = [
  "arc-swap",
  "chrono",
@@ -1169,8 +1147,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-changeset"
-version = "0.7.2"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.2#2ef93487822009e3305243f60314bc994d73a0c5"
+version = "0.7.3"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.3#3eac1100b02f31254967cd07c926acf89994b287"
 dependencies = [
  "async-trait",
  "getrandom 0.4.3",
@@ -1189,8 +1167,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-runtime"
-version = "0.7.2"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.2#2ef93487822009e3305243f60314bc994d73a0c5"
+version = "0.7.3"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.3#3eac1100b02f31254967cd07c926acf89994b287"
 dependencies = [
  "anyhow",
  "clap",
@@ -1204,8 +1182,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-secret"
-version = "0.7.2"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.2#2ef93487822009e3305243f60314bc994d73a0c5"
+version = "0.7.3"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.3#3eac1100b02f31254967cd07c926acf89994b287"
 dependencies = [
  "rustix 1.1.4",
  "thiserror",
@@ -1214,8 +1192,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-server"
-version = "0.7.2"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.2#2ef93487822009e3305243f60314bc994d73a0c5"
+version = "0.7.3"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.3#3eac1100b02f31254967cd07c926acf89994b287"
 dependencies = [
  "http",
  "mecmcp-audit",
@@ -1228,11 +1206,11 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-transport"
-version = "0.7.2"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.2#2ef93487822009e3305243f60314bc994d73a0c5"
+version = "0.7.3"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.3#3eac1100b02f31254967cd07c926acf89994b287"
 dependencies = [
  "axum",
- "axum-server 0.7.3",
+ "axum-server",
  "dashmap",
  "futures",
  "http",
@@ -1745,15 +1723,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustls-pemfile"
-version = "2.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dce314e5fee3f39953d46bb63bb8a46d40c2f8fb7cc5a3b6cab2bde9721d6e50"
-dependencies = [
- "rustls-pki-types",
-]
-
-[[package]]
 name = "rustls-pki-types"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1806,7 +1775,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
- "axum-server 0.8.0",
+ "axum-server",
  "clap",
  "http",
  "mecmcp-audit",
