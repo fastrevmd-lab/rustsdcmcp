@@ -7,7 +7,7 @@ use crate::{
 use anyhow::{Context, Result};
 use mecmcp_auth::{BearerSyntax, CallerCtx, NoGrant, TokenStoreFile};
 use mecmcp_transport::{
-    BearerAuthenticator, BearerBoundary, BearerResponseProfile, HostOriginPolicy,
+    BearerAuthenticator, BearerBoundary, BearerResponseProfile, HostOriginPolicy, HttpShutdown,
     HttpTransportConfig, LimitsConfig, TransportIdentity, build_streamable_http_router,
     serve_router,
 };
@@ -23,7 +23,7 @@ pub fn build_http_router(
     limits: LimitsConfig,
     enable_metrics: bool,
     shutdown: CancellationToken,
-) -> Result<(axum::Router, CancellationToken)> {
+) -> Result<(axum::Router, HttpShutdown)> {
     let identity = TransportIdentity::new("sdcmcp", "sdc", "rustsdcmcp", ["tenant"]);
     let mut config = HttpTransportConfig::new(
         identity.clone(),
