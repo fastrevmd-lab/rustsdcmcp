@@ -553,9 +553,6 @@ impl SdcClient {
     }
 
     /// Send one request and return its raw successful response body.
-    ///
-    /// Write operations need the undecoded bytes because SDC answers some
-    /// mutations with an empty body, which is not valid JSON.
     async fn send_raw<B: Serialize>(
         &self,
         method: Method,
@@ -564,6 +561,30 @@ impl SdcClient {
         body: Option<&B>,
         cancellation: &CancellationToken,
     ) -> Result<Vec<u8>, SdcError> {
+        let (status, body) = self
+            .send_parts(method, segments, query, body, cancellation)
+            .await?;
+        let body = body?;
+        if !status.is_success() {
+            return Err(classify_api_error(status, &body));
+        }
+        Ok(body)
+    }
+
+    /// Send one request, reporting the response status separately from the body.
+    ///
+    /// The status is resolved first so a caller can tell a request SDC refused
+    /// from one it accepted but whose body could not be read. Reads do not care
+    /// about that distinction; writes do, because it decides whether a mutation
+    /// landed.
+    async fn send_parts<B: Serialize>(
+        &self,
+        method: Method,
+        segments: &[&str],
+        query: &[(&str, &str)],
+        body: Option<&B>,
+        cancellation: &CancellationToken,
+    ) -> Result<(StatusCode, Result<Vec<u8>, SdcError>), SdcError> {
         let mut url = self.base_url.clone();
         {
             let mut path = url
@@ -606,40 +627,43 @@ impl SdcClient {
                 .send()
                 .await
                 .map_err(|error| classify_reqwest(&error))?;
-            if response
-                .content_length()
-                .is_some_and(|length| length > self.max_response_bytes as u64)
-            {
-                return Err(SdcError::ResponseTooLarge {
-                    limit: self.max_response_bytes,
-                });
-            }
+            // Read the status before any body handling. A write needs to know
+            // whether SDC accepted the request even when the body is then
+            // unreadable, because that decides whether the mutation landed.
             let status = response.status();
-            let mut body = Vec::new();
-            let mut stream = response.bytes_stream();
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk.map_err(|error| classify_reqwest(&error))?;
-                if body.len().saturating_add(chunk.len()) > self.max_response_bytes {
+            let oversized = response
+                .content_length()
+                .is_some_and(|length| length > self.max_response_bytes as u64);
+            let body = async {
+                if oversized {
                     return Err(SdcError::ResponseTooLarge {
                         limit: self.max_response_bytes,
                     });
                 }
-                body.extend_from_slice(&chunk);
+                let mut body = Vec::new();
+                let mut stream = response.bytes_stream();
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk.map_err(|error| classify_reqwest(&error))?;
+                    if body.len().saturating_add(chunk.len()) > self.max_response_bytes {
+                        return Err(SdcError::ResponseTooLarge {
+                            limit: self.max_response_bytes,
+                        });
+                    }
+                    body.extend_from_slice(&chunk);
+                }
+                Ok(body)
             }
+            .await;
             Ok::<_, SdcError>((status, body))
         };
 
-        let (status, body) = tokio::select! {
-            () = cancellation.cancelled() => return Err(SdcError::Cancelled),
-            () = self.shutdown.cancelled() => return Err(SdcError::Cancelled),
+        tokio::select! {
+            () = cancellation.cancelled() => Err(SdcError::Cancelled),
+            () = self.shutdown.cancelled() => Err(SdcError::Cancelled),
             result = time::timeout(self.request_timeout, operation) => {
-                result.map_err(|_| SdcError::Timeout)??
+                result.map_err(|_| SdcError::Timeout)?
             }
-        };
-        if !status.is_success() {
-            return Err(classify_api_error(status, &body));
         }
-        Ok(body)
     }
 
     /// Send one mutating request whose successful response may carry no body.
@@ -653,13 +677,24 @@ impl SdcClient {
         body: Option<&Value>,
         cancellation: &CancellationToken,
     ) -> Result<Value, SdcError> {
-        let raw = self
-            .send_raw(method, segments, &[], body, cancellation)
+        let (status, raw) = self
+            .send_parts(method, segments, &[], body, cancellation)
             .await?;
+        let raw = match raw {
+            Ok(bytes) => bytes,
+            // SDC accepted the request, so the mutation may have landed even
+            // though its response could not be read. Reporting a plain failure
+            // here would invite a retry that duplicates a create.
+            Err(_) if status.is_success() => return Err(SdcError::MutationOutcomeUnknown),
+            Err(error) => return Err(error),
+        };
+        if !status.is_success() {
+            return Err(classify_api_error(status, &raw));
+        }
         if raw.iter().all(u8::is_ascii_whitespace) {
             return Ok(Value::Null);
         }
-        serde_json::from_slice(&raw).map_err(|_| SdcError::InvalidJson)
+        serde_json::from_slice(&raw).map_err(|_| SdcError::MutationOutcomeUnknown)
     }
 }
 
@@ -881,6 +916,16 @@ pub enum SdcError {
     /// SDC has no candidate rollback primitive for this transaction.
     #[error("SDC policy deployment rollback is unsupported")]
     RollbackUnsupported,
+
+    /// SDC accepted a mutation but its response could not be read.
+    #[error(
+        "SDC accepted the write but its response could not be read; the change may have been applied"
+    )]
+    MutationOutcomeUnknown,
+
+    /// A change-controlled target moved between planning and writing.
+    #[error("object changed since it was prepared; re-prepare to see the current state")]
+    TargetDrifted,
 }
 
 #[cfg(test)]

@@ -13,6 +13,10 @@ use mecmcp_changeset::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use tokio_util::sync::CancellationToken;
 
 /// Hard cap on one serialized object-write envelope.
@@ -248,6 +252,7 @@ pub struct SdcObjectTransaction {
     client: SdcClient,
     expected_plan_digest: String,
     cancellation: CancellationToken,
+    refused_before_write: Arc<AtomicBool>,
 }
 
 impl SdcObjectTransaction {
@@ -262,7 +267,18 @@ impl SdcObjectTransaction {
             client,
             expected_plan_digest: expected_plan_digest.into(),
             cancellation,
+            refused_before_write: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Whether commit refused before issuing any request to SDC.
+    ///
+    /// The coordinator flattens a transaction error into a string, so this is
+    /// how the caller distinguishes "nothing was written, safe to discard" from
+    /// "the write may have landed".
+    #[must_use]
+    pub fn refused_before_write(&self) -> bool {
+        self.refused_before_write.load(Ordering::SeqCst)
     }
 
     /// Re-read the target and report whether it still matches its plan.
@@ -327,10 +343,7 @@ impl DeviceTransaction for SdcObjectTransaction {
     async fn validate(&self, staged: &Self::Staged) -> Result<Self::Validation, Self::Error> {
         let target_unchanged = self.target_unchanged(staged).await?;
         if !target_unchanged {
-            return Err(SdcError::PreparedChange(
-                "object changed since it was prepared; re-prepare to see the current state"
-                    .to_owned(),
-            ));
+            return Err(SdcError::TargetDrifted);
         }
         Ok(ObjectValidationReport {
             valid: true,
@@ -350,20 +363,23 @@ impl DeviceTransaction for SdcObjectTransaction {
                 "SDC does not support confirmed object writes",
             ));
         }
-        // Drift is checked in `validate`, deliberately not here.
+        // Re-check drift immediately before writing. `validate` already checked,
+        // but the coordinator releases and reacquires its guard in between, and
+        // that guard cannot exclude a writer working directly against SDC.
+        // Without this, a stale PUT or DELETE could overwrite state that was
+        // never in the approved plan.
         //
-        // A window remains: the coordinator releases and reacquires its guard
-        // between validate and commit, and that guard cannot exclude a writer
-        // working directly against SDC, so the target can move in between. SDC
-        // exposes no conditional write (no ETag or If-Match), so that race
-        // cannot be closed from this side.
+        // A refusal here is recorded as the non-terminal `Failed` state, so the
+        // flag lets `apply_object_write` discard it: nothing was sent, which
+        // makes that discard truthful.
         //
-        // Re-checking here would be worse than the race. `commit_operation`
-        // has already persisted `Committing` by this point, and a refusal is
-        // recorded as the non-terminal `Failed` state that `discard_operation`
-        // will not accept -- stranding the tenant, since the tenant is the
-        // coordinator's device key. A narrow, documented race beats a guard
-        // whose failure mode blocks every later mutation.
+        // This narrows the window rather than closing it. SDC exposes no
+        // conditional write, so a change landing between this read and the
+        // request below is still possible.
+        if !self.target_unchanged(staged).await? {
+            self.refused_before_write.store(true, Ordering::SeqCst);
+            return Err(SdcError::TargetDrifted);
+        }
         let resource = staged.resource();
         let result = match (staged.action(), staged.uuid()) {
             (ObjectWriteAction::Create, _) => {
@@ -393,18 +409,11 @@ impl DeviceTransaction for SdcObjectTransaction {
                 job_id: None,
                 details: Some(format!("SDC {} completed", staged.action().as_str())),
             }),
-            // These can occur after the mutation reached SDC, so it may have
-            // landed. Recording a failure would invite a retry that duplicates
-            // a create. `InvalidJson` is the only body error included: it is
-            // raised strictly after `status.is_success()`, so a 2xx is proven.
-            //
-            // `BodyTransfer` and `ResponseTooLarge` are deliberately excluded.
-            // `send_raw` enforces the size cap while streaming, before the
-            // status check, so both are reachable on a non-2xx -- classifying a
-            // known API failure as indeterminate would strand the tenant and
-            // could mask the pinned 429 handling. The cost is that a 2xx whose
-            // body is oversized or truncated is still recorded as failed.
-            Err(SdcError::Cancelled | SdcError::Timeout | SdcError::InvalidJson) => {
+            // The mutation may have landed. `MutationOutcomeUnknown` is raised
+            // by `send_write` only when SDC answered with a success status
+            // whose body could not be read, so a known API failure -- including
+            // the pinned 429 handling -- is never demoted to indeterminate.
+            Err(SdcError::Cancelled | SdcError::Timeout | SdcError::MutationOutcomeUnknown) => {
                 Ok(CommitOutcome::Indeterminate {
                     reason: "SDC object write was submitted but its outcome was not observed"
                         .to_owned(),

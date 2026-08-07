@@ -310,6 +310,38 @@ impl ChangeManager {
         })
     }
 
+    /// Discard an object write that failed before anything was sent to SDC.
+    ///
+    /// Returns a caller-facing description rather than an error: the original
+    /// failure is what the operator needs, and this only says whether the
+    /// blocked record was cleared.
+    async fn release_unwritten(
+        &self,
+        operation_id: &str,
+        owner: &str,
+        expected_plan_digest: &str,
+        transaction: &SdcObjectTransaction,
+        cancellation: &CancellationToken,
+    ) -> String {
+        match self
+            .coordinator
+            .discard_operation(
+                operation_id,
+                &self.tenant,
+                owner,
+                expected_plan_digest,
+                transaction,
+                cancellation,
+            )
+            .await
+        {
+            Ok(_) => "the planned write was discarded".to_owned(),
+            Err(discard_error) => format!(
+                "the planned write also could not be discarded and needs manual resolution: {discard_error}"
+            ),
+        }
+    }
+
     /// Apply, diff, drift-check, and commit one exact approved object write.
     ///
     /// # Errors
@@ -379,33 +411,21 @@ impl ChangeManager {
             Err(error) => {
                 // A refused validation records the operation `Failed`, which is
                 // not terminal: it keeps blocking this principal with no
-                // operator route out. Nothing has been written at this point --
-                // staging and validation are reads -- so discarding is truthful
-                // and reaches the terminal `Discarded` state.
-                //
-                // Deliberately not done for a commit failure: by then the write
-                // may have landed, and claiming a clean revert would be a lie.
-                let detail = match self
-                    .coordinator
-                    .discard_operation(
+                // operator route out. Staging and validation only read, so
+                // nothing was written and discarding is truthful.
+                let detail = self
+                    .release_unwritten(
                         &operation_id,
-                        &self.tenant,
                         &owner,
                         &expected_plan_digest,
                         &transaction,
                         cancellation,
                     )
-                    .await
-                {
-                    Ok(_) => "the planned write was discarded".to_owned(),
-                    Err(discard_error) => format!(
-                        "the planned write also could not be discarded and needs manual resolution: {discard_error}"
-                    ),
-                };
+                    .await;
                 return Err(SdcError::ChangeControl(format!("{error}; {detail}")));
             }
         };
-        let outcome = self
+        let outcome = match self
             .coordinator
             .commit_operation(
                 &operation_id,
@@ -420,7 +440,28 @@ impl ChangeManager {
                 cancellation,
             )
             .await
-            .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                // Only a refusal that happened before anything was sent is safe
+                // to discard. If the write may have landed, leaving the record
+                // for reconciliation is the honest outcome even though it
+                // blocks this principal.
+                if !transaction.refused_before_write() {
+                    return Err(SdcError::ChangeControl(error.to_string()));
+                }
+                let detail = self
+                    .release_unwritten(
+                        &operation_id,
+                        &owner,
+                        &expected_plan_digest,
+                        &transaction,
+                        cancellation,
+                    )
+                    .await;
+                return Err(SdcError::ChangeControl(format!("{error}; {detail}")));
+            }
+        };
         Ok(ObjectApplyResult {
             operation_id,
             plan,
@@ -928,9 +969,31 @@ mod tests {
             .await
             .expect_err("a drifted target must refuse");
         assert!(
-            matches!(&error, SdcError::PreparedChange(message)
-                if message.contains("changed since it was prepared")),
+            matches!(&error, SdcError::TargetDrifted),
             "unexpected error: {error:?}"
+        );
+        assert!(
+            !transaction.refused_before_write(),
+            "a validation refusal is not a commit-boundary refusal"
+        );
+
+        // The same drift must also stop the write itself, since the coordinator
+        // drops and reacquires its guard between validate and commit.
+        let error = transaction
+            .commit(
+                &staged,
+                &Attribution::stdio(),
+                &mecmcp_changeset::CommitOptions::default(),
+            )
+            .await
+            .expect_err("a drifted target must not be written");
+        assert!(
+            matches!(&error, SdcError::TargetDrifted),
+            "unexpected error: {error:?}"
+        );
+        assert!(
+            transaction.refused_before_write(),
+            "a commit-boundary refusal must be discardable"
         );
         server.abort();
     }
