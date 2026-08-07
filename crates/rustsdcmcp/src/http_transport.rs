@@ -2,16 +2,15 @@
 
 use crate::{
     SdcHandler, WRITE_TOOLS,
-    compat::{
-        bearer::{BearerAuthenticator, BearerBoundary, BearerResponseProfile, BearerSyntax},
-        http::{HostOriginPolicy, HttpTransportConfig, build_streamable_http_router, serve_router},
-        preflight::{MalformedArgumentsPolicy, TargetField, ToolScopePreflight},
-    },
+    compat::preflight::{MalformedArgumentsPolicy, TargetField, ToolScopePreflight},
 };
 use anyhow::{Context, Result};
-use axum::Router;
-use mecmcp_auth::{CallerCtx, NoGrant, TokenStoreFile};
-use mecmcp_transport::{LimitsConfig, TransportIdentity};
+use mecmcp_auth::{BearerSyntax, CallerCtx, NoGrant, TokenStoreFile};
+use mecmcp_transport::{
+    BearerAuthenticator, BearerBoundary, BearerResponseProfile, HostOriginPolicy,
+    HttpTransportConfig, LimitsConfig, TransportIdentity, build_streamable_http_router,
+    serve_router,
+};
 use std::{net::SocketAddr, sync::Arc};
 use tokio_util::sync::CancellationToken;
 
@@ -24,12 +23,11 @@ pub fn build_http_router(
     limits: LimitsConfig,
     enable_metrics: bool,
     shutdown: CancellationToken,
-) -> Result<Router> {
-    let body_limit = limits.max_request_body_bytes;
+) -> Result<(axum::Router, CancellationToken)> {
     let identity = TransportIdentity::new("sdcmcp", "sdc", "rustsdcmcp", ["tenant"]);
     let mut config = HttpTransportConfig::new(
-        identity,
-        limits,
+        identity.clone(),
+        limits.clone(),
         HostOriginPolicy::enforced(allowed_hosts, allowed_origins),
         shutdown,
     )
@@ -46,12 +44,9 @@ pub fn build_http_router(
             [TargetField::scalar("tenant")],
             MalformedArgumentsPolicy::Deny,
         );
-        let boundary = BearerBoundary::new(
-            authenticator,
-            BearerResponseProfile::detailed("sdcmcp"),
-            body_limit,
-        )
-        .with_preflight(preflight);
+        let boundary =
+            BearerBoundary::new(authenticator, BearerResponseProfile::detailed("sdcmcp"))
+                .with_preflight(preflight);
         config = config.with_bearer(boundary);
     }
 
@@ -71,17 +66,18 @@ pub async fn serve_http(
     enable_metrics: bool,
     tls: Option<Arc<rustls::ServerConfig>>,
     shutdown: CancellationToken,
+    shutdown_timeout: std::time::Duration,
 ) -> Result<()> {
-    let router = build_http_router(
+    let (router, shutdown) = build_http_router(
         handler,
         token_store,
         allowed_hosts,
         allowed_origins,
         limits,
         enable_metrics,
-        shutdown.clone(),
+        shutdown,
     )?;
-    serve_router(router, address, tls, shutdown)
+    serve_router(router, address, tls, shutdown, shutdown_timeout)
         .await
         .context("serving SDC Streamable HTTP")
 }

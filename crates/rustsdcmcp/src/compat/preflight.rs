@@ -1,5 +1,5 @@
-use mecmcp_auth::{CallerCtx, NoGrant, ScopeSet};
-use mecmcp_transport::ScopePreflight;
+use mecmcp_auth::ScopeSet;
+use mecmcp_transport::{CallerScopes, ScopePreflight};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,7 +67,7 @@ impl ToolScopePreflight {
     }
 
     /// mecmcp-compat: method ToolScopePreflight::request_exceeds_scope https://github.com/fastrevmd-lab/mecmcp/issues/144
-    fn request_exceeds_scope(&self, value: &Value, caller: &CallerCtx<NoGrant>) -> bool {
+    fn request_exceeds_scope(&self, value: &Value, caller: CallerScopes<'_>) -> bool {
         if value.get("method").and_then(Value::as_str) != Some("tools/call") {
             return false;
         }
@@ -89,14 +89,14 @@ impl ToolScopePreflight {
         self.target_fields.iter().any(|field| {
             arguments
                 .get(field.name)
-                .is_some_and(|value| !target_value_in_scope(value, *field, &caller.devices))
+                .is_some_and(|value| !target_value_in_scope(value, *field, caller.devices))
         })
     }
 }
 
 impl ScopePreflight for ToolScopePreflight {
     /// mecmcp-compat: method ToolScopePreflight::check https://github.com/fastrevmd-lab/mecmcp/issues/145
-    fn check(&self, body: &[u8], caller: &CallerCtx<NoGrant>) -> Result<(), String> {
+    fn check(&self, body: &[u8], caller: CallerScopes<'_>) -> Result<(), String> {
         if body.is_empty() {
             return Ok(());
         }
@@ -106,7 +106,7 @@ impl ScopePreflight for ToolScopePreflight {
         let denied = match value {
             Value::Array(values) => values
                 .iter()
-                .any(|value| self.request_exceeds_scope(value, caller)),
+                .any(|value| self.request_exceeds_scope(value, caller.clone())),
             value => self.request_exceeds_scope(&value, caller),
         };
         if denied {
@@ -146,16 +146,14 @@ fn value_has_shape(value: &Value, shape: TargetValueShape) -> bool {
 mod tests {
     use super::*;
 
-    fn caller_with(devices: ScopeSet, tools: ScopeSet) -> CallerCtx<NoGrant> {
-        CallerCtx {
-            token_name: "reader".to_owned(),
+    fn caller_with(devices: ScopeSet, tools: ScopeSet) -> CallerScopes<'static> {
+        // Leak the ScopeSets so they have 'static lifetime for testing
+        let devices = Box::leak(Box::new(devices));
+        let tools = Box::leak(Box::new(tools));
+        CallerScopes {
+            token_name: "reader",
             devices,
             tools,
-            grant: None,
-            provider: None,
-            provider_tier: None,
-            on_behalf_of: None,
-            actor_type: mecmcp_auth::ActorType::Human,
         }
     }
 
@@ -173,13 +171,13 @@ mod tests {
         assert!(preflight
             .check(
                 br#"{"method":"tools/call","params":{"name":"get_sdc_tenant_scope","arguments":{"tenant":"other"}}}"#,
-                &caller,
+                caller.clone(),
             )
             .is_err());
         assert!(preflight
             .check(
                 br#"{"method":"tools/call","params":{"name":"apply_sdc_change_set","arguments":{"tenant":"production"}}}"#,
-                &caller,
+                caller,
             )
             .is_err());
     }

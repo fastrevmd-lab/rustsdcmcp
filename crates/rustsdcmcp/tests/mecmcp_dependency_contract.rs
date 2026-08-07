@@ -3,11 +3,12 @@
 use std::{fs, path::Path};
 
 /// Declared directly in the workspace manifest. Each must appear verbatim.
-const PACKAGES: [&str; 5] = [
+const PACKAGES: [&str; 6] = [
     "mecmcp-audit",
     "mecmcp-auth",
     "mecmcp-changeset",
     "mecmcp-runtime",
+    "mecmcp-server",
     "mecmcp-transport",
 ];
 
@@ -15,20 +16,21 @@ const PACKAGES: [&str; 5] = [
 /// transitively rather than declared here. `mecmcp-secret` is pulled in by
 /// `mecmcp-auth`, `-changeset` and `-transport` as the workspace's single
 /// hardened file/secret reader; it has no direct declaration, but it must still
-/// come from the one approved tag. Checking only the declared five would let a
+/// come from the one approved tag. Checking only the declared six would let a
 /// transitive mecmcp crate enter from a different source unnoticed, which is
 /// the exact thing this file exists to prevent.
-const LOCKED_PACKAGES: [&str; 6] = [
+const LOCKED_PACKAGES: [&str; 7] = [
     "mecmcp-audit",
     "mecmcp-auth",
     "mecmcp-changeset",
     "mecmcp-runtime",
     "mecmcp-secret",
+    "mecmcp-server",
     "mecmcp-transport",
 ];
-const VERSION: &str = "0.5.0";
-const TAG: &str = "v0.5.0";
-const COMMIT: &str = "82ad9b51210436be706a443775cee7f9d8b775d6";
+const VERSION: &str = "0.7.0";
+const TAG: &str = "v0.7.0";
+const COMMIT: &str = "05c0d119fc06a914ab2ebd9d525a916a928a9a72";
 const REPOSITORY: &str = "https://github.com/fastrevmd-lab/mecmcp";
 
 fn validate_mecmcp_lockfile(lock: &str) -> Result<(), String> {

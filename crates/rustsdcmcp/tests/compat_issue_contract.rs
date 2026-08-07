@@ -359,7 +359,7 @@ fn compatibility_declarations_match_the_issue_ledger() {
         .join("docs/mecmcp-compatibility.tsv");
     let ledger = fs::read_to_string(&ledger_path).expect("read compatibility ledger");
     let rows = ledger.lines().skip(1).collect::<Vec<_>>();
-    assert_eq!(rows.len(), 59, "ledger must contain exactly 59 data rows");
+    assert_eq!(rows.len(), 13, "ledger must contain exactly 13 data rows");
 
     let mut ledger_entries = BTreeSet::new();
     let mut symbols = BTreeSet::new();
@@ -412,13 +412,13 @@ fn compatibility_declarations_match_the_issue_ledger() {
     }
 
     assert_eq!(
-        declaration_count, 59,
-        "source must contain exactly 59 declarations"
+        declaration_count, 13,
+        "source must contain exactly 13 declarations"
     );
     assert_eq!(
         source_entries.len(),
-        59,
-        "source must contain exactly 59 markers"
+        13,
+        "source must contain exactly 13 markers"
     );
     assert_eq!(
         source_entries, ledger_entries,
