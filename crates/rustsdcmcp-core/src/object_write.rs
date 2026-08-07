@@ -350,18 +350,20 @@ impl DeviceTransaction for SdcObjectTransaction {
                 "SDC does not support confirmed object writes",
             ));
         }
-        // Re-check drift at the write boundary. `validate` already checked, but
-        // the coordinator releases and reacquires its guard in between, and that
-        // guard cannot exclude a writer working directly against SDC. This
-        // narrows the window rather than closing it: SDC exposes no conditional
-        // write, so a change landing between this read and the write below is
-        // still possible.
-        if !self.target_unchanged(staged).await? {
-            return Err(SdcError::PreparedChange(
-                "object changed between validation and commit; re-prepare to see the current state"
-                    .to_owned(),
-            ));
-        }
+        // Drift is checked in `validate`, deliberately not here.
+        //
+        // A window remains: the coordinator releases and reacquires its guard
+        // between validate and commit, and that guard cannot exclude a writer
+        // working directly against SDC, so the target can move in between. SDC
+        // exposes no conditional write (no ETag or If-Match), so that race
+        // cannot be closed from this side.
+        //
+        // Re-checking here would be worse than the race. `commit_operation`
+        // has already persisted `Committing` by this point, and a refusal is
+        // recorded as the non-terminal `Failed` state that `discard_operation`
+        // will not accept -- stranding the tenant, since the tenant is the
+        // coordinator's device key. A narrow, documented race beats a guard
+        // whose failure mode blocks every later mutation.
         let resource = staged.resource();
         let result = match (staged.action(), staged.uuid()) {
             (ObjectWriteAction::Create, _) => {
@@ -391,22 +393,23 @@ impl DeviceTransaction for SdcObjectTransaction {
                 job_id: None,
                 details: Some(format!("SDC {} completed", staged.action().as_str())),
             }),
-            // Every arm here can occur *after* the request reached SDC, so the
-            // mutation may well have landed. Reporting these as failures would
-            // invite a retry that duplicates a create. BodyTransfer,
-            // ResponseTooLarge, and InvalidJson are only reachable once a
-            // success status has already been received, because a non-2xx is
-            // classified before the body is decoded.
-            Err(
-                SdcError::Cancelled
-                | SdcError::Timeout
-                | SdcError::BodyTransfer
-                | SdcError::ResponseTooLarge { .. }
-                | SdcError::InvalidJson,
-            ) => Ok(CommitOutcome::Indeterminate {
-                reason: "SDC object write was submitted but its outcome was not observed"
-                    .to_owned(),
-            }),
+            // These can occur after the mutation reached SDC, so it may have
+            // landed. Recording a failure would invite a retry that duplicates
+            // a create. `InvalidJson` is the only body error included: it is
+            // raised strictly after `status.is_success()`, so a 2xx is proven.
+            //
+            // `BodyTransfer` and `ResponseTooLarge` are deliberately excluded.
+            // `send_raw` enforces the size cap while streaming, before the
+            // status check, so both are reachable on a non-2xx -- classifying a
+            // known API failure as indeterminate would strand the tenant and
+            // could mask the pinned 429 handling. The cost is that a 2xx whose
+            // body is oversized or truncated is still recorded as failed.
+            Err(SdcError::Cancelled | SdcError::Timeout | SdcError::InvalidJson) => {
+                Ok(CommitOutcome::Indeterminate {
+                    reason: "SDC object write was submitted but its outcome was not observed"
+                        .to_owned(),
+                })
+            }
             Err(error) => Err(error),
         }
     }
