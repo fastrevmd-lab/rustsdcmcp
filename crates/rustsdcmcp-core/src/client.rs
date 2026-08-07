@@ -271,6 +271,68 @@ impl SdcClient {
         self.get(&segments, &[], cancellation).await
     }
 
+    /// Create one object in an allowlisted generic resource family.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the body is not a bounded JSON object, or when
+    /// the SDC request fails.
+    pub async fn create_resource(
+        &self,
+        kind: ResourceKind,
+        body: &Value,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_object_body(body)?;
+        self.send_write(
+            Method::POST,
+            kind.collection_segments(),
+            Some(body),
+            cancellation,
+        )
+        .await
+    }
+
+    /// Replace one object in an allowlisted generic resource family.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the UUID or body is invalid, or when the SDC
+    /// request fails.
+    pub async fn update_resource(
+        &self,
+        kind: ResourceKind,
+        uuid: &str,
+        body: &Value,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("uuid", uuid)?;
+        validate_object_body(body)?;
+        let mut segments = kind.collection_segments().to_vec();
+        segments.push(uuid);
+        self.send_write(Method::PUT, &segments, Some(body), cancellation)
+            .await
+    }
+
+    /// Delete one object from an allowlisted generic resource family.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the UUID is invalid or when the SDC request
+    /// fails. SDC rejects deleting an object that a policy still references.
+    pub async fn delete_resource(
+        &self,
+        kind: ResourceKind,
+        uuid: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("uuid", uuid)?;
+        let mut segments = kind.collection_segments().to_vec();
+        segments.push(uuid);
+        self.send_write(Method::DELETE, &segments, None, cancellation)
+            .await
+    }
+
     /// Read a preview job without polling.
     pub async fn preview_status(
         &self,
@@ -484,6 +546,24 @@ impl SdcClient {
         body: Option<&B>,
         cancellation: &CancellationToken,
     ) -> Result<T, SdcError> {
+        let raw = self
+            .send_raw(method, segments, query, body, cancellation)
+            .await?;
+        serde_json::from_slice(&raw).map_err(|_| SdcError::InvalidJson)
+    }
+
+    /// Send one request and return its raw successful response body.
+    ///
+    /// Write operations need the undecoded bytes because SDC answers some
+    /// mutations with an empty body, which is not valid JSON.
+    async fn send_raw<B: Serialize>(
+        &self,
+        method: Method,
+        segments: &[&str],
+        query: &[(&str, &str)],
+        body: Option<&B>,
+        cancellation: &CancellationToken,
+    ) -> Result<Vec<u8>, SdcError> {
         let mut url = self.base_url.clone();
         {
             let mut path = url
@@ -559,7 +639,27 @@ impl SdcClient {
         if !status.is_success() {
             return Err(classify_api_error(status, &body));
         }
-        serde_json::from_slice(&body).map_err(|_| SdcError::InvalidJson)
+        Ok(body)
+    }
+
+    /// Send one mutating request whose successful response may carry no body.
+    ///
+    /// An empty or whitespace-only body resolves to `Value::Null` rather than
+    /// an `InvalidJson` failure, because SDC answers some deletes that way.
+    async fn send_write(
+        &self,
+        method: Method,
+        segments: &[&str],
+        body: Option<&Value>,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        let raw = self
+            .send_raw(method, segments, &[], body, cancellation)
+            .await?;
+        if raw.iter().all(u8::is_ascii_whitespace) {
+            return Ok(Value::Null);
+        }
+        serde_json::from_slice(&raw).map_err(|_| SdcError::InvalidJson)
     }
 }
 
@@ -605,6 +705,36 @@ fn validate_policy_operations(policies: &[PolicyOperation]) -> Result<(), SdcErr
                 "each policy needs at least one deploy or undeploy target",
             ));
         }
+    }
+    Ok(())
+}
+
+/// Hard cap on one object-write request body.
+const MAX_WRITE_BODY_BYTES: usize = 1024 * 1024;
+
+/// Reject write bodies that are not a bounded, non-empty JSON object.
+///
+/// SDC object definitions are small; a scalar, an array, or a megabyte-scale
+/// body indicates a caller error rather than a legitimate write.
+fn validate_object_body(body: &Value) -> Result<(), SdcError> {
+    let Value::Object(fields) = body else {
+        return Err(SdcError::InvalidInput(
+            "object write body must be a JSON object",
+        ));
+    };
+    if fields.is_empty() {
+        return Err(SdcError::InvalidInput(
+            "object write body must not be empty",
+        ));
+    }
+    if serde_json::to_vec(body)
+        .map_err(|_| SdcError::Serialization)?
+        .len()
+        > MAX_WRITE_BODY_BYTES
+    {
+        return Err(SdcError::InvalidInput(
+            "object write body exceeds the 1048576-byte limit",
+        ));
     }
     Ok(())
 }
@@ -760,7 +890,7 @@ mod tests {
         Json, Router,
         extract::Query,
         http::{HeaderMap, StatusCode},
-        routing::get,
+        routing::{delete, get, post, put},
     };
     use std::collections::HashMap;
 
@@ -970,5 +1100,127 @@ mod tests {
             .expect_err("body cap must fail");
         assert!(matches!(error, SdcError::ResponseTooLarge { limit: 8 }));
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn create_resource_posts_the_body_to_the_exact_collection_path() {
+        let app = Router::new().route(
+            "/api/v1/addresses",
+            post(|headers: HeaderMap, Json(body): Json<Value>| async move {
+                assert_eq!(
+                    headers
+                        .get("x-api-key")
+                        .and_then(|value| value.to_str().ok()),
+                    Some("test-secret")
+                );
+                assert_eq!(body.get("name").and_then(Value::as_str), Some("lab-net"));
+                Json(serde_json::json!({"uuid": "created", "name": "lab-net"}))
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        let created = client(base_url, 65536)
+            .create_resource(
+                ResourceKind::Addresses,
+                &serde_json::json!({"name": "lab-net"}),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("create must succeed");
+        assert_eq!(created.get("uuid").and_then(Value::as_str), Some("created"));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn update_resource_puts_the_body_to_the_exact_item_path() {
+        let app = Router::new().route(
+            "/api/v1/services/svc-1",
+            put(|Json(body): Json<Value>| async move {
+                assert_eq!(body.get("name").and_then(Value::as_str), Some("telnet-alt"));
+                Json(serde_json::json!({"uuid": "svc-1", "name": "telnet-alt"}))
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        let updated = client(base_url, 65536)
+            .update_resource(
+                ResourceKind::Services,
+                "svc-1",
+                &serde_json::json!({"name": "telnet-alt"}),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("update must succeed");
+        assert_eq!(updated.get("uuid").and_then(Value::as_str), Some("svc-1"));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn delete_resource_tolerates_an_empty_success_body() {
+        let app = Router::new().route(
+            "/api/v1/schedulers/sch-1",
+            delete(|| async { StatusCode::NO_CONTENT }),
+        );
+        let (base_url, server) = serve(app).await;
+        let deleted = client(base_url, 65536)
+            .delete_resource(ResourceKind::Schedulers, "sch-1", &CancellationToken::new())
+            .await
+            .expect("an empty delete response must not be an error");
+        assert_eq!(deleted, Value::Null);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn object_writes_reject_identifiers_that_could_escape_the_collection() {
+        let sdc = client(
+            Url::parse("https://example.invalid/").expect("test URL"),
+            1024,
+        );
+        // `a/b` is deliberately absent: a slash is percent-encoded into a
+        // single path segment rather than refused, which
+        // `path_parameters_remain_one_encoded_segment` already pins down.
+        for identifier in ["", ".", "..", "with space", "tab\there", "nul\0byte"] {
+            let error = sdc
+                .update_resource(
+                    ResourceKind::Addresses,
+                    identifier,
+                    &serde_json::json!({"name": "x"}),
+                    &CancellationToken::new(),
+                )
+                .await
+                .expect_err("invalid identifier must be refused before transport");
+            // Two independent guards refuse these: `validate_atom` rejects
+            // empty, whitespace, and control bytes, and the path builder
+            // separately refuses `.` and `..`. Either is a safe refusal, and
+            // neither reaches the network.
+            assert!(
+                matches!(
+                    error,
+                    SdcError::InvalidIdentifier { field: "uuid" } | SdcError::UrlConstruction
+                ),
+                "identifier {identifier:?} produced {error:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn object_writes_reject_bodies_that_are_not_a_populated_object() {
+        let sdc = client(
+            Url::parse("https://example.invalid/").expect("test URL"),
+            1024,
+        );
+        for body in [
+            serde_json::json!([]),
+            serde_json::json!("scalar"),
+            serde_json::json!(7),
+            serde_json::json!({}),
+        ] {
+            let error = sdc
+                .create_resource(ResourceKind::Addresses, &body, &CancellationToken::new())
+                .await
+                .expect_err("invalid body must be refused before transport");
+            assert!(
+                matches!(error, SdcError::InvalidInput(_)),
+                "body {body} produced {error:?}"
+            );
+        }
     }
 }
