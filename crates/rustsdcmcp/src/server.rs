@@ -17,10 +17,12 @@ use rmcp::{
     tool, tool_handler, tool_router,
 };
 use rustsdcmcp_core::{
-    ChangeManager, ListRequest, PolicyOperation, ResourceKind, SdcClient, SdcError,
+    ChangeManager, ListRequest, ObjectWriteAction, PolicyOperation, ResourceKind, SdcClient,
+    SdcError,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -48,13 +50,17 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "approve_sdc_change_set",
     "apply_sdc_change_set",
     "get_sdc_change_set",
+    "prepare_sdc_object_write",
+    "apply_sdc_object_write",
 ];
 
-/// Tools that can cause an SDC deployment lifecycle mutation.
+/// Tools that can cause an SDC deployment or object lifecycle mutation.
 pub const WRITE_TOOLS: &[&str] = &[
     "prepare_sdc_policy_deploy",
     "approve_sdc_change_set",
     "apply_sdc_change_set",
+    "prepare_sdc_object_write",
+    "apply_sdc_object_write",
 ];
 
 /// Security Director Cloud MCP handler.
@@ -261,8 +267,43 @@ pub struct ApplyArgs {
     pub change_set_id: String,
     /// Exact approved plan digest.
     pub expected_digest: String,
-    /// Exact preview digest returned by prepare.
+    /// Exact approved preview digest returned by prepare.
     pub expected_preview_digest: String,
+    /// Optional external ticket or change reference.
+    #[serde(default)]
+    pub change_ref: Option<String>,
+}
+
+/// Arguments for planning one object write.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PrepareObjectArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Which mutation to plan.
+    pub action: ObjectWriteAction,
+    /// Allowlisted object family.
+    pub resource: ResourceKind,
+    /// Target object UUID. Required for update and delete, absent for create.
+    #[serde(default)]
+    pub uuid: Option<String>,
+    /// Object definition. Required for create and update, absent for delete.
+    #[serde(default)]
+    pub body: Option<Value>,
+}
+
+/// Arguments for applying one approved object write.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ApplyObjectArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Change-set identifier.
+    pub change_set_id: String,
+    /// Exact approved plan digest.
+    pub expected_digest: String,
+    /// Exact plan digest returned by prepare.
+    pub expected_plan_digest: String,
     /// Optional external ticket or change reference.
     #[serde(default)]
     pub change_ref: Option<String>,
@@ -744,6 +785,79 @@ impl SdcHandler {
                     owner(caller),
                     args.expected_digest,
                     args.expected_preview_digest,
+                    &attribution,
+                    &cancellation,
+                )
+                .await,
+        ))
+    }
+
+    #[tool(
+        name = "prepare_sdc_object_write",
+        description = "Plan one address, application, service, or scheduler write and create a digest-bound change set. This does not write."
+    )]
+    async fn prepare_sdc_object_write(
+        &self,
+        Parameters(args): Parameters<PrepareObjectArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "prepare_sdc_object_write",
+            "prepare",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "prepare_sdc_object_write", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish(
+            audit,
+            self.changes
+                .prepare_object_write(
+                    owner(caller),
+                    args.action,
+                    args.resource,
+                    args.uuid,
+                    args.body.unwrap_or(Value::Null),
+                    &cancellation,
+                )
+                .await,
+        ))
+    }
+
+    #[tool(
+        name = "apply_sdc_object_write",
+        description = "Apply only an independently approved SDC object write, refusing it if the target changed since it was planned."
+    )]
+    async fn apply_sdc_object_write(
+        &self,
+        Parameters(args): Parameters<ApplyObjectArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "apply_sdc_object_write",
+            "apply",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "apply_sdc_object_write", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let attribution = attribution(caller, args.change_ref);
+        Ok(finish(
+            audit,
+            self.changes
+                .apply_object_write(
+                    args.change_set_id,
+                    owner(caller),
+                    args.expected_digest,
+                    args.expected_plan_digest,
                     &attribution,
                     &cancellation,
                 )
