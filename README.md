@@ -18,15 +18,16 @@
 ---
 
 `rustsdcmcp` exposes HPE Juniper **Security Director Cloud** (SDC) to MCP
-clients as a bounded, auditable tool surface. Where
+clients as a bounded, auditable tool surface. SDC is the HPE Juniper SASE
+portal for an SRX estate, so this server talks to that management plane rather
+than to any single firewall. Where
 [`rustjunosmcp`](https://github.com/fastrevmd-lab/rustjunosmcp) talks NETCONF to
-individual SRX devices and
-[`rustpanosmcp`](https://github.com/fastrevmd-lab/rustpanosmcp) talks XML-API to
-individual PAN-OS firewalls, this server talks to the management plane.
+individual SRX devices, `rustsdcmcp` talks HTTPS REST to the portal that governs
+them.
 
 That distinction has a large blast radius: one SDC action can affect many
-managed devices. Strict approval, credential-safe attribution, and bounded I/O
-therefore protect the management plane rather than merely decorate it.
+managed SRX devices. Strict approval, credential-safe attribution, and bounded
+I/O therefore protect the management plane rather than merely decorate it.
 
 ## Current status
 
