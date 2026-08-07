@@ -7,5 +7,5 @@ mod compat;
 mod http_transport;
 mod server;
 
-pub use http_transport::serve_http;
+pub use http_transport::{build_http_router, serve_http};
 pub use server::{KNOWN_TOOLS, SdcHandler, WRITE_TOOLS};

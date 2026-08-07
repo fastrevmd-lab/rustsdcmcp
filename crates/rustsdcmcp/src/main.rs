@@ -48,20 +48,16 @@ fn resolve_auth_mode(
 
 /// Cancel `shutdown` on the first SIGTERM or SIGINT.
 ///
-/// `mecmcp_runtime::shutdown::GracefulShutdown` supplies the Ctrl-C half; the
-/// SIGTERM watcher beside it covers how systemd actually stops this unit.
+/// `mecmcp_runtime::shutdown::GracefulShutdown` now handles both SIGINT and
+/// SIGTERM, so we just subscribe to its unified signal.
 fn install_shutdown_signals(shutdown: CancellationToken) -> Result<()> {
-    let coordinator = mecmcp_runtime::shutdown::GracefulShutdown::new();
+    let coordinator = mecmcp_runtime::shutdown::GracefulShutdown::new()
+        .context("installing shutdown signal handlers")?;
     let interrupt = coordinator.subscribe();
-    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .context("installing SIGTERM handler")?;
     tokio::spawn(async move {
-        // Hold the coordinator so its Ctrl-C sender stays alive.
+        // Hold the coordinator so its signal handlers stay alive.
         let _coordinator = coordinator;
-        tokio::select! {
-            () = interrupt => tracing::info!("received SIGINT, shutting down"),
-            _ = terminate.recv() => tracing::info!("received SIGTERM, shutting down"),
-        }
+        interrupt.await;
         shutdown.cancel();
     });
     Ok(())
@@ -232,6 +228,7 @@ async fn main() -> Result<()> {
                 false,
                 tls,
                 shutdown,
+                Duration::from_secs(10),
             )
             .await?;
         }

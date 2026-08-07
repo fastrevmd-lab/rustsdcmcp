@@ -1,11 +1,11 @@
 //! rmcp handler for Security Director Cloud tools.
 
-use crate::compat::server::{
+use mecmcp_audit::{Attribution, AuditScope};
+use mecmcp_auth::{CallerCtx, NoGrant};
+use mecmcp_server::{
     ResultFormat, ResultLimits, audit_scope, authorize_call, caller_from_extensions,
     filter_tools_for_scope, tool_error, tool_result,
 };
-use mecmcp_audit::{Attribution, AuditScope};
-use mecmcp_auth::{CallerCtx, NoGrant};
 use rmcp::{
     RoleServer, ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},

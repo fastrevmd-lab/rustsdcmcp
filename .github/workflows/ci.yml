@@ -97,7 +97,7 @@ jobs:
           build_info="$(tar -xOf "$archive" "${build_infos[0]}")"
           printf '%s\n' "$build_info" | grep -Fx 'release_status=lab-only'
           printf '%s\n' "$build_info" | grep -Fx "git_commit=$SOURCE_SHA"
-          printf '%s\n' "$build_info" | awk -F= -v expected='mecmcp_ref=v0.5.0' '$1 == "mecmcp_ref" { count += 1; matches += ($0 == expected) } END { exit !(count == 1 && matches == 1) }'
+          printf '%s\n' "$build_info" | awk -F= -v expected='mecmcp_ref=v0.7.3' '$1 == "mecmcp_ref" { count += 1; matches += ($0 == expected) } END { exit !(count == 1 && matches == 1) }'
           printf '%s\n' "$build_info" | grep -E '^glibc_floor=[0-9]+(\.[0-9]+)+$'
           mapfile -t sboms < <(tar -tzf "$archive" | grep -E '/SBOM\.cdx\.json$')
           test "${#sboms[@]}" -eq 1
@@ -113,16 +113,17 @@ jobs:
                 | [.name, .version]
               ] | sort)
               == [
-                ["mecmcp-audit", "0.5.0"],
-                ["mecmcp-auth", "0.5.0"],
-                ["mecmcp-changeset", "0.5.0"],
-                ["mecmcp-runtime", "0.5.0"],
-                ["mecmcp-secret", "0.5.0"],
-                ["mecmcp-transport", "0.5.0"]
+                ["mecmcp-audit", "0.7.3"],
+                ["mecmcp-auth", "0.7.3"],
+                ["mecmcp-changeset", "0.7.3"],
+                ["mecmcp-runtime", "0.7.3"],
+                ["mecmcp-secret", "0.7.3"],
+            ["mecmcp-server", "0.7.3"],
+                ["mecmcp-transport", "0.7.3"]
               ]
             )
-            and (tostring | contains("v0.4.0") | not)
-            and (tostring | contains("85137c509fe1803b87e8636462f0392ce05072ce") | not)
+            and (tostring | contains("v0.5.0") | not)
+            and (tostring | contains("82ad9b51210436be706a443775cee7f9d8b775d6") | not)
           ' >/dev/null
           ! tar -xOf "$archive" "${sboms[0]}" | grep -Fq "$GITHUB_WORKSPACE"
           ! tar -xOf "$archive" "${sboms[0]}" | grep -Eq '"/(home|workspace|workspaces)/'
