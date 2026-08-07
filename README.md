@@ -38,13 +38,13 @@ tools: 14 bounded read tools and three write tools—`prepare_sdc_policy_deploy`
 `approve_sdc_change_set`, and `apply_sdc_change_set`—that can be used only
 through prepare → independent approval → apply.
 
-Live, read-only validation against SDC has verified credential-based startup
-tenant validation, `get_sdc_tenant_scope`, and `list_sdc_devices` with
-`from=0,size=1`. Authentication and the tenant-scope check also succeeded
-after a service restart. **That validation was performed against an untagged
-build that differs from `v0.1.0-lab.1` only in one documentation file, and has
-not been repeated since**; the read path has changed in the interim, so treat
-it as evidence about the approach rather than about this archive. No preview, approval, apply, deployment, or other SDC
+Live, read-only validation against SDC was last performed on 2026-08-07 against
+commit `ea81805d2b4b97df9bdd3f70423e047524896a3d` with `mecmcp` `v0.5.0`. It
+verified credential-based startup tenant validation, `get_sdc_tenant_scope`,
+and `list_sdc_devices` with `from=0,size=1`; a read-only grant exposing exactly
+its 14 permitted tools and no write tools; `401` for missing and invalid
+bearers; and audit records carrying HMAC-redacted targets with no cleartext
+tenant identifier. No preview, approval, apply, deployment, or other SDC
 mutation has ever been attempted against a live tenant, and the remaining
 endpoint questions are tracked in
 [`docs/sdc-api/README.md`](docs/sdc-api/README.md#still-unverified).
@@ -180,18 +180,20 @@ in [`docs/operations.md`](docs/operations.md).
 
 ## Deployment maturity
 
-The Debian 13 package has been installed and run end to end, but only from an
-untagged, commit-addressed lab archive built from
-`44a28f55598ad038389d9f734e11e0f520b82837`, which pinned `changeset-v0.3.6`.
-That deployment starts under the packaged `rustsdcmcp.service` unit as a
-non-root account, binds a loopback-only endpoint, enforces the bearer boundary,
-and passes the startup tenant-scope check against live SDC.
+The Debian 13 package has been installed and run end to end from the
+commit-addressed archive built by CI for
+`ea81805d2b4b97df9bdd3f70423e047524896a3d`. It starts under the packaged
+`rustsdcmcp.service` unit as a non-root account, binds a loopback-only
+endpoint, enforces the bearer boundary, and passes the startup tenant-scope
+check against live SDC.
 
-That archive differs from `v0.1.0-lab.1` only in one documentation file, so it
-is equivalent to lab.1 for every buildable input. **No later prerelease has
-been deployed, including `v0.1.0-lab.4`**, so treat this as evidence about the
-packaging approach rather than about the current archive. Deployment, recovery,
-and audit-retention procedure is in
+One packaging limit is worth stating plainly: the unit's `IPAddressAllow` and
+`IPAddressDeny` lines take effect only where the host lets systemd attach its
+cgroup BPF program, which is runtime-dependent. On the validated deployment the
+installer probe reported `NOT ENFORCED`, so egress had to be enforced outside
+the unit; every other sandbox directive still applied. Follow the probe's
+result on your own host rather than assuming either way. Deployment, recovery,
+audit-retention, and the per-runtime egress mechanism are in
 [`docs/operations.md`](docs/operations.md).
 
 Specific hosts, addresses, and container identifiers are deliberately not
@@ -212,9 +214,9 @@ published here; each operator supplies their own.
 
 [`mecmcp`](https://github.com/fastrevmd-lab/mecmcp) is the vendor-neutral Rust
 foundation shared by the mechub MCP server family. This repository consumes it,
-rather than forking it. Current source and the `v0.1.0-lab.4` prerelease pin all
-five shared crates to `changeset-v0.3.7`. The older `v0.1.0-lab.1` prerelease
-was built with `changeset-v0.3.6`.
+rather than forking it. Current source pins all five shared crates to `v0.5.0`.
+The published `v0.1.0-lab.4` prerelease predates that adoption and pins
+`changeset-v0.3.7`; the older `v0.1.0-lab.1` pins `changeset-v0.3.6`.
 The 59 temporary compatibility declarations remain tracked in the
 [`mecmcp compatibility ledger`](docs/mecmcp-compatibility.md); public `v0.1.0`
 remains blocked until all 59 are replaced by one coherent upstream release.
