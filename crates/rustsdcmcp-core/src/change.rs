@@ -362,7 +362,7 @@ impl ChangeManager {
             )
             .await
             .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
-        let validation = self
+        let validation = match self
             .coordinator
             .validate_operation(
                 &operation_id,
@@ -374,7 +374,37 @@ impl ChangeManager {
                 cancellation,
             )
             .await
-            .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        {
+            Ok(report) => report,
+            Err(error) => {
+                // A refused validation records the operation `Failed`, which is
+                // not terminal: it keeps blocking this principal with no
+                // operator route out. Nothing has been written at this point --
+                // staging and validation are reads -- so discarding is truthful
+                // and reaches the terminal `Discarded` state.
+                //
+                // Deliberately not done for a commit failure: by then the write
+                // may have landed, and claiming a clean revert would be a lie.
+                let detail = match self
+                    .coordinator
+                    .discard_operation(
+                        &operation_id,
+                        &self.tenant,
+                        &owner,
+                        &expected_plan_digest,
+                        &transaction,
+                        cancellation,
+                    )
+                    .await
+                {
+                    Ok(_) => "the planned write was discarded".to_owned(),
+                    Err(discard_error) => format!(
+                        "the planned write also could not be discarded and needs manual resolution: {discard_error}"
+                    ),
+                };
+                return Err(SdcError::ChangeControl(format!("{error}; {detail}")));
+            }
+        };
         let outcome = self
             .coordinator
             .commit_operation(
@@ -785,6 +815,59 @@ mod tests {
             .is_err(),
             "update must carry a target UUID"
         );
+    }
+
+    #[test]
+    fn a_prepared_object_write_rejects_a_body_the_client_would_refuse() {
+        // An empty object is refused by create_resource/update_resource. If the
+        // envelope accepted it, a plan could be independently approved and only
+        // then fail, burning the change set for no reason.
+        for action in [ObjectWriteAction::Create, ObjectWriteAction::Update] {
+            let uuid = matches!(action, ObjectWriteAction::Update).then(|| "addr-1".to_owned());
+            let before = if uuid.is_some() {
+                json!({"uuid": "addr-1"})
+            } else {
+                Value::Null
+            };
+            assert!(
+                SdcPreparedObjectWrite::new(
+                    action,
+                    ResourceKind::Addresses,
+                    uuid,
+                    json!({}),
+                    before,
+                )
+                .is_err(),
+                "{action:?} must refuse an empty body at prepare time"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_planned_object_write_can_be_released_because_nothing_was_written() {
+        // `Failed` is not terminal in the coordinator, so a refused write must
+        // be able to reach `Discarded`. Discard runs rollback first, and it is
+        // only reachable pre-commit, so reporting success is accurate.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = SdcClient::from_test_parts(
+            Url::parse("https://example.invalid/").expect("url"),
+            "test-secret".to_owned(),
+            64 * 1024,
+            100,
+        );
+        let transaction =
+            SdcObjectTransaction::new(client, "sha256:unused".to_owned(), CancellationToken::new());
+
+        let outcome = transaction
+            .rollback(mecmcp_changeset::RollbackRef::CandidateRevert)
+            .await
+            .expect("releasing an uncommitted object write must succeed");
+        assert!(outcome.succeeded);
+
+        transaction
+            .rollback(mecmcp_changeset::RollbackRef::Archive(1))
+            .await
+            .expect_err("SDC has no rollback archive to load");
     }
 
     #[tokio::test]

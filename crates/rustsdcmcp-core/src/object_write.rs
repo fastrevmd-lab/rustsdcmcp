@@ -154,11 +154,21 @@ impl SdcPreparedObjectWrite {
             ));
         }
         let has_uuid = self.uuid.is_some();
-        let request_is_object = self.request.is_object();
+        // Match the client's own body rule here so an unexecutable plan cannot
+        // be approved: `create_resource` and `update_resource` reject an empty
+        // object, and discovering that only at commit would burn a change set.
+        let request_is_populated_object = self
+            .request
+            .as_object()
+            .is_some_and(|fields| !fields.is_empty());
         let before_is_object = self.before.is_object();
         let shape_ok = match self.action {
-            ObjectWriteAction::Create => !has_uuid && request_is_object && self.before.is_null(),
-            ObjectWriteAction::Update => has_uuid && request_is_object && before_is_object,
+            ObjectWriteAction::Create => {
+                !has_uuid && request_is_populated_object && self.before.is_null()
+            }
+            ObjectWriteAction::Update => {
+                has_uuid && request_is_populated_object && before_is_object
+            }
             ObjectWriteAction::Delete => has_uuid && self.request.is_null() && before_is_object,
         };
         if !shape_ok {
@@ -254,6 +264,25 @@ impl SdcObjectTransaction {
             cancellation,
         }
     }
+
+    /// Re-read the target and report whether it still matches its plan.
+    ///
+    /// Create has no prior object, so it is vacuously unchanged.
+    async fn target_unchanged(&self, staged: &SdcPreparedObjectWrite) -> Result<bool, SdcError> {
+        let (ObjectWriteAction::Update | ObjectWriteAction::Delete, Some(uuid)) =
+            (staged.action(), staged.uuid())
+        else {
+            return Ok(true);
+        };
+        let current = self
+            .client
+            .get_resource(staged.resource(), uuid, &self.cancellation)
+            .await?;
+        let digest = |value: &Value| {
+            canonical_digest(value).map_err(|error| SdcError::PreparedChange(error.to_string()))
+        };
+        Ok(digest(&current)? == digest(staged.before())?)
+    }
 }
 
 #[async_trait]
@@ -296,19 +325,7 @@ impl DeviceTransaction for SdcObjectTransaction {
     /// An object write has no SDC preview to bind, so this drift check is what
     /// makes the approved digest meaningful at apply time.
     async fn validate(&self, staged: &Self::Staged) -> Result<Self::Validation, Self::Error> {
-        let target_unchanged = match (staged.action(), staged.uuid()) {
-            (ObjectWriteAction::Create, _) | (_, None) => true,
-            (_, Some(uuid)) => {
-                let current = self
-                    .client
-                    .get_resource(staged.resource(), uuid, &self.cancellation)
-                    .await?;
-                canonical_digest(&current)
-                    .map_err(|error| SdcError::PreparedChange(error.to_string()))?
-                    == canonical_digest(staged.before())
-                        .map_err(|error| SdcError::PreparedChange(error.to_string()))?
-            }
-        };
+        let target_unchanged = self.target_unchanged(staged).await?;
         if !target_unchanged {
             return Err(SdcError::PreparedChange(
                 "object changed since it was prepared; re-prepare to see the current state"
@@ -331,6 +348,18 @@ impl DeviceTransaction for SdcObjectTransaction {
         if options.confirm_timeout.is_some() {
             return Err(SdcError::InvalidInput(
                 "SDC does not support confirmed object writes",
+            ));
+        }
+        // Re-check drift at the write boundary. `validate` already checked, but
+        // the coordinator releases and reacquires its guard in between, and that
+        // guard cannot exclude a writer working directly against SDC. This
+        // narrows the window rather than closing it: SDC exposes no conditional
+        // write, so a change landing between this read and the write below is
+        // still possible.
+        if !self.target_unchanged(staged).await? {
+            return Err(SdcError::PreparedChange(
+                "object changed between validation and commit; re-prepare to see the current state"
+                    .to_owned(),
             ));
         }
         let resource = staged.resource();
@@ -362,7 +391,19 @@ impl DeviceTransaction for SdcObjectTransaction {
                 job_id: None,
                 details: Some(format!("SDC {} completed", staged.action().as_str())),
             }),
-            Err(SdcError::Cancelled | SdcError::Timeout) => Ok(CommitOutcome::Indeterminate {
+            // Every arm here can occur *after* the request reached SDC, so the
+            // mutation may well have landed. Reporting these as failures would
+            // invite a retry that duplicates a create. BodyTransfer,
+            // ResponseTooLarge, and InvalidJson are only reachable once a
+            // success status has already been received, because a non-2xx is
+            // classified before the body is decoded.
+            Err(
+                SdcError::Cancelled
+                | SdcError::Timeout
+                | SdcError::BodyTransfer
+                | SdcError::ResponseTooLarge { .. }
+                | SdcError::InvalidJson,
+            ) => Ok(CommitOutcome::Indeterminate {
                 reason: "SDC object write was submitted but its outcome was not observed"
                     .to_owned(),
             }),
@@ -370,8 +411,25 @@ impl DeviceTransaction for SdcObjectTransaction {
         }
     }
 
-    async fn rollback(&self, _to: RollbackRef) -> Result<RollbackOutcome, Self::Error> {
-        Err(SdcError::RollbackUnsupported)
+    /// Release a planned-but-uncommitted object write.
+    ///
+    /// SDC has no candidate store, so there is nothing remote to revert. The
+    /// coordinator only reaches `rollback` from `Staged`, `Validated`, or
+    /// `Failed` — it refuses to discard from `Committing`, `Committed`, and
+    /// `Indeterminate` — so every state that gets here is pre-commit and
+    /// nothing was written. Reporting success is therefore accurate, and it is
+    /// what lets a refused write reach the terminal `Discarded` state instead
+    /// of stranding the principal on a non-terminal `Failed` record.
+    async fn rollback(&self, to: RollbackRef) -> Result<RollbackOutcome, Self::Error> {
+        match to {
+            RollbackRef::CandidateRevert => Ok(RollbackOutcome {
+                succeeded: true,
+                details: Some(
+                    "no remote candidate exists; SDC object writes are not staged".to_owned(),
+                ),
+            }),
+            RollbackRef::Archive(_) | RollbackRef::Custom(_) => Err(SdcError::RollbackUnsupported),
+        }
     }
 
     async fn unlock(&self) -> Result<UnlockOutcome, Self::Error> {
