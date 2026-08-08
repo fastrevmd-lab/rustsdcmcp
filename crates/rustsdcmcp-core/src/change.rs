@@ -524,6 +524,37 @@ impl ChangeManager {
             .map_err(|error| SdcError::ChangeControl(error.to_string()))
     }
 
+    /// Retrieve the prepared change from a change set, including preview_digest.
+    ///
+    /// This method accesses the stored change-set actions and deserializes the first
+    /// action as `SdcPreparedChange`, returning it if valid. Use this to recover the
+    /// preview digest after `prepare_sdc_policy_deploy` when the original `PrepareResult`
+    /// was not persisted by the caller.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the change set does not exist, the actions cannot be
+    /// deserialized as `SdcPreparedChange`, or the change set has no actions.
+    pub async fn prepared_change(
+        &self,
+        change_set_id: String,
+    ) -> Result<SdcPreparedChange, SdcError> {
+        let record = self
+            .coordinator
+            .change_set(&change_set_id, &self.endpoint)
+            .await
+            .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+
+        let action = record
+            .actions
+            .first()
+            .ok_or_else(|| SdcError::ChangeControl("change set has no actions".to_owned()))?;
+
+        serde_json::from_value::<SdcPreparedChange>(action.clone()).map_err(|error| {
+            SdcError::ChangeControl(format!("failed to deserialize prepared change: {error}"))
+        })
+    }
+
     /// Apply, diff, validate, and deploy one exact approved plan.
     #[allow(clippy::too_many_arguments)]
     pub async fn apply(
