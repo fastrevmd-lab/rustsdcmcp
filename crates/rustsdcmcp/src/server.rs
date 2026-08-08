@@ -50,6 +50,7 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "approve_sdc_change_set",
     "apply_sdc_change_set",
     "get_sdc_change_set",
+    "get_sdc_change_set_details",
     "prepare_sdc_object_write",
     "apply_sdc_object_write",
 ];
@@ -886,6 +887,34 @@ impl SdcHandler {
             return Ok(tool_error(error));
         }
         Ok(finish(audit, self.changes.status(args.change_set_id).await))
+    }
+
+    #[tool(
+        name = "get_sdc_change_set_details",
+        description = "Retrieve the prepared change from a change set, including preview_digest. \
+                       Use this to recover the preview digest when the original PrepareResult was \
+                       not persisted after prepare_sdc_policy_deploy."
+    )]
+    async fn get_sdc_change_set_details(
+        &self,
+        Parameters(args): Parameters<ChangeSetArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "get_sdc_change_set_details",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "get_sdc_change_set_details", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish(
+            audit,
+            self.changes.prepared_change(args.change_set_id).await,
+        ))
     }
 }
 

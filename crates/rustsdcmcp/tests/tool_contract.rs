@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 #[test]
 fn tool_registry_has_expected_unique_surface() {
-    assert_eq!(KNOWN_TOOLS.len(), 19);
+    assert_eq!(KNOWN_TOOLS.len(), 20);
     assert_eq!(
         KNOWN_TOOLS.iter().copied().collect::<BTreeSet<_>>().len(),
         KNOWN_TOOLS.len()
