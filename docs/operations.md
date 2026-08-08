@@ -339,6 +339,73 @@ Write tools require an authenticated bearer token and exact tool grants.
 Wildcard tool scope deliberately excludes them. Stdio and `--allow-no-auth`
 are read-only.
 
+## Co-managing an SRX with SDC
+
+SDC deploys its own complete model of the hierarchies it owns. Device-local
+config inside those hierarchies that SDC does not model is **deleted**, not
+preserved. This was observed in production on 2026-08-07.
+
+### What SDC owns
+
+A policy deploy is not limited to policy config. An onboarded SRX whose config
+was imported and then deployed through the change-control lifecycle had this
+preview diff:
+
+```
+set security address-book  global address 10.10.10.0/24  10.10.10.0/24
+set security policies policy-rematch
+delete security dynamic-address feed-server  feed-name corp-static
+delete security dynamic-address feed-server  feed-name aws-s3-us-east-1
+delete security dynamic-address feed-server  feed-name curated-cdn
+delete security dynamic-address address-name wilddns-corp-static
+delete security dynamic-address address-name wilddns-aws-s3
+delete security dynamic-address address-name wilddns-cdn
+```
+
+Apply matched the preview exactly: three of four `feed-name` entries and three
+of four `address-name` objects were removed. The surviving exception —
+`blocklist` / `wilddns-blocklist` — was **kept** because imported security
+policies referenced it. The three deleted objects were referenced by nothing, so
+SDC's imported view did not contain them, and deploying that view removed them.
+
+The predictor is not "is it security config" but **"is it reachable from a
+policy SDC imported."** Unreferenced objects under an SDC-owned hierarchy are
+deleted on the first deploy.
+
+### Workable co-management split
+
+Based on the live test above:
+
+| Config | Owner | Why |
+|---|---|---|
+| Interfaces, routing, `system`, management instance | CLI / NETCONF | Not modeled by SDC policy; SDC does not touch it |
+| Security policy, NAT | SDC | What SDC is for |
+| `security dynamic-address`, address book, other policy-adjacent objects | **SDC, or they get deleted** | Deleted unless referenced by an imported policy |
+
+The trap is the third row: it looks like device-local config, and it is silently
+in SDC's blast radius.
+
+### Warning surface
+
+The **preview diff is the only warning** and must be read before approval. This
+is exactly what the prepare → approve → apply gate exists to catch, and it
+worked in the test above. A deletion that appears in the preview and is approved
+proceeds as previewed.
+
+### Observed deploy mechanics
+
+SDC commits as user `sduser` over NETCONF using `commit confirmed` with a
+1-minute rollback, then confirms approximately 1 second later, tagging commits
+`EMS System Commit <uuid> EMS_REQ_ID:<uuid>`. A device that goes unreachable
+mid-deploy auto-reverts.
+
+### Open question
+
+Whether feed-server / dynamic-address config can be expressed **in** SDC so it
+survives deploys, or whether it must be re-applied out-of-band after every
+deploy, is unverified. Resolving it needs a tenant with the relevant SDC
+feature explored; do not answer it by inference.
+
 ## Persistence and recovery
 
 Set `changeset_state_file` to an absolute path on durable storage. If omitted,
