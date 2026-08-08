@@ -176,6 +176,78 @@ are almost all a uniform 5-op CRUD shape. Full listing:
 5. **Tenant scoping is real.** Bearer tokens in this server must carry a tenant
    scope, validated against `GET /api/v2/tenant/tenant-id` at startup.
 
+## Live-observed response shapes (2026-08-07)
+
+The OpenAPI spec's examples are placeholder `"string"` values, so actual field
+types and structures are invisible without a live tenant. A full read-tool sweep
+on 2026-08-07 surfaced four shape facts that break shared or typed models:
+
+### 1. `count` is an integer on some endpoints and a string on others
+
+```json
+list_sdc_firewall_policies -> "count": 1      (integer)
+list_sdc_devices           -> "count": 1      (integer)
+list_sdc_nat_policies      -> "count": "1"    (string)
+list_sdc_resources         -> "count": "7"    (string, addresses)
+                              "count": "241"  (string, services)
+```
+
+A shared list-envelope type with `count: u32` deserializes on firewall/devices
+and **fails** on NAT and resources. Do not introduce a shared envelope without
+normalizing `count` first.
+
+### 2. NAT uses `id`, firewall uses `uuid` — and the formats differ
+
+```json
+firewall item -> "uuid": "d4a4ed24-d895-490e-a803-93f4cec26808"   (UUID)
+NAT item      -> "id":   "51507252"                               (numeric string)
+```
+
+Sibling policy endpoints with different identifier field names *and* different
+identifier formats. Note `get_sdc_nat_policy` is nonetheless called with
+`policy_id="51507252"` and works — the tool argument is correctly generic, but
+any model assuming a UUID is wrong for NAT.
+
+### 3. An empty collection returns bare `{}`
+
+```json
+list_sdc_resources(resource=schedulers) -> {}
+list_sdc_devices  (empty tenant)        -> {}
+```
+
+Not `{"items":[],"count":0}`. There are no `items` or `count` keys at all. Any
+struct with required `items`/`count` fails on every empty collection — and an
+empty collection is the normal state of a fresh tenant, so this would be hit on
+day one.
+
+Handle it explicitly wherever a collection is deserialized: either deserialize
+as `Value` and normalize, or use `#[serde(default)]` on list fields and
+`Option<_>` on `count`.
+
+### 4. Per-device result field name differs between preview and deploy
+
+```json
+get_sdc_preview_device_result -> "config_diff":     "set security …"
+get_sdc_deploy_device_result  -> "deployed_config": "set security …"
+```
+
+Same conceptual content, different key. Currently harmless because
+`preview_device_result` and `deploy_device_result` return `Value` passthrough —
+but it is a trap for anyone typing them later. If the device-result endpoints
+are ever typed, model `config_diff` and `deployed_config` explicitly rather
+than aliasing them.
+
+Also observed: the deploy result message reads `"Selective deploy result
+retrieved successfully"`, indicating SDC serviced the deploy via the
+selective-deploy path.
+
+### What is not broken
+
+`JobStatus` and `DeviceStatusEntry` are typed and deserialized correctly against
+live preview *and* deploy responses, including `preview_id`/`deploy_id` being
+mutually exclusive with the unused one `null`. The shared-model choice there is
+validated.
+
 ## Still unverified
 
 Not answered by the spec; do not write code that assumes an answer:
