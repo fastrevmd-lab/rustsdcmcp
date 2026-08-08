@@ -1,0 +1,13 @@
+    Checking mecmcp-secret v0.8.0 (https://github.com/fastrevmd-lab/mecmcp?tag=v0.8.0#56b97f5d)
+    Checking ureq-proto v0.6.0
+    Checking utf8-zero v0.8.1
+    Checking mecmcp-auth v0.8.0 (https://github.com/fastrevmd-lab/mecmcp?tag=v0.8.0#56b97f5d)
+    Checking ureq v3.3.0
+    Checking mecmcp-audit v0.8.0 (https://github.com/fastrevmd-lab/mecmcp?tag=v0.8.0#56b97f5d)
+    Checking mecmcp-runtime v0.8.0 (https://github.com/fastrevmd-lab/mecmcp?tag=v0.8.0#56b97f5d)
+    Checking mecmcp-server v0.8.0 (https://github.com/fastrevmd-lab/mecmcp?tag=v0.8.0#56b97f5d)
+    Checking mecmcp-changeset v0.8.0 (https://github.com/fastrevmd-lab/mecmcp?tag=v0.8.0#56b97f5d)
+    Checking mecmcp-transport v0.8.0 (https://github.com/fastrevmd-lab/mecmcp?tag=v0.8.0#56b97f5d)
+    Checking rustsdcmcp-core v0.1.0 (/home/mharman/Projects/rustsdcmcp/crates/rustsdcmcp-core)
+    Checking rustsdcmcp v0.1.0 (/home/mharman/Projects/rustsdcmcp/crates/rustsdcmcp)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.90s
