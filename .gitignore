@@ -14,3 +14,7 @@ tokens.json
 *.key
 
 .DS_Store
+
+# Local cargo output captured while debugging; never a build input.
+test.log
+*.log
