@@ -247,6 +247,187 @@ impl SdcClient {
             .await
     }
 
+    /// List firewall policy rules with bounded pagination.
+    ///
+    /// `scope` must be `"global"` or `"zone"`.
+    pub async fn list_firewall_rules(
+        &self,
+        policy_uuid: &str,
+        scope: &str,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("policy_uuid", policy_uuid)?;
+        validate_atom("scope", scope)?;
+        self.list(
+            &[
+                "api",
+                "v1",
+                "policies",
+                "firewall",
+                policy_uuid,
+                scope,
+                "rules",
+            ],
+            page,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch one firewall policy rule by UUID.
+    ///
+    /// `scope` must be `"global"` or `"zone"`.
+    pub async fn get_firewall_rule(
+        &self,
+        policy_uuid: &str,
+        scope: &str,
+        rule_uuid: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("policy_uuid", policy_uuid)?;
+        validate_atom("scope", scope)?;
+        validate_atom("rule_uuid", rule_uuid)?;
+        self.get(
+            &[
+                "api",
+                "v1",
+                "policies",
+                "firewall",
+                policy_uuid,
+                scope,
+                "rules",
+                rule_uuid,
+            ],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// List firewall policy rule groups with bounded pagination.
+    ///
+    /// `scope` must be `"global"` or `"zone"`.
+    pub async fn list_firewall_rule_groups(
+        &self,
+        policy_uuid: &str,
+        scope: &str,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("policy_uuid", policy_uuid)?;
+        validate_atom("scope", scope)?;
+        self.list(
+            &[
+                "api",
+                "v1",
+                "policies",
+                "firewall",
+                policy_uuid,
+                scope,
+                "rule_groups",
+            ],
+            page,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch firewall policy rule hierarchy.
+    ///
+    /// `scope` must be `"global"` or `"zone"`.
+    ///
+    /// Note: The spec misspells this path segment as `heirarchy`.
+    pub async fn get_firewall_hierarchy(
+        &self,
+        policy_uuid: &str,
+        scope: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("policy_uuid", policy_uuid)?;
+        validate_atom("scope", scope)?;
+        self.get(
+            &[
+                "api",
+                "v1",
+                "policies",
+                "firewall",
+                policy_uuid,
+                scope,
+                "heirarchy",
+            ],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// List NAT policy rules with bounded pagination.
+    pub async fn list_nat_rules(
+        &self,
+        policy_id: &str,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("policy_id", policy_id)?;
+        self.list(
+            &["api", "v1", "policies", "nat", policy_id, "rules"],
+            page,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch one NAT policy rule by ID.
+    pub async fn get_nat_rule(
+        &self,
+        policy_id: &str,
+        rule_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("policy_id", policy_id)?;
+        validate_atom("rule_id", rule_id)?;
+        self.get(
+            &["api", "v1", "policies", "nat", policy_id, "rules", rule_id],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// List NAT policy rule groups with bounded pagination.
+    pub async fn list_nat_rule_groups(
+        &self,
+        policy_id: &str,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("policy_id", policy_id)?;
+        self.list(
+            &["api", "v1", "policies", "nat", policy_id, "rule_groups"],
+            page,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch NAT policy rule hierarchy.
+    ///
+    /// Note: Unlike firewall policies, NAT uses the correctly-spelled `hierarchy`.
+    pub async fn get_nat_hierarchy(
+        &self,
+        policy_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("policy_id", policy_id)?;
+        self.get(
+            &["api", "v1", "policies", "nat", policy_id, "hierarchy"],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
     /// List one allowlisted generic resource family.
     pub async fn list_resource(
         &self,

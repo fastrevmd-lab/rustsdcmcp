@@ -248,6 +248,22 @@ live preview *and* deploy responses, including `preview_id`/`deploy_id` being
 mutually exclusive with the unused one `null`. The shared-model choice there is
 validated.
 
+### 5. Firewall and NAT policy `{scope}` parameter values (2026-08-08)
+
+The firewall and NAT rule endpoints include a `{scope}` path parameter. The
+OpenAPI spec describes it as: **"Scope: 'global' or 'zone'."**
+
+These are the two valid values:
+- `global` — rules applying globally across the policy
+- `zone` — rules scoped to specific security zones
+
+Also confirmed: the spec misspells the firewall hierarchy path segment as
+`heirarchy`, while NAT uses the correct spelling `hierarchy`:
+```
+/api/v1/policies/firewall/{policy_uuid}/{scope}/heirarchy    (misspelled)
+/api/v1/policies/nat/{policy_id}/hierarchy                   (correct)
+```
+
 ## Still unverified
 
 Not answered by the spec; do not write code that assumes an answer:
