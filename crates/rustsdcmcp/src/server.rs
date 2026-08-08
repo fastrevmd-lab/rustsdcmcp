@@ -40,6 +40,8 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "get_sdc_firewall_policy",
     "list_sdc_nat_policies",
     "get_sdc_nat_policy",
+    "list_sdc_nat_pools",
+    "get_sdc_nat_pool",
     "list_sdc_resources",
     "get_sdc_resource",
     "get_sdc_preview_status",
@@ -185,6 +187,16 @@ pub struct PolicyArgs {
     pub tenant: String,
     /// Policy UUID.
     pub policy_id: String,
+}
+
+/// Arguments for one NAT pool.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NatPoolArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// NAT pool ID.
+    pub pool_id: String,
 }
 
 /// Arguments for a generic allowlisted collection.
@@ -519,6 +531,60 @@ impl SdcHandler {
             self.client
                 .get_nat_policy(&args.policy_id, &cancellation)
                 .await,
+        ))
+    }
+
+    #[tool(
+        name = "list_sdc_nat_pools",
+        description = "List SDC NAT pools with bounded pagination."
+    )]
+    async fn list_sdc_nat_pools(
+        &self,
+        Parameters(args): Parameters<ListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_sdc_nat_pools",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "list_sdc_nat_pools", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
+            .map_err(SdcError::from);
+        let result = match result {
+            Ok(page) => self.client.list_nat_pools(page, &cancellation).await,
+            Err(error) => Err(error),
+        };
+        Ok(finish(audit, result))
+    }
+
+    #[tool(name = "get_sdc_nat_pool", description = "Get one SDC NAT pool by ID.")]
+    async fn get_sdc_nat_pool(
+        &self,
+        Parameters(args): Parameters<NatPoolArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "get_sdc_nat_pool",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "get_sdc_nat_pool", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish(
+            audit,
+            self.client.get_nat_pool(&args.pool_id, &cancellation).await,
         ))
     }
 

@@ -333,6 +333,27 @@ impl SdcClient {
             .await
     }
 
+    /// List NAT pools with bounded pagination.
+    pub async fn list_nat_pools(
+        &self,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        self.list(&["api", "v1", "nat_pools"], page, cancellation)
+            .await
+    }
+
+    /// Fetch one NAT pool by ID.
+    pub async fn get_nat_pool(
+        &self,
+        pool_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("pool_id", pool_id)?;
+        self.get(&["api", "v1", "nat_pools", pool_id], &[], cancellation)
+            .await
+    }
+
     /// Read a preview job without polling.
     pub async fn preview_status(
         &self,
