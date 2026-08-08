@@ -3,7 +3,6 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-mod compat;
 mod http_transport;
 mod server;
 

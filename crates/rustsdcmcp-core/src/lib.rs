@@ -6,7 +6,6 @@
 mod catalog;
 mod change;
 mod client;
-mod compat;
 mod config;
 mod models;
 mod object_write;

@@ -1,15 +1,12 @@
 //! SDC parameters for the shared MCP Streamable HTTP transport.
 
-use crate::{
-    SdcHandler, WRITE_TOOLS,
-    compat::preflight::{MalformedArgumentsPolicy, TargetField, ToolScopePreflight},
-};
+use crate::{SdcHandler, WRITE_TOOLS};
 use anyhow::{Context, Result};
 use mecmcp_auth::{BearerSyntax, CallerCtx, NoGrant, TokenStoreFile};
 use mecmcp_transport::{
     BearerAuthenticator, BearerBoundary, BearerResponseProfile, HostOriginPolicy, HttpShutdown,
-    HttpTransportConfig, LimitsConfig, TransportIdentity, build_streamable_http_router,
-    serve_router,
+    HttpTransportConfig, LimitsConfig, MalformedArgumentsPolicy, TargetField, ToolScopePreflight,
+    TransportIdentity, build_streamable_http_router, serve_router,
 };
 use std::{net::SocketAddr, sync::Arc};
 use tokio_util::sync::CancellationToken;

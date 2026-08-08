@@ -23,6 +23,7 @@ url.workspace = true
 zeroize.workspace = true
 mecmcp-audit.workspace = true
 mecmcp-changeset.workspace = true
+mecmcp-server.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
