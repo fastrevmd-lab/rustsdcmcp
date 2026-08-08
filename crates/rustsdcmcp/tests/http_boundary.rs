@@ -9,7 +9,9 @@ use axum::{
     body::Body,
     http::{Request, StatusCode, header},
 };
-use mecmcp_auth::{ActorType, BearerSyntax, CallerCtx, NoGrant, ScopeSet};
+use mecmcp_auth::{
+    ActorType, BearerSyntax, CallerCtx, KnownNames, NoGrant, ScopeSet, TokenStoreFile,
+};
 use mecmcp_transport::{
     BearerAuthenticator, BearerBoundary, BearerResponseProfile, HostOriginPolicy,
     HttpTransportConfig, LimitsConfig, TransportIdentity, build_streamable_http_router,
@@ -18,7 +20,7 @@ use rmcp::{
     ServerHandler,
     model::{Implementation, ServerCapabilities, ServerInfo},
 };
-use rustsdcmcp::{SdcHandler, build_http_router};
+use rustsdcmcp::{KNOWN_TOOLS, SdcHandler, build_http_router};
 use rustsdcmcp_core::{ChangeManager, SdcClient, SdcConfig};
 use std::{sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
@@ -77,6 +79,20 @@ fn router_with_limit(max_request_body_bytes: usize) -> Router {
 /// The handler is never dispatched to: every assertion below is answered by the
 /// host/origin guard, which sits in front of it.
 fn sdc_router(allowed_hosts: Vec<String>, allowed_origins: Vec<String>) -> Router {
+    sdc_router_inner(allowed_hosts, allowed_origins, None)
+}
+
+/// Same handler, but with a bearer token store installed so the scope preflight
+/// has a caller to check against.
+fn sdc_router_with_auth(store: Option<Arc<TokenStoreFile<NoGrant>>>) -> Router {
+    sdc_router_inner(Vec::new(), Vec::new(), store)
+}
+
+fn sdc_router_inner(
+    allowed_hosts: Vec<String>,
+    allowed_origins: Vec<String>,
+    token_store: Option<Arc<TokenStoreFile<NoGrant>>>,
+) -> Router {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let config: SdcConfig = serde_json::from_value(serde_json::json!({
         "version": 1,
@@ -100,7 +116,7 @@ fn sdc_router(allowed_hosts: Vec<String>, allowed_origins: Vec<String>) -> Route
     let handler = SdcHandler::new(Arc::<str>::from("test"), client, changes);
     let (router, _shutdown) = build_http_router(
         handler,
-        None,
+        token_store,
         allowed_hosts,
         allowed_origins,
         LimitsConfig::default(),
@@ -215,4 +231,69 @@ async fn router_rejects_body_over_limit_before_rmcp_dispatch() {
         .await
         .expect("response");
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+/// A token scoped to one tenant must be refused when it names another.
+///
+/// This is the scope preflight doing its job, and until now nothing in this
+/// repo asserted it. `compat/preflight.rs` carried its own tests, and deleting
+/// that module in favour of `mecmcp_transport::ToolScopePreflight` took them
+/// with it — leaving the wiring untested. Verified by removing
+/// `.with_preflight(preflight)` from `build_http_router`: the whole suite stayed
+/// green, which is exactly the gap this closes.
+///
+/// mecmcp's own tests prove the generic preflight refuses out-of-scope targets.
+/// What only this repo can prove is that it is wired here with SDC's target
+/// field — `tenant` — so a mis-wired field name is caught rather than silently
+/// admitting everything.
+#[tokio::test]
+async fn out_of_scope_tenant_is_refused() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let token_path = dir.path().join("tokens.json");
+
+    let known_tenants = ["permitted".to_owned()];
+    let known = KnownNames {
+        devices: Some(&known_tenants),
+        tools: KNOWN_TOOLS,
+    };
+    let secret = TokenStoreFile::<NoGrant>::add(
+        &token_path,
+        "scoped",
+        ScopeSet::Allowlist(vec!["permitted".to_owned()]),
+        ScopeSet::Wildcard,
+        &known,
+    )
+    .expect("token add")
+    .expose_secret()
+    .to_owned();
+    let store = Arc::new(TokenStoreFile::<NoGrant>::load(&token_path).expect("load token store"));
+
+    let router = sdc_router_with_auth(Some(store));
+
+    let call = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {"name": "list_sdc_devices", "arguments": {"tenant": "forbidden", "size": 10}}
+    });
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header(header::HOST, "localhost")
+                .header(header::AUTHORIZATION, format!("Bearer {secret}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&call).expect("body")))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(
+        response.status(),
+        StatusCode::FORBIDDEN,
+        "a token scoped to 'permitted' must not reach a tool call naming 'forbidden'"
+    );
 }

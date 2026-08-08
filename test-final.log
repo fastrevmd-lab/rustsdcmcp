@@ -1,0 +1,99 @@
+
+running 4 tests
+test server::tests::unauthenticated_paths_are_read_only ... ok
+test server::tests::authenticated_calls_require_exact_tool_and_tenant_scopes ... ok
+test server::tests::every_write_tool_is_a_registered_tool ... ok
+test server::tests::known_tools_matches_the_registered_router_exactly ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 4 tests
+test tests::a_listener_with_no_authentication_decision_is_refused ... ok
+test tests::a_tokens_file_alone_selects_an_authenticated_listener ... ok
+test tests::a_tokens_file_is_never_silently_dropped_by_allow_no_auth ... ok
+test tests::allow_no_auth_alone_selects_the_unauthenticated_listener ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test router_requires_bearer ... ok
+test router_rejects_body_over_limit_before_rmcp_dispatch ... ok
+test portless_allowed_host_matches_any_port ... ok
+test unlisted_host_is_rejected ... ok
+test loopback_stays_allowed_when_a_host_is_added ... ok
+test origin_allowlist_is_passed_through ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+
+running 4 tests
+test rejects_rogue_mecmcp_package_from_another_source ... ok
+test all_mecmcp_crates_use_one_released_tag_and_commit ... ok
+test rejects_any_non_exact_mecmcp_package_set ... ok
+test rejects_noncanonical_toml_rogue_packages ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 3 tests
+test read_tools_remain_the_majority_of_the_surface ... ok
+test tool_registry_has_expected_unique_surface ... ok
+test write_tools_are_all_registered_and_named_for_their_lifecycle ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 20 tests
+test change::tests::a_prepared_object_write_rejects_a_body_the_client_would_refuse ... ok
+test change::tests::a_prepared_object_write_must_match_the_shape_of_its_action ... ok
+test change::tests::a_planned_object_write_can_be_released_because_nothing_was_written ... ok
+test client::tests::object_writes_reject_bodies_that_are_not_a_populated_object ... ok
+test client::tests::delete_resource_tolerates_an_empty_success_body ... ok
+test client::tests::path_parameters_remain_one_encoded_segment ... ok
+test client::tests::create_resource_posts_the_body_to_the_exact_collection_path ... ok
+test client::tests::update_resource_puts_the_body_to_the_exact_item_path ... ok
+test change::tests::object_write_validates_when_the_target_is_unchanged ... ok
+test client::tests::list_devices_sends_exact_auth_path_and_nonzero_page ... ok
+test client::tests::status_429_is_never_hidden_as_a_retryable_transport_error ... ok
+test change::tests::stage_still_rejects_a_tampered_envelope ... ok
+test client::tests::response_limit_is_enforced_while_streaming ... ok
+test change::tests::object_write_stage_rejects_a_tampered_envelope ... ok
+test change::tests::a_failed_pre_write_recheck_is_still_discardable ... ok
+test client::tests::object_writes_reject_identifiers_that_could_escape_the_collection ... ok
+test change::tests::object_write_refuses_a_target_that_drifted_since_prepare ... ok
+test change::tests::deployment_requires_preview_and_independent_approval ... ok
+test client::tests::process_shutdown_aborts_work_the_request_token_would_not ... ok
+test client::tests::cancelling_the_request_token_aborts_an_in_flight_call ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+
+running 7 tests
+test deployment_status_classifier_uses_only_documented_states ... ok
+test documented_statuses_round_trip_to_their_exact_wire_values ... ok
+test an_undocumented_status_is_preserved_rather_than_failing_the_read ... ok
+test page_size_zero_and_oversized_pages_are_refused ... ok
+test config_names_the_credential_variable_and_carries_no_field_for_its_value ... ok
+test preview_operation_matches_the_pinned_openapi_shape ... ok
+test a_credential_never_reaches_the_client_debug_representation ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 1 test
+test released_coordinator_reads_036_state_without_rewriting_or_waiver_output ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
