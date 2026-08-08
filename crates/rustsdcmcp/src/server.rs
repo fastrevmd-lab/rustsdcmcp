@@ -38,8 +38,16 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "get_sdc_device",
     "list_sdc_firewall_policies",
     "get_sdc_firewall_policy",
+    "list_sdc_firewall_rules",
+    "get_sdc_firewall_rule",
+    "list_sdc_firewall_rule_groups",
+    "get_sdc_firewall_hierarchy",
     "list_sdc_nat_policies",
     "get_sdc_nat_policy",
+    "list_sdc_nat_rules",
+    "get_sdc_nat_rule",
+    "list_sdc_nat_rule_groups",
+    "get_sdc_nat_hierarchy",
     "list_sdc_resources",
     "get_sdc_resource",
     "get_sdc_preview_status",
@@ -200,6 +208,118 @@ pub struct ResourceListArgs {
     pub from: u64,
     /// Explicit positive page size.
     pub size: u32,
+}
+
+/// Arguments for firewall policy rules list.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FirewallRulesListArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Policy UUID.
+    pub policy_uuid: String,
+    /// Scope: 'global' or 'zone'.
+    pub scope: String,
+    /// Zero-based offset.
+    #[serde(default)]
+    pub from: u64,
+    /// Explicit positive page size.
+    pub size: u32,
+}
+
+/// Arguments for one firewall policy rule.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FirewallRuleArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Policy UUID.
+    pub policy_uuid: String,
+    /// Scope: 'global' or 'zone'.
+    pub scope: String,
+    /// Rule UUID.
+    pub rule_uuid: String,
+}
+
+/// Arguments for firewall policy rule groups list.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FirewallRuleGroupsListArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Policy UUID.
+    pub policy_uuid: String,
+    /// Scope: 'global' or 'zone'.
+    pub scope: String,
+    /// Zero-based offset.
+    #[serde(default)]
+    pub from: u64,
+    /// Explicit positive page size.
+    pub size: u32,
+}
+
+/// Arguments for firewall policy hierarchy.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FirewallHierarchyArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Policy UUID.
+    pub policy_uuid: String,
+    /// Scope: 'global' or 'zone'.
+    pub scope: String,
+}
+
+/// Arguments for NAT policy rules list.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NatRulesListArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Policy ID.
+    pub policy_id: String,
+    /// Zero-based offset.
+    #[serde(default)]
+    pub from: u64,
+    /// Explicit positive page size.
+    pub size: u32,
+}
+
+/// Arguments for one NAT policy rule.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NatRuleArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Policy ID.
+    pub policy_id: String,
+    /// Rule ID.
+    pub rule_id: String,
+}
+
+/// Arguments for NAT policy rule groups list.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NatRuleGroupsListArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Policy ID.
+    pub policy_id: String,
+    /// Zero-based offset.
+    #[serde(default)]
+    pub from: u64,
+    /// Explicit positive page size.
+    pub size: u32,
+}
+
+/// Arguments for NAT policy hierarchy.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NatHierarchyArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Policy ID.
+    pub policy_id: String,
 }
 
 /// Arguments for one generic allowlisted resource.
@@ -518,6 +638,263 @@ impl SdcHandler {
             audit,
             self.client
                 .get_nat_policy(&args.policy_id, &cancellation)
+                .await,
+        ))
+    }
+
+    #[tool(
+        name = "list_sdc_firewall_rules",
+        description = "List firewall policy rules with bounded pagination. Scope must be 'global' or 'zone'."
+    )]
+    async fn list_sdc_firewall_rules(
+        &self,
+        Parameters(args): Parameters<FirewallRulesListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_sdc_firewall_rules",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "list_sdc_firewall_rules", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
+            .map_err(SdcError::from);
+        let result = match result {
+            Ok(page) => {
+                self.client
+                    .list_firewall_rules(&args.policy_uuid, &args.scope, page, &cancellation)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        Ok(finish(audit, result))
+    }
+
+    #[tool(
+        name = "get_sdc_firewall_rule",
+        description = "Get one firewall policy rule by UUID. Scope must be 'global' or 'zone'."
+    )]
+    async fn get_sdc_firewall_rule(
+        &self,
+        Parameters(args): Parameters<FirewallRuleArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "get_sdc_firewall_rule",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "get_sdc_firewall_rule", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish(
+            audit,
+            self.client
+                .get_firewall_rule(
+                    &args.policy_uuid,
+                    &args.scope,
+                    &args.rule_uuid,
+                    &cancellation,
+                )
+                .await,
+        ))
+    }
+
+    #[tool(
+        name = "list_sdc_firewall_rule_groups",
+        description = "List firewall policy rule groups with bounded pagination. Scope must be 'global' or 'zone'."
+    )]
+    async fn list_sdc_firewall_rule_groups(
+        &self,
+        Parameters(args): Parameters<FirewallRuleGroupsListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_sdc_firewall_rule_groups",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "list_sdc_firewall_rule_groups", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
+            .map_err(SdcError::from);
+        let result = match result {
+            Ok(page) => {
+                self.client
+                    .list_firewall_rule_groups(&args.policy_uuid, &args.scope, page, &cancellation)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        Ok(finish(audit, result))
+    }
+
+    #[tool(
+        name = "get_sdc_firewall_hierarchy",
+        description = "Get firewall policy rule hierarchy showing rule groups and ordering. Scope must be 'global' or 'zone'."
+    )]
+    async fn get_sdc_firewall_hierarchy(
+        &self,
+        Parameters(args): Parameters<FirewallHierarchyArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "get_sdc_firewall_hierarchy",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "get_sdc_firewall_hierarchy", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish(
+            audit,
+            self.client
+                .get_firewall_hierarchy(&args.policy_uuid, &args.scope, &cancellation)
+                .await,
+        ))
+    }
+
+    #[tool(
+        name = "list_sdc_nat_rules",
+        description = "List NAT policy rules with bounded pagination."
+    )]
+    async fn list_sdc_nat_rules(
+        &self,
+        Parameters(args): Parameters<NatRulesListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_sdc_nat_rules",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "list_sdc_nat_rules", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
+            .map_err(SdcError::from);
+        let result = match result {
+            Ok(page) => {
+                self.client
+                    .list_nat_rules(&args.policy_id, page, &cancellation)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        Ok(finish(audit, result))
+    }
+
+    #[tool(
+        name = "get_sdc_nat_rule",
+        description = "Get one NAT policy rule by ID."
+    )]
+    async fn get_sdc_nat_rule(
+        &self,
+        Parameters(args): Parameters<NatRuleArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "get_sdc_nat_rule",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "get_sdc_nat_rule", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish(
+            audit,
+            self.client
+                .get_nat_rule(&args.policy_id, &args.rule_id, &cancellation)
+                .await,
+        ))
+    }
+
+    #[tool(
+        name = "list_sdc_nat_rule_groups",
+        description = "List NAT policy rule groups with bounded pagination."
+    )]
+    async fn list_sdc_nat_rule_groups(
+        &self,
+        Parameters(args): Parameters<NatRuleGroupsListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_sdc_nat_rule_groups",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "list_sdc_nat_rule_groups", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
+            .map_err(SdcError::from);
+        let result = match result {
+            Ok(page) => {
+                self.client
+                    .list_nat_rule_groups(&args.policy_id, page, &cancellation)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        Ok(finish(audit, result))
+    }
+
+    #[tool(
+        name = "get_sdc_nat_hierarchy",
+        description = "Get NAT policy rule hierarchy showing rule groups and ordering."
+    )]
+    async fn get_sdc_nat_hierarchy(
+        &self,
+        Parameters(args): Parameters<NatHierarchyArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "get_sdc_nat_hierarchy",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "get_sdc_nat_hierarchy", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish(
+            audit,
+            self.client
+                .get_nat_hierarchy(&args.policy_id, &cancellation)
                 .await,
         ))
     }
