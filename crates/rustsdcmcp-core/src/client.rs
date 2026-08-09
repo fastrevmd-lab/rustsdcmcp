@@ -695,6 +695,106 @@ impl SdcClient {
         .await
     }
 
+    /// List CA certificates across all devices with bounded pagination.
+    pub async fn list_ca_certificates(
+        &self,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        self.list(
+            &["api", "v1", "devices", "ca_certificates"],
+            page,
+            cancellation,
+        )
+        .await
+    }
+
+    /// List local certificates across all devices with bounded pagination.
+    pub async fn list_local_certificates(
+        &self,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        self.list(
+            &["api", "v1", "devices", "local_certificates"],
+            page,
+            cancellation,
+        )
+        .await
+    }
+
+    /// List CA certificates for one device with bounded pagination.
+    pub async fn list_device_ca_certificates(
+        &self,
+        device_uuid: &str,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("device_uuid", device_uuid)?;
+        self.list(
+            &["api", "v1", "devices", device_uuid, "ca_certificates"],
+            page,
+            cancellation,
+        )
+        .await
+    }
+
+    /// List local certificates for one device with bounded pagination.
+    pub async fn list_device_local_certificates(
+        &self,
+        device_uuid: &str,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("device_uuid", device_uuid)?;
+        self.list(
+            &["api", "v1", "devices", device_uuid, "local_certificates"],
+            page,
+            cancellation,
+        )
+        .await
+    }
+
+    /// List licenses for one device with bounded pagination.
+    pub async fn list_licenses(
+        &self,
+        device_uuid: &str,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("device_uuid", device_uuid)?;
+        self.list(
+            &["api", "v1", "devices", device_uuid, "licenses"],
+            page,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch one license by device UUID and license UUID.
+    pub async fn get_license(
+        &self,
+        device_uuid: &str,
+        license_uuid: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("device_uuid", device_uuid)?;
+        validate_atom("license_uuid", license_uuid)?;
+        self.get(
+            &[
+                "api",
+                "v1",
+                "devices",
+                device_uuid,
+                "licenses",
+                license_uuid,
+            ],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
     /// Create a new NAT policy.
     ///
     /// # Errors
@@ -1820,5 +1920,210 @@ mod tests {
                 "body {body} produced {error:?}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn list_ca_certificates_sends_exact_auth_path_and_page() {
+        let app = Router::new().route(
+            "/api/v1/devices/ca_certificates",
+            get(
+                |headers: HeaderMap, Query(query): Query<HashMap<String, String>>| async move {
+                    assert_eq!(
+                        headers
+                            .get("x-api-key")
+                            .and_then(|value| value.to_str().ok()),
+                        Some("test-secret")
+                    );
+                    assert_eq!(query.get("from").map(String::as_str), Some("0"));
+                    assert_eq!(query.get("size").map(String::as_str), Some("10"));
+                    Json(serde_json::json!({"items": [], "count": 0}))
+                },
+            ),
+        );
+        let (base_url, server) = serve(app).await;
+        let result = client(base_url, 4096)
+            .list_ca_certificates(
+                ListRequest::new(0, 10, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("list succeeds");
+        assert_eq!(result["count"], 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn list_local_certificates_sends_exact_auth_path_and_page() {
+        let app = Router::new().route(
+            "/api/v1/devices/local_certificates",
+            get(
+                |headers: HeaderMap, Query(query): Query<HashMap<String, String>>| async move {
+                    assert_eq!(
+                        headers
+                            .get("x-api-key")
+                            .and_then(|value| value.to_str().ok()),
+                        Some("test-secret")
+                    );
+                    assert_eq!(query.get("from").map(String::as_str), Some("0"));
+                    assert_eq!(query.get("size").map(String::as_str), Some("10"));
+                    Json(serde_json::json!({"items": [], "count": 0}))
+                },
+            ),
+        );
+        let (base_url, server) = serve(app).await;
+        let result = client(base_url, 4096)
+            .list_local_certificates(
+                ListRequest::new(0, 10, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("list succeeds");
+        assert_eq!(result["count"], 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn list_device_ca_certificates_sends_device_uuid_in_path() {
+        let app = Router::new().route(
+            "/api/v1/devices/{device_uuid}/ca_certificates",
+            get(
+                |axum::extract::Path(device_uuid): axum::extract::Path<String>,
+                 Query(query): Query<HashMap<String, String>>| async move {
+                    assert_eq!(device_uuid, "dev-123");
+                    assert_eq!(query.get("from").map(String::as_str), Some("0"));
+                    assert_eq!(query.get("size").map(String::as_str), Some("5"));
+                    Json(serde_json::json!({"items": [], "count": 0}))
+                },
+            ),
+        );
+        let (base_url, server) = serve(app).await;
+        let result = client(base_url, 4096)
+            .list_device_ca_certificates(
+                "dev-123",
+                ListRequest::new(0, 5, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("list succeeds");
+        assert_eq!(result["count"], 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn list_device_local_certificates_sends_device_uuid_in_path() {
+        let app = Router::new().route(
+            "/api/v1/devices/{device_uuid}/local_certificates",
+            get(
+                |axum::extract::Path(device_uuid): axum::extract::Path<String>,
+                 Query(query): Query<HashMap<String, String>>| async move {
+                    assert_eq!(device_uuid, "dev-456");
+                    assert_eq!(query.get("from").map(String::as_str), Some("0"));
+                    assert_eq!(query.get("size").map(String::as_str), Some("5"));
+                    Json(serde_json::json!({"items": [], "count": 0}))
+                },
+            ),
+        );
+        let (base_url, server) = serve(app).await;
+        let result = client(base_url, 4096)
+            .list_device_local_certificates(
+                "dev-456",
+                ListRequest::new(0, 5, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("list succeeds");
+        assert_eq!(result["count"], 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn list_licenses_sends_device_uuid_in_path() {
+        let app = Router::new().route(
+            "/api/v1/devices/{device_uuid}/licenses",
+            get(
+                |axum::extract::Path(device_uuid): axum::extract::Path<String>,
+                 Query(query): Query<HashMap<String, String>>| async move {
+                    assert_eq!(device_uuid, "dev-789");
+                    assert_eq!(query.get("from").map(String::as_str), Some("0"));
+                    assert_eq!(query.get("size").map(String::as_str), Some("10"));
+                    Json(serde_json::json!({"items": [], "count": 0}))
+                },
+            ),
+        );
+        let (base_url, server) = serve(app).await;
+        let result = client(base_url, 4096)
+            .list_licenses(
+                "dev-789",
+                ListRequest::new(0, 10, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("list succeeds");
+        assert_eq!(result["count"], 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn get_license_sends_both_uuids_in_path() {
+        let app = Router::new().route(
+            "/api/v1/devices/{device_uuid}/licenses/{license_uuid}",
+            get(
+                |axum::extract::Path((device_uuid, license_uuid)): axum::extract::Path<(
+                    String,
+                    String,
+                )>| async move {
+                    assert_eq!(device_uuid, "dev-abc");
+                    assert_eq!(license_uuid, "lic-xyz");
+                    Json(serde_json::json!({
+                        "uuid": "lic-xyz",
+                        "name": "test-license",
+                        "state": "valid"
+                    }))
+                },
+            ),
+        );
+        let (base_url, server) = serve(app).await;
+        let result = client(base_url, 4096)
+            .get_license("dev-abc", "lic-xyz", &CancellationToken::new())
+            .await
+            .expect("get succeeds");
+        assert_eq!(result["uuid"], "lic-xyz");
+        assert_eq!(result["name"], "test-license");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn license_and_certificate_methods_validate_identifiers() {
+        let sdc = client(
+            Url::parse("https://example.invalid/").expect("test URL"),
+            1024,
+        );
+        // Empty device_uuid is refused
+        let error = sdc
+            .list_device_ca_certificates(
+                "",
+                ListRequest::new(0, 10, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect_err("empty device_uuid must be refused");
+        assert!(matches!(
+            error,
+            SdcError::InvalidIdentifier {
+                field: "device_uuid"
+            }
+        ));
+
+        // Control character in license_uuid is refused
+        let error = sdc
+            .get_license("dev-1", "lic\n123", &CancellationToken::new())
+            .await
+            .expect_err("license_uuid with control char must be refused");
+        assert!(matches!(
+            error,
+            SdcError::InvalidIdentifier {
+                field: "license_uuid"
+            }
+        ));
     }
 }
