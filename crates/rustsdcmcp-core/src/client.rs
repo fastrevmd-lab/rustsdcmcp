@@ -538,6 +538,95 @@ impl SdcClient {
             .await
     }
 
+    /// Create a new firewall policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the body is not a bounded JSON object, or when
+    /// the SDC request fails.
+    pub async fn create_firewall_policy(
+        &self,
+        body: &Value,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_object_body(body)?;
+        self.send_write(
+            Method::POST,
+            &["api", "v1", "policies", "firewall"],
+            Some(body),
+            cancellation,
+        )
+        .await
+    }
+
+    /// Replace an existing firewall policy by UUID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the UUID or body is invalid, or when the SDC
+    /// request fails.
+    pub async fn update_firewall_policy(
+        &self,
+        uuid: &str,
+        body: &Value,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("uuid", uuid)?;
+        validate_object_body(body)?;
+        self.send_write(
+            Method::PUT,
+            &["api", "v1", "policies", "firewall", uuid],
+            Some(body),
+            cancellation,
+        )
+        .await
+    }
+
+    /// Delete an existing firewall policy by UUID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the UUID is invalid or when the SDC request
+    /// fails.
+    pub async fn delete_firewall_policy(
+        &self,
+        uuid: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("uuid", uuid)?;
+        self.send_write(
+            Method::DELETE,
+            &["api", "v1", "policies", "firewall", uuid],
+            None,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch the operational state of a firewall policy by UUID.
+    ///
+    /// Returns policy deployment state and optionally per-device states when
+    /// `include_assigned_devices` is true.
+    pub async fn get_firewall_policy_state(
+        &self,
+        policy_uuid: &str,
+        include_assigned_devices: bool,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("policy_uuid", policy_uuid)?;
+        let query = if include_assigned_devices {
+            vec![("include_assigned_devices", "true")]
+        } else {
+            vec![]
+        };
+        self.get(
+            &["api", "v1", "policies", "firewall", policy_uuid, "state"],
+            &query,
+            cancellation,
+        )
+        .await
+    }
+
     /// Read a preview job without polling.
     pub async fn preview_status(
         &self,
