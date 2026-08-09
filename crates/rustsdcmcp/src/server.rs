@@ -57,6 +57,12 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "list_sdc_tunnels",
     "get_sdc_tunnel",
     "get_sdc_tunnel_count",
+    "list_sdc_ca_certificates",
+    "list_sdc_local_certificates",
+    "list_sdc_device_ca_certificates",
+    "list_sdc_device_local_certificates",
+    "list_sdc_licenses",
+    "get_sdc_license",
     "get_sdc_preview_status",
     "get_sdc_deploy_status",
     "get_sdc_preview_device_result",
@@ -255,6 +261,61 @@ pub struct DeviceArgs {
     pub tenant: String,
     /// Device UUID.
     pub device_uuid: String,
+}
+
+/// Arguments for device certificate list.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceCertificateListArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Device UUID.
+    pub device_uuid: String,
+    /// Zero-based offset.
+    #[serde(default)]
+    pub from: u64,
+    /// Explicit positive page size.
+    pub size: u32,
+}
+
+/// Arguments for device license list.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceLicenseListArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Device UUID.
+    pub device_uuid: String,
+    /// Zero-based offset.
+    #[serde(default)]
+    pub from: u64,
+    /// Explicit positive page size.
+    pub size: u32,
+}
+
+/// Arguments for one license.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LicenseArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Device UUID.
+    pub device_uuid: String,
+    /// License UUID.
+    pub license_uuid: String,
+}
+
+/// Arguments for tenant-wide certificate list.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CertificateListArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Zero-based offset.
+    #[serde(default)]
+    pub from: u64,
+    /// Explicit positive page size.
+    pub size: u32,
 }
 
 /// Arguments for one policy.
@@ -1107,6 +1168,199 @@ impl SdcHandler {
         Ok(finish(
             audit,
             self.client.get_nat_pool(&args.pool_id, &cancellation).await,
+        ))
+    }
+
+    #[tool(
+        name = "list_sdc_ca_certificates",
+        description = "List CA certificates across all devices with bounded pagination."
+    )]
+    async fn list_sdc_ca_certificates(
+        &self,
+        Parameters(args): Parameters<CertificateListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_sdc_ca_certificates",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "list_sdc_ca_certificates", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
+            .map_err(SdcError::from);
+        let result = match result {
+            Ok(page) => self.client.list_ca_certificates(page, &cancellation).await,
+            Err(error) => Err(error),
+        };
+        Ok(finish(audit, result))
+    }
+
+    #[tool(
+        name = "list_sdc_local_certificates",
+        description = "List local certificates across all devices with bounded pagination."
+    )]
+    async fn list_sdc_local_certificates(
+        &self,
+        Parameters(args): Parameters<CertificateListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_sdc_local_certificates",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "list_sdc_local_certificates", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
+            .map_err(SdcError::from);
+        let result = match result {
+            Ok(page) => {
+                self.client
+                    .list_local_certificates(page, &cancellation)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        Ok(finish(audit, result))
+    }
+
+    #[tool(
+        name = "list_sdc_device_ca_certificates",
+        description = "List CA certificates for one device with bounded pagination."
+    )]
+    async fn list_sdc_device_ca_certificates(
+        &self,
+        Parameters(args): Parameters<DeviceCertificateListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_sdc_device_ca_certificates",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "list_sdc_device_ca_certificates", &args.tenant)
+        {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
+            .map_err(SdcError::from);
+        let result = match result {
+            Ok(page) => {
+                self.client
+                    .list_device_ca_certificates(&args.device_uuid, page, &cancellation)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        Ok(finish(audit, result))
+    }
+
+    #[tool(
+        name = "list_sdc_device_local_certificates",
+        description = "List local certificates for one device with bounded pagination."
+    )]
+    async fn list_sdc_device_local_certificates(
+        &self,
+        Parameters(args): Parameters<DeviceCertificateListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_sdc_device_local_certificates",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) =
+            self.authorize(caller, "list_sdc_device_local_certificates", &args.tenant)
+        {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
+            .map_err(SdcError::from);
+        let result = match result {
+            Ok(page) => {
+                self.client
+                    .list_device_local_certificates(&args.device_uuid, page, &cancellation)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        Ok(finish(audit, result))
+    }
+
+    #[tool(
+        name = "list_sdc_licenses",
+        description = "List licenses for one device with bounded pagination."
+    )]
+    async fn list_sdc_licenses(
+        &self,
+        Parameters(args): Parameters<DeviceLicenseListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_sdc_licenses",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "list_sdc_licenses", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
+            .map_err(SdcError::from);
+        let result = match result {
+            Ok(page) => {
+                self.client
+                    .list_licenses(&args.device_uuid, page, &cancellation)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        Ok(finish(audit, result))
+    }
+
+    #[tool(
+        name = "get_sdc_license",
+        description = "Get one license by device UUID and license UUID."
+    )]
+    async fn get_sdc_license(
+        &self,
+        Parameters(args): Parameters<LicenseArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(caller, "get_sdc_license", "read", vec![args.tenant.clone()]);
+        if let Err(error) = self.authorize(caller, "get_sdc_license", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish(
+            audit,
+            self.client
+                .get_license(&args.device_uuid, &args.license_uuid, &cancellation)
+                .await,
         ))
     }
 

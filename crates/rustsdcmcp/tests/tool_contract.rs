@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 
 #[test]
 fn tool_registry_has_expected_unique_surface() {
-    // 31 reads / 9 writes: #28 added 5 IPsec/tunnel reads.
-    assert_eq!(KNOWN_TOOLS.len(), 40);
+    // 37 reads / 9 writes: #32 added 6 license/certificate reads.
+    assert_eq!(KNOWN_TOOLS.len(), 46);
     assert_eq!(
         KNOWN_TOOLS.iter().copied().collect::<BTreeSet<_>>().len(),
         KNOWN_TOOLS.len()
