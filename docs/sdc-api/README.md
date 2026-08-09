@@ -248,7 +248,28 @@ live preview *and* deploy responses, including `preview_id`/`deploy_id` being
 mutually exclusive with the unused one `null`. The shared-model choice there is
 validated.
 
-### 5. Firewall and NAT policy `{scope}` parameter values (2026-08-08)
+### 5. Device sync direction is unconfirmed (2026-08-08)
+
+`POST /api/v1/devices/sync` (`BulkSyncDevices`) can operate in one of two
+directions:
+
+1. **Import device config into SDC** — reads the device's running config and
+   updates SDC's model to match it (safe)
+2. **Push SDC's model to the device** — overwrites device config with SDC's
+   view, deleting anything SDC does not model (hazardous)
+
+The OpenAPI spec does not state which direction it operates in. Confirming this
+requires executing a sync against a live tenant and observing whether config
+appears or disappears. That test is deferred because the production tenant
+already experienced one such incident: #23 documented a policy deploy that
+deleted `security dynamic-address` config off a real vSRX because SDC's policy
+model does not represent dynamic-address feeds.
+
+Until the sync direction is confirmed, `BulkSyncDevices` and `GetSyncStatus`
+remain unimplemented. An operator with a disposable test tenant can close this
+by running one sync and observing whether unmodeled device config survives.
+
+### 6. Firewall and NAT policy `{scope}` parameter values (2026-08-08)
 
 The firewall and NAT rule endpoints include a `{scope}` path parameter. The
 OpenAPI spec describes it as: **"Scope: 'global' or 'zone'."**
