@@ -1807,4 +1807,198 @@ mod tests {
         assert!(report.valid && report.target_unchanged);
         server.abort();
     }
+
+    #[tokio::test]
+    async fn license_write_refuses_drift_through_full_prepare_path() {
+        // This tests the PREPARE layer: that prepare_license_write reads the
+        // current state and binds it into the digest, so apply can detect drift.
+        // The license_write.rs tests verify the transaction machinery given a
+        // populated before; this tests that prepare actually populates it.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        // Stub the license listing endpoint to return initial state at prepare time
+        let initial_state = Arc::new(std::sync::Mutex::new(json!({
+            "items": [{"uuid": "lic-1", "name": "initial"}],
+            "count": 1
+        })));
+        let state_for_route = initial_state.clone();
+
+        let app = Router::new().route(
+            "/api/v1/devices/device-123/licenses",
+            get(move || {
+                let state = state_for_route.lock().expect("test mutex").clone();
+                async move { Json(state) }
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        let client =
+            SdcClient::from_test_parts(base_url.clone(), "test-secret".to_owned(), 64 * 1024, 100);
+        let manager = ChangeManager::load(
+            client.clone(),
+            "tenant-a",
+            base_url.to_string(),
+            None,
+            Duration::from_secs(60),
+        )
+        .expect("change manager");
+        let cancellation = CancellationToken::new();
+
+        // Call the real prepare_license_write - this must read and bind the initial state
+        let prepared = manager
+            .prepare_license_write(
+                "alice".to_owned(),
+                crate::LicenseWriteOperation::InstallLicense,
+                "device-123".to_owned(),
+                json!({"license_key": "NEW-KEY"}),
+                &cancellation,
+            )
+            .await
+            .expect("prepare");
+
+        // The prepared change MUST have captured the observed license state,
+        // not Value::Null. This is what binds into the plan digest.
+        assert!(
+            !prepared.prepared_change.before().is_null(),
+            "prepare must read and bind the actual license state, not Null"
+        );
+        assert_eq!(
+            prepared.prepared_change.before()["items"][0]["uuid"],
+            "lic-1",
+            "prepare must capture the exact observed state"
+        );
+
+        // Now drift the state - someone else added a license
+        *initial_state.lock().expect("test mutex") = json!({
+            "items": [
+                {"uuid": "lic-1", "name": "initial"},
+                {"uuid": "lic-2", "name": "added-by-someone-else"}
+            ],
+            "count": 2
+        });
+
+        // Try to validate - must refuse because the state drifted
+        let transaction = crate::SdcLicenseTransaction::new(
+            client,
+            prepared.prepared_change.plan_digest().to_owned(),
+            cancellation.clone(),
+        );
+        let staged = transaction
+            .stage(std::slice::from_ref(&prepared.prepared_change))
+            .await
+            .expect("stages");
+
+        let error = transaction
+            .validate(&staged)
+            .await
+            .expect_err("a drifted license state must refuse");
+        assert!(
+            matches!(&error, SdcError::TargetDrifted),
+            "unexpected error: {error:?}"
+        );
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn certificate_delete_refuses_drift_through_full_prepare_path() {
+        // DeleteCertificate is the sharp case: drift means deleting the wrong cert.
+        // This must go through the real prepare path to prove it reads both lists.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let ca_state = Arc::new(std::sync::Mutex::new(json!({
+            "items": [{"uuid": "ca-1", "name": "original-ca"}],
+            "count": 1
+        })));
+        let local_state = Arc::new(std::sync::Mutex::new(json!({
+            "items": [{"uuid": "local-1", "name": "original-local"}],
+            "count": 1
+        })));
+
+        let ca_for_route = ca_state.clone();
+        let local_for_route = local_state.clone();
+
+        let app = Router::new()
+            .route(
+                "/api/v1/devices/device-456/ca_certificates",
+                get(move || {
+                    let state = ca_for_route.lock().expect("test mutex").clone();
+                    async move { Json(state) }
+                }),
+            )
+            .route(
+                "/api/v1/devices/device-456/local_certificates",
+                get(move || {
+                    let state = local_for_route.lock().expect("test mutex").clone();
+                    async move { Json(state) }
+                }),
+            );
+
+        let (base_url, server) = serve(app).await;
+        let client =
+            SdcClient::from_test_parts(base_url.clone(), "test-secret".to_owned(), 64 * 1024, 100);
+        let manager = ChangeManager::load(
+            client.clone(),
+            "tenant-a",
+            base_url.to_string(),
+            None,
+            Duration::from_secs(60),
+        )
+        .expect("change manager");
+        let cancellation = CancellationToken::new();
+
+        // Prepare a certificate deletion - reads both CA and local cert lists
+        let prepared = manager
+            .prepare_license_write(
+                "alice".to_owned(),
+                crate::LicenseWriteOperation::DeleteCertificate,
+                "device-456".to_owned(),
+                json!({"certificate_id": "ca-1"}),
+                &cancellation,
+            )
+            .await
+            .expect("prepare");
+
+        // The prepared change MUST have captured both certificate lists.
+        // DeleteCertificate reads both CA and local certs since either could be deleted.
+        assert!(
+            !prepared.prepared_change.before().is_null(),
+            "prepare must read certificate state, not Null"
+        );
+        assert!(
+            prepared.prepared_change.before()["ca_certificates"].is_object(),
+            "prepare must read CA certificates"
+        );
+        assert!(
+            prepared.prepared_change.before()["local_certificates"].is_object(),
+            "prepare must read local certificates"
+        );
+
+        // Drift: the CA cert was replaced between prepare and apply
+        *ca_state.lock().expect("test mutex") = json!({
+            "items": [{"uuid": "ca-2", "name": "replaced-by-someone-else"}],
+            "count": 1
+        });
+
+        // Try to validate - must refuse to prevent deleting the replacement
+        let transaction = crate::SdcLicenseTransaction::new(
+            client,
+            prepared.prepared_change.plan_digest().to_owned(),
+            cancellation,
+        );
+        let staged = transaction
+            .stage(std::slice::from_ref(&prepared.prepared_change))
+            .await
+            .expect("stages");
+
+        let error = transaction
+            .validate(&staged)
+            .await
+            .expect_err("drifted certificate state must refuse deletion");
+        assert!(
+            matches!(&error, SdcError::TargetDrifted),
+            "unexpected error: {error:?}"
+        );
+
+        server.abort();
+    }
 }
