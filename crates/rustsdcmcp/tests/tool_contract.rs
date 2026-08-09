@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 #[test]
 fn tool_registry_has_expected_unique_surface() {
-    assert_eq!(KNOWN_TOOLS.len(), 30);
+    assert_eq!(KNOWN_TOOLS.len(), 32);
     assert_eq!(
         KNOWN_TOOLS.iter().copied().collect::<BTreeSet<_>>().len(),
         KNOWN_TOOLS.len()
@@ -14,8 +14,10 @@ fn tool_registry_has_expected_unique_surface() {
         WRITE_TOOLS.iter().copied().collect::<BTreeSet<_>>(),
         BTreeSet::from([
             "apply_sdc_change_set",
+            "apply_sdc_nat_write",
             "apply_sdc_object_write",
             "approve_sdc_change_set",
+            "prepare_sdc_nat_write",
             "prepare_sdc_object_write",
             "prepare_sdc_policy_deploy",
         ])

@@ -1,9 +1,9 @@
 //! SDC adapter for the shared preview-bound, two-person change lifecycle.
 
 use crate::{
-    DeployRequest, JobStatus, ObjectValidationReport, ObjectWriteAction, PolicyOperation,
-    ResourceKind, SdcClient, SdcError, SdcObjectTransaction, SdcPreparedChange,
-    SdcPreparedObjectWrite,
+    DeployRequest, JobStatus, NatValidationReport, NatWriteOperation, ObjectValidationReport,
+    ObjectWriteAction, PolicyOperation, ResourceKind, SdcClient, SdcError, SdcNatTransaction,
+    SdcObjectTransaction, SdcPreparedChange, SdcPreparedNatWrite, SdcPreparedObjectWrite,
 };
 use async_trait::async_trait;
 use mecmcp_audit::Attribution;
@@ -214,6 +214,28 @@ pub struct ObjectApplyResult {
     pub outcome: CommitOutcome,
 }
 
+/// Output of the SDC NAT-write plan phase.
+#[derive(Debug, Clone, Serialize)]
+pub struct NatPrepareResult {
+    /// Shared two-person change-set record.
+    pub change_set: ChangeSetOutput,
+    /// Exact NAT write bound by the plan digest.
+    pub prepared_change: SdcPreparedNatWrite,
+}
+
+/// Result of applying one approved SDC NAT write.
+#[derive(Debug, Clone, Serialize)]
+pub struct NatApplyResult {
+    /// Shared operation identifier.
+    pub operation_id: String,
+    /// Before/after plan used as the management-plane diff.
+    pub plan: Value,
+    /// Drift and envelope validation result.
+    pub validation: NatValidationReport,
+    /// Known, detached, or indeterminate commit disposition.
+    pub outcome: CommitOutcome,
+}
+
 /// Product adapter around the shared change-set coordinator.
 pub struct ChangeManager {
     coordinator: Arc<ChangesetCoordinator>,
@@ -222,6 +244,7 @@ pub struct ChangeManager {
     endpoint: String,
     policy_signature: String,
     object_signature: String,
+    nat_signature: String,
 }
 
 impl ChangeManager {
@@ -243,6 +266,8 @@ impl ChangeManager {
             mutation_policy_signature(format!("sdc-policy-deploy-v1:{tenant}:{endpoint}"));
         let object_signature =
             mutation_policy_signature(format!("sdc-object-write-v1:{tenant}:{endpoint}"));
+        let nat_signature =
+            mutation_policy_signature(format!("sdc-nat-write-v1:{tenant}:{endpoint}"));
         let coordinator = ChangesetCoordinator::load_with_recovery(
             state_path,
             OperationLimits::default(),
@@ -258,6 +283,7 @@ impl ChangeManager {
             endpoint,
             policy_signature,
             object_signature,
+            nat_signature,
         })
     }
 
@@ -463,6 +489,237 @@ impl ChangeManager {
             }
         };
         Ok(ObjectApplyResult {
+            operation_id,
+            plan,
+            validation,
+            outcome,
+        })
+    }
+
+    /// Resolve a NAT object's current state and create its digest-bound plan.
+    ///
+    /// Create carries no prior state; update and delete read the live object
+    /// so the plan records exactly what the write would replace or remove.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the target cannot be read, the envelope is
+    /// invalid, or change-control state cannot be written.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn prepare_nat_write(
+        &self,
+        owner: String,
+        action: NatWriteOperation,
+        policy_id: Option<String>,
+        rule_id: Option<String>,
+        group_id: Option<String>,
+        request: Value,
+        cancellation: &CancellationToken,
+    ) -> Result<NatPrepareResult, SdcError> {
+        use NatWriteOperation::*;
+
+        let before = match action {
+            CreatePolicy | CreateRule | CreateRuleGroup => Value::Null,
+            UpdatePolicy | DeletePolicy => {
+                let Some(ref pid) = policy_id else {
+                    return Err(SdcError::InvalidInput(
+                        "policy_id required for policy operations",
+                    ));
+                };
+                self.client.get_nat_policy(pid, cancellation).await?
+            }
+            UpdateRule | DeleteRule => {
+                let Some(ref pid) = policy_id else {
+                    return Err(SdcError::InvalidInput(
+                        "policy_id required for rule operations",
+                    ));
+                };
+                let Some(ref rid) = rule_id else {
+                    return Err(SdcError::InvalidInput(
+                        "rule_id required for rule operations",
+                    ));
+                };
+                self.client.get_nat_rule(pid, rid, cancellation).await?
+            }
+            UpdateRuleGroup => {
+                // Rule group get is not yet implemented in client, use Null for now
+                // TODO: Add get_nat_rule_group to client and use it here
+                Value::Null
+            }
+        };
+
+        let prepared =
+            SdcPreparedNatWrite::new(action, policy_id, rule_id, group_id, request, before)?;
+        let change_set = self
+            .coordinator
+            .create_change_set(
+                self.tenant.clone(),
+                vec![prepared.clone()],
+                owner,
+                prepared.plan_digest().to_owned(),
+                self.nat_signature.clone(),
+            )
+            .await
+            .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        Ok(NatPrepareResult {
+            change_set,
+            prepared_change: prepared,
+        })
+    }
+
+    /// Discard a NAT write that failed before anything was sent to SDC.
+    ///
+    /// Returns a caller-facing description rather than an error: the original
+    /// failure is what the operator needs, and this only says whether the
+    /// blocked record was cleared.
+    async fn release_unwritten_nat(
+        &self,
+        operation_id: &str,
+        owner: &str,
+        expected_plan_digest: &str,
+        transaction: &SdcNatTransaction,
+        cancellation: &CancellationToken,
+    ) -> String {
+        match self
+            .coordinator
+            .discard_operation(
+                operation_id,
+                &self.tenant,
+                owner,
+                expected_plan_digest,
+                transaction,
+                cancellation,
+            )
+            .await
+        {
+            Ok(_) => "the planned NAT write was discarded".to_owned(),
+            Err(discard_error) => format!(
+                "the planned NAT write also could not be discarded and needs manual resolution: {discard_error}"
+            ),
+        }
+    }
+
+    /// Apply, diff, drift-check, and commit one exact approved NAT write.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when approval does not match, the object drifted since
+    /// prepare, or the SDC write fails.
+    pub async fn apply_nat_write(
+        &self,
+        change_set_id: String,
+        owner: String,
+        expected_digest: String,
+        expected_plan_digest: String,
+        attribution: &Attribution,
+        cancellation: &CancellationToken,
+    ) -> Result<NatApplyResult, SdcError> {
+        let transaction = SdcNatTransaction::new(
+            self.client.clone(),
+            expected_plan_digest.clone(),
+            cancellation.clone(),
+        );
+        let applied = self
+            .coordinator
+            .apply_change_set(
+                change_set_id,
+                self.tenant.clone(),
+                self.endpoint.clone(),
+                owner.clone(),
+                expected_digest,
+                expected_plan_digest.clone(),
+                &transaction,
+                "nat_write",
+                None,
+                attribution,
+                cancellation,
+            )
+            .await
+            .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        let operation_id = applied.operation_id;
+        let staged = applied.staged;
+        let plan = self
+            .coordinator
+            .diff_operation(
+                &operation_id,
+                &self.tenant,
+                &owner,
+                &expected_plan_digest,
+                &transaction,
+                &staged,
+                cancellation,
+            )
+            .await
+            .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        let validation = match self
+            .coordinator
+            .validate_operation(
+                &operation_id,
+                &self.tenant,
+                &owner,
+                &expected_plan_digest,
+                &transaction,
+                &staged,
+                cancellation,
+            )
+            .await
+        {
+            Ok(report) => report,
+            Err(error) => {
+                // A refused validation records the operation `Failed`, which is
+                // not terminal: it keeps blocking this principal with no
+                // operator route out. Staging and validation only read, so
+                // nothing was written and discarding is truthful.
+                let detail = self
+                    .release_unwritten_nat(
+                        &operation_id,
+                        &owner,
+                        &expected_plan_digest,
+                        &transaction,
+                        cancellation,
+                    )
+                    .await;
+                return Err(SdcError::ChangeControl(format!("{error}; {detail}")));
+            }
+        };
+        let outcome = match self
+            .coordinator
+            .commit_operation(
+                &operation_id,
+                &self.tenant,
+                &owner,
+                &expected_plan_digest,
+                &self.nat_signature,
+                &transaction,
+                &staged,
+                attribution,
+                &CommitOptions::default(),
+                cancellation,
+            )
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                // Only a refusal that happened before anything was sent is safe
+                // to discard. If the write may have landed, leaving the record
+                // for reconciliation is the honest outcome even though it
+                // blocks this principal.
+                if !transaction.refused_before_write() {
+                    return Err(SdcError::ChangeControl(error.to_string()));
+                }
+                let detail = self
+                    .release_unwritten_nat(
+                        &operation_id,
+                        &owner,
+                        &expected_plan_digest,
+                        &transaction,
+                        cancellation,
+                    )
+                    .await;
+                return Err(SdcError::ChangeControl(format!("{error}; {detail}")));
+            }
+        };
+        Ok(NatApplyResult {
             operation_id,
             plan,
             validation,

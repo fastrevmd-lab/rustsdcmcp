@@ -538,6 +538,197 @@ impl SdcClient {
             .await
     }
 
+    /// Create a new NAT policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the body is invalid or when the SDC request fails.
+    pub async fn create_nat_policy(
+        &self,
+        body: &Value,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_object_body(body)?;
+        self.send_write(
+            Method::POST,
+            &["api", "v1", "policies", "nat"],
+            Some(body),
+            cancellation,
+        )
+        .await
+    }
+
+    /// Update an existing NAT policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the policy_id or body is invalid, or when the SDC
+    /// request fails.
+    pub async fn update_nat_policy(
+        &self,
+        policy_id: &str,
+        body: &Value,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("policy_id", policy_id)?;
+        validate_object_body(body)?;
+        self.send_write(
+            Method::PUT,
+            &["api", "v1", "policies", "nat", policy_id],
+            Some(body),
+            cancellation,
+        )
+        .await
+    }
+
+    /// Delete a NAT policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the policy_id is invalid or when the SDC request
+    /// fails.
+    pub async fn delete_nat_policy(
+        &self,
+        policy_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("policy_id", policy_id)?;
+        self.send_write(
+            Method::DELETE,
+            &["api", "v1", "policies", "nat", policy_id],
+            None,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Create a new NAT rule within a policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the policy_id or body is invalid, or when the SDC
+    /// request fails.
+    pub async fn create_nat_rule(
+        &self,
+        policy_id: &str,
+        body: &Value,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("policy_id", policy_id)?;
+        validate_object_body(body)?;
+        self.send_write(
+            Method::POST,
+            &["api", "v1", "policies", "nat", policy_id, "rules"],
+            Some(body),
+            cancellation,
+        )
+        .await
+    }
+
+    /// Update an existing NAT rule.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the policy_id, rule_id, or body is invalid, or
+    /// when the SDC request fails.
+    pub async fn update_nat_rule(
+        &self,
+        policy_id: &str,
+        rule_id: &str,
+        body: &Value,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("policy_id", policy_id)?;
+        validate_atom("rule_id", rule_id)?;
+        validate_object_body(body)?;
+        self.send_write(
+            Method::PUT,
+            &["api", "v1", "policies", "nat", policy_id, "rules", rule_id],
+            Some(body),
+            cancellation,
+        )
+        .await
+    }
+
+    /// Delete a NAT rule.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the policy_id or rule_id is invalid, or when the
+    /// SDC request fails.
+    pub async fn delete_nat_rule(
+        &self,
+        policy_id: &str,
+        rule_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("policy_id", policy_id)?;
+        validate_atom("rule_id", rule_id)?;
+        self.send_write(
+            Method::DELETE,
+            &["api", "v1", "policies", "nat", policy_id, "rules", rule_id],
+            None,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Create a new NAT rule group within a policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the policy_id or body is invalid, or when the SDC
+    /// request fails.
+    pub async fn create_nat_rule_group(
+        &self,
+        policy_id: &str,
+        body: &Value,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("policy_id", policy_id)?;
+        validate_object_body(body)?;
+        self.send_write(
+            Method::POST,
+            &["api", "v1", "policies", "nat", policy_id, "rule_groups"],
+            Some(body),
+            cancellation,
+        )
+        .await
+    }
+
+    /// Update an existing NAT rule group.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the policy_id, group_id, or body is invalid, or
+    /// when the SDC request fails.
+    pub async fn update_nat_rule_group(
+        &self,
+        policy_id: &str,
+        group_id: &str,
+        body: &Value,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("policy_id", policy_id)?;
+        validate_atom("group_id", group_id)?;
+        validate_object_body(body)?;
+        self.send_write(
+            Method::PUT,
+            &[
+                "api",
+                "v1",
+                "policies",
+                "nat",
+                policy_id,
+                "rule_groups",
+                group_id,
+            ],
+            Some(body),
+            cancellation,
+        )
+        .await
+    }
+
     /// Read a preview job without polling.
     pub async fn preview_status(
         &self,

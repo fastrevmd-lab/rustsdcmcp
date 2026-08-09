@@ -17,8 +17,8 @@ use rmcp::{
     tool, tool_handler, tool_router,
 };
 use rustsdcmcp_core::{
-    ChangeManager, ListRequest, ObjectWriteAction, PolicyOperation, ResourceKind, SdcClient,
-    SdcError,
+    ChangeManager, ListRequest, NatWriteOperation, ObjectWriteAction, PolicyOperation,
+    ResourceKind, SdcClient, SdcError,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -63,6 +63,8 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "get_sdc_change_set_details",
     "prepare_sdc_object_write",
     "apply_sdc_object_write",
+    "prepare_sdc_nat_write",
+    "apply_sdc_nat_write",
 ];
 
 /// Tools that can cause an SDC deployment or object lifecycle mutation.
@@ -72,6 +74,8 @@ pub const WRITE_TOOLS: &[&str] = &[
     "apply_sdc_change_set",
     "prepare_sdc_object_write",
     "apply_sdc_object_write",
+    "prepare_sdc_nat_write",
+    "apply_sdc_nat_write",
 ];
 
 /// Security Director Cloud MCP handler.
@@ -450,6 +454,45 @@ pub struct ChangeSetArgs {
     pub tenant: String,
     /// Change-set identifier.
     pub change_set_id: String,
+}
+
+/// Arguments for planning one NAT write.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PrepareNatArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Which NAT mutation to plan.
+    pub action: NatWriteOperation,
+    /// Target policy ID. Required for all operations except CreatePolicy.
+    #[serde(default)]
+    pub policy_id: Option<String>,
+    /// Target rule ID. Required for UpdateRule and DeleteRule.
+    #[serde(default)]
+    pub rule_id: Option<String>,
+    /// Target rule group ID. Required for UpdateRuleGroup.
+    #[serde(default)]
+    pub group_id: Option<String>,
+    /// Object definition. Required for create and update, absent for delete.
+    #[serde(default)]
+    pub body: Option<Value>,
+}
+
+/// Arguments for applying one approved NAT write.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ApplyNatArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Change-set identifier.
+    pub change_set_id: String,
+    /// Exact approved plan digest.
+    pub expected_digest: String,
+    /// Exact plan digest returned by prepare.
+    pub expected_plan_digest: String,
+    /// Optional external ticket or change reference.
+    #[serde(default)]
+    pub change_ref: Option<String>,
 }
 
 #[tool_router(router = sdc_tool_router, vis = "pub(crate)")]
@@ -1310,6 +1353,80 @@ impl SdcHandler {
     }
 
     #[tool(
+        name = "prepare_sdc_nat_write",
+        description = "Plan one NAT policy, rule, or rule-group write and create a digest-bound change set. This does not write."
+    )]
+    async fn prepare_sdc_nat_write(
+        &self,
+        Parameters(args): Parameters<PrepareNatArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "prepare_sdc_nat_write",
+            "prepare",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "prepare_sdc_nat_write", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish(
+            audit,
+            self.changes
+                .prepare_nat_write(
+                    owner(caller),
+                    args.action,
+                    args.policy_id,
+                    args.rule_id,
+                    args.group_id,
+                    args.body.unwrap_or(Value::Null),
+                    &cancellation,
+                )
+                .await,
+        ))
+    }
+
+    #[tool(
+        name = "apply_sdc_nat_write",
+        description = "Apply only an independently approved SDC NAT write, refusing it if the target changed since it was planned."
+    )]
+    async fn apply_sdc_nat_write(
+        &self,
+        Parameters(args): Parameters<ApplyNatArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "apply_sdc_nat_write",
+            "apply",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "apply_sdc_nat_write", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let attribution = attribution(caller, args.change_ref);
+        Ok(finish(
+            audit,
+            self.changes
+                .apply_nat_write(
+                    args.change_set_id,
+                    owner(caller),
+                    args.expected_digest,
+                    args.expected_plan_digest,
+                    &attribution,
+                    &cancellation,
+                )
+                .await,
+        ))
+    }
+
+    #[tool(
         name = "get_sdc_change_set",
         description = "Return the current shared lifecycle state for one SDC change set."
     )]
@@ -1471,6 +1588,90 @@ mod tests {
                 "tenant-a"
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn nat_write_tools_require_authentication() {
+        // Unauthenticated calls must be rejected
+        assert!(
+            authorize_request(None, "prepare_sdc_nat_write", "tenant-a", "tenant-a").is_err(),
+            "prepare_sdc_nat_write must require authentication"
+        );
+        assert!(
+            authorize_request(None, "apply_sdc_nat_write", "tenant-a", "tenant-a").is_err(),
+            "apply_sdc_nat_write must require authentication"
+        );
+    }
+
+    #[test]
+    fn nat_write_tools_enforce_scope_boundaries() {
+        // Token scoped to prepare_sdc_nat_write only
+        let prepare_only = caller(
+            ScopeSet::Allowlist(vec!["tenant-a".to_owned()]),
+            ScopeSet::Allowlist(vec!["prepare_sdc_nat_write".to_owned()]),
+        );
+
+        // Can prepare but not apply
+        assert!(
+            authorize_request(
+                Some(&prepare_only),
+                "prepare_sdc_nat_write",
+                "tenant-a",
+                "tenant-a"
+            )
+            .is_ok(),
+            "prepare_sdc_nat_write with correct scope must succeed"
+        );
+        assert!(
+            authorize_request(
+                Some(&prepare_only),
+                "apply_sdc_nat_write",
+                "tenant-a",
+                "tenant-a"
+            )
+            .is_err(),
+            "apply_sdc_nat_write without correct scope must fail"
+        );
+
+        // Token scoped to apply_sdc_nat_write only
+        let apply_only = caller(
+            ScopeSet::Allowlist(vec!["tenant-a".to_owned()]),
+            ScopeSet::Allowlist(vec!["apply_sdc_nat_write".to_owned()]),
+        );
+
+        // Can apply but not prepare
+        assert!(
+            authorize_request(
+                Some(&apply_only),
+                "apply_sdc_nat_write",
+                "tenant-a",
+                "tenant-a"
+            )
+            .is_ok(),
+            "apply_sdc_nat_write with correct scope must succeed"
+        );
+        assert!(
+            authorize_request(
+                Some(&apply_only),
+                "prepare_sdc_nat_write",
+                "tenant-a",
+                "tenant-a"
+            )
+            .is_err(),
+            "prepare_sdc_nat_write without correct scope must fail"
+        );
+
+        // Wrong tenant must fail
+        assert!(
+            authorize_request(
+                Some(&prepare_only),
+                "prepare_sdc_nat_write",
+                "tenant-b",
+                "tenant-a"
+            )
+            .is_err(),
+            "NAT write with wrong tenant must fail"
         );
     }
 }

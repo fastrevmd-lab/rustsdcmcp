@@ -341,3 +341,25 @@ pub(crate) struct PreviewResponse {
 pub(crate) struct DeployResponse {
     pub(crate) deploy_id: String,
 }
+
+/// NAT write operation type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NatWriteOperation {
+    /// Create NAT policy.
+    CreatePolicy,
+    /// Update NAT policy.
+    UpdatePolicy,
+    /// Delete NAT policy.
+    DeletePolicy,
+    /// Create NAT rule.
+    CreateRule,
+    /// Update NAT rule.
+    UpdateRule,
+    /// Delete NAT rule.
+    DeleteRule,
+    /// Create NAT rule group.
+    CreateRuleGroup,
+    /// Update NAT rule group.
+    UpdateRuleGroup,
+}
