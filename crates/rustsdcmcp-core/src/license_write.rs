@@ -252,14 +252,66 @@ impl SdcLicenseTransaction {
 
     /// Re-read the target and report whether it still matches its plan.
     ///
-    /// For license/certificate operations, drift checking is minimal since we
-    /// cannot query the exact state that will be created. We accept before as
-    /// Null for all operations and do not re-check.
-    async fn target_unchanged(&self, _staged: &SdcPreparedLicenseWrite) -> Result<bool, SdcError> {
-        // No re-read for license/certificate operations - they are additive or
-        // deletion operations where the before state is not re-queryable in a
-        // meaningful way.
-        Ok(true)
+    /// Fetches the current license or certificate state on the device and
+    /// compares it to the state observed at prepare time. This prevents
+    /// deleting a replaced certificate or installing into a mutated state.
+    async fn target_unchanged(&self, staged: &SdcPreparedLicenseWrite) -> Result<bool, SdcError> {
+        use LicenseWriteOperation::*;
+        let current = match staged.action() {
+            InstallLicense => {
+                self.client
+                    .list_licenses(
+                        &staged.device_uuid,
+                        crate::ListRequest::new(0, 100, 100)?,
+                        &self.cancellation,
+                    )
+                    .await?
+            }
+            InstallCaCertificate => {
+                self.client
+                    .list_device_ca_certificates(
+                        &staged.device_uuid,
+                        crate::ListRequest::new(0, 100, 100)?,
+                        &self.cancellation,
+                    )
+                    .await?
+            }
+            InstallLocalCertificate => {
+                self.client
+                    .list_device_local_certificates(
+                        &staged.device_uuid,
+                        crate::ListRequest::new(0, 100, 100)?,
+                        &self.cancellation,
+                    )
+                    .await?
+            }
+            DeleteCertificate => {
+                let ca_certs = self
+                    .client
+                    .list_device_ca_certificates(
+                        &staged.device_uuid,
+                        crate::ListRequest::new(0, 100, 100)?,
+                        &self.cancellation,
+                    )
+                    .await?;
+                let local_certs = self
+                    .client
+                    .list_device_local_certificates(
+                        &staged.device_uuid,
+                        crate::ListRequest::new(0, 100, 100)?,
+                        &self.cancellation,
+                    )
+                    .await?;
+                serde_json::json!({
+                    "ca_certificates": ca_certs,
+                    "local_certificates": local_certs,
+                })
+            }
+        };
+        let digest = |value: &Value| {
+            canonical_digest(value).map_err(|error| SdcError::PreparedChange(error.to_string()))
+        };
+        Ok(digest(&current)? == digest(staged.before())?)
     }
 }
 
@@ -298,9 +350,16 @@ impl DeviceTransaction for SdcLicenseTransaction {
         Ok(staged.plan())
     }
 
-    /// Validate the envelope. No drift check for license/certificate writes.
+    /// Refuse the write if the target state moved since it was prepared.
+    ///
+    /// Like firewall writes, license/certificate writes have no SDC preview to
+    /// bind, so this drift check is what makes the approved digest meaningful
+    /// at apply time.
     async fn validate(&self, staged: &Self::Staged) -> Result<Self::Validation, Self::Error> {
         let target_unchanged = self.target_unchanged(staged).await?;
+        if !target_unchanged {
+            return Err(SdcError::TargetDrifted);
+        }
         Ok(LicenseValidationReport {
             valid: true,
             action: staged.action(),
@@ -317,12 +376,30 @@ impl DeviceTransaction for SdcLicenseTransaction {
         // Every exit path from here until the request is issued is a pre-write
         // refusal: nothing has been sent, so the caller may safely discard the
         // operation instead of leaving a non-terminal record that blocks the
-        // tenant.
+        // tenant. This covers the fallible recheck read below -- a target
+        // mutated by someone else, or a transient failure -- not just an
+        // explicit drift refusal.
         self.refused_before_write.store(true, Ordering::SeqCst);
         if options.confirm_timeout.is_some() {
             return Err(SdcError::InvalidInput(
                 "SDC does not support confirmed license/certificate writes",
             ));
+        }
+        // Re-check drift immediately before writing. `validate` already checked,
+        // but the coordinator releases and reacquires its guard in between, and
+        // that guard cannot exclude a writer working directly against SDC.
+        // Without this, a stale install or delete could mutate state that was
+        // never in the approved plan.
+        //
+        // A refusal here is recorded as the non-terminal `Failed` state, so the
+        // flag lets `apply_license_write` discard it: nothing was sent, which
+        // makes that discard truthful.
+        //
+        // This narrows the window rather than closing it. SDC exposes no
+        // conditional write, so a change landing between this read and the
+        // request below is still possible.
+        if !self.target_unchanged(staged).await? {
+            return Err(SdcError::TargetDrifted);
         }
         // The mutation is about to go out. Past this point its outcome is no
         // longer knowably clean, so the operation must not be auto-discarded.
@@ -425,4 +502,142 @@ pub struct LicenseApplyResult {
     pub validation: LicenseValidationReport,
     /// Known, detached, or indeterminate commit disposition.
     pub outcome: CommitOutcome,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SdcClient;
+    use axum::{Json, Router, routing::get};
+    use mecmcp_audit::Attribution;
+    use serde_json::json;
+    use tokio_util::sync::CancellationToken;
+    use url::Url;
+
+    async fn serve(app: Router) -> (Url, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test listener");
+        let address = listener.local_addr().expect("test listener address");
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve test application");
+        });
+        (
+            Url::parse(&format!("http://{address}/")).expect("test URL"),
+            task,
+        )
+    }
+
+    fn license_fixture(before: Value) -> SdcPreparedLicenseWrite {
+        SdcPreparedLicenseWrite::new(
+            LicenseWriteOperation::InstallLicense,
+            "device-123".to_owned(),
+            json!({"license_key": "TEST-KEY-123"}),
+            before,
+        )
+        .expect("prepared license write")
+    }
+
+    #[tokio::test]
+    async fn license_write_refuses_a_target_that_drifted_since_prepare() {
+        // A license write has no SDC preview to bind, so this drift check is
+        // what makes the approved digest meaningful at apply time.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let app = Router::new().route(
+            "/api/v1/devices/device-123/licenses",
+            get(|| async {
+                Json(json!({
+                    "items": [{"uuid": "lic-new", "name": "changed-by-someone-else"}],
+                    "count": 1
+                }))
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        let client = SdcClient::from_test_parts(base_url, "test-secret".to_owned(), 64 * 1024, 100);
+        let prepared = license_fixture(json!({
+            "items": [{"uuid": "lic-old", "name": "as-prepared"}],
+            "count": 1
+        }));
+        let transaction = SdcLicenseTransaction::new(
+            client,
+            prepared.plan_digest().to_owned(),
+            CancellationToken::new(),
+        );
+        let staged = transaction
+            .stage(std::slice::from_ref(&prepared))
+            .await
+            .expect("stages");
+        let error = transaction
+            .validate(&staged)
+            .await
+            .expect_err("a drifted target must refuse");
+        assert!(
+            matches!(&error, SdcError::TargetDrifted),
+            "unexpected error: {error:?}"
+        );
+        assert!(
+            !transaction.refused_before_write(),
+            "a validation refusal is not a commit-boundary refusal"
+        );
+
+        // The same drift must also stop the write itself, since the coordinator
+        // drops and reacquires its guard between validate and commit.
+        let error = transaction
+            .commit(
+                &staged,
+                &Attribution::stdio(),
+                &mecmcp_changeset::CommitOptions::default(),
+            )
+            .await
+            .expect_err("a drifted target must not be written");
+        assert!(
+            matches!(&error, SdcError::TargetDrifted),
+            "unexpected error: {error:?}"
+        );
+        assert!(
+            transaction.refused_before_write(),
+            "a commit-boundary refusal must be discardable"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn license_write_validates_when_the_target_is_unchanged() {
+        // Guards against the drift check above passing vacuously.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let before_state = json!({
+            "items": [{"uuid": "lic-1", "name": "existing"}],
+            "count": 1
+        });
+        let app = Router::new().route(
+            "/api/v1/devices/device-123/licenses",
+            get(move || {
+                let state = before_state.clone();
+                async move { Json(state) }
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        let client = SdcClient::from_test_parts(base_url, "test-secret".to_owned(), 64 * 1024, 100);
+        let prepared = license_fixture(json!({
+            "items": [{"uuid": "lic-1", "name": "existing"}],
+            "count": 1
+        }));
+        let transaction = SdcLicenseTransaction::new(
+            client,
+            prepared.plan_digest().to_owned(),
+            CancellationToken::new(),
+        );
+        let staged = transaction
+            .stage(std::slice::from_ref(&prepared))
+            .await
+            .expect("stages");
+        let report = transaction
+            .validate(&staged)
+            .await
+            .expect("an unchanged target validates");
+        assert!(report.valid && report.target_unchanged);
+        server.abort();
+    }
 }

@@ -714,23 +714,80 @@ impl ChangeManager {
 
     /// Prepare a license or certificate write.
     ///
-    /// License and certificate operations do not have queryable before state,
-    /// so the before field is always Null.
+    /// Reads the current state of licenses or certificates on the device so
+    /// the plan records exactly what the write would change. Apply refuses if
+    /// that state has since moved.
     ///
     /// # Errors
     ///
-    /// Returns an error when the envelope is invalid or change-control state
-    /// cannot be written.
+    /// Returns an error when the target cannot be read, the envelope is
+    /// invalid, or change-control state cannot be written.
     pub async fn prepare_license_write(
         &self,
         owner: String,
         action: crate::LicenseWriteOperation,
         device_uuid: String,
         request: Value,
-        _cancellation: &CancellationToken,
+        cancellation: &CancellationToken,
     ) -> Result<crate::LicensePrepareResult, SdcError> {
-        // License/certificate operations have no queryable before state
-        let before = Value::Null;
+        use crate::LicenseWriteOperation::*;
+        // Read the device's current license or certificate state so the digest
+        // binds to observed reality and apply can detect drift.
+        let before = match action {
+            InstallLicense => {
+                // Fetch all licenses on this device to capture the state before adding another
+                self.client
+                    .list_licenses(
+                        &device_uuid,
+                        crate::ListRequest::new(0, 100, 100)?,
+                        cancellation,
+                    )
+                    .await?
+            }
+            InstallCaCertificate => {
+                // Fetch all CA certificates on this device
+                self.client
+                    .list_device_ca_certificates(
+                        &device_uuid,
+                        crate::ListRequest::new(0, 100, 100)?,
+                        cancellation,
+                    )
+                    .await?
+            }
+            InstallLocalCertificate => {
+                // Fetch all local certificates on this device
+                self.client
+                    .list_device_local_certificates(
+                        &device_uuid,
+                        crate::ListRequest::new(0, 100, 100)?,
+                        cancellation,
+                    )
+                    .await?
+            }
+            DeleteCertificate => {
+                // Fetch both certificate types since delete can target either
+                let ca_certs = self
+                    .client
+                    .list_device_ca_certificates(
+                        &device_uuid,
+                        crate::ListRequest::new(0, 100, 100)?,
+                        cancellation,
+                    )
+                    .await?;
+                let local_certs = self
+                    .client
+                    .list_device_local_certificates(
+                        &device_uuid,
+                        crate::ListRequest::new(0, 100, 100)?,
+                        cancellation,
+                    )
+                    .await?;
+                serde_json::json!({
+                    "ca_certificates": ca_certs,
+                    "local_certificates": local_certs,
+                })
+            }
+        };
         let prepared = crate::SdcPreparedLicenseWrite::new(action, device_uuid, request, before)?;
         let change_set = self
             .coordinator

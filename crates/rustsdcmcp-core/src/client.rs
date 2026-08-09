@@ -822,7 +822,9 @@ impl SdcClient {
         let job_id = response
             .deploy_id
             .as_ref()
-            .ok_or(SdcError::InvalidInput("install_license response missing job id"))?
+            .ok_or(SdcError::InvalidInput(
+                "install_license response missing job id",
+            ))?
             .clone();
         validate_atom("job_id", &job_id)?;
         let status = self
@@ -946,7 +948,9 @@ impl SdcClient {
         let job_id = response
             .deploy_id
             .as_ref()
-            .ok_or(SdcError::InvalidInput("delete_certificate response missing job id"))?
+            .ok_or(SdcError::InvalidInput(
+                "delete_certificate response missing job id",
+            ))?
             .clone();
         validate_atom("job_id", &job_id)?;
         let status = self
