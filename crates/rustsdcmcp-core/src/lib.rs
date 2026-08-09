@@ -7,6 +7,7 @@ mod catalog;
 mod change;
 mod client;
 mod config;
+mod firewall_write;
 mod models;
 mod nat_write;
 mod object_write;
@@ -19,6 +20,10 @@ pub use change::{
 };
 pub use client::{SdcClient, SdcError};
 pub use config::{AuthScheme, SdcConfig};
+pub use firewall_write::{
+    FirewallApplyResult, FirewallPrepareResult, FirewallValidationReport, FirewallWriteOperation,
+    SdcFirewallTransaction, SdcPreparedFirewallWrite,
+};
 pub use models::{
     DeployRequest, DeploymentStatus, DeviceDeploymentStatus, DeviceStatusEntry, JobStatus,
     ListRequest, ListRequestError, NatWriteOperation, PolicyEntry, PolicyOperation, PolicyType,
