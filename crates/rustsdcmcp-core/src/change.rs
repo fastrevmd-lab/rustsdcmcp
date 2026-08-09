@@ -245,6 +245,7 @@ pub struct ChangeManager {
     policy_signature: String,
     object_signature: String,
     nat_signature: String,
+    license_signature: String,
 }
 
 impl ChangeManager {
@@ -268,6 +269,8 @@ impl ChangeManager {
             mutation_policy_signature(format!("sdc-object-write-v1:{tenant}:{endpoint}"));
         let nat_signature =
             mutation_policy_signature(format!("sdc-nat-write-v1:{tenant}:{endpoint}"));
+        let license_signature =
+            mutation_policy_signature(format!("sdc-license-write-v1:{tenant}:{endpoint}"));
         let coordinator = ChangesetCoordinator::load_with_recovery(
             state_path,
             OperationLimits::default(),
@@ -284,6 +287,7 @@ impl ChangeManager {
             policy_signature,
             object_signature,
             nat_signature,
+            license_signature,
         })
     }
 
@@ -704,6 +708,194 @@ impl ChangeManager {
             Ok(_) => "the planned firewall write was discarded".to_owned(),
             Err(discard_error) => format!(
                 "the planned firewall write also could not be discarded and needs manual resolution: {discard_error}"
+            ),
+        }
+    }
+
+    /// Prepare a license or certificate write.
+    ///
+    /// License and certificate operations do not have queryable before state,
+    /// so the before field is always Null.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the envelope is invalid or change-control state
+    /// cannot be written.
+    pub async fn prepare_license_write(
+        &self,
+        owner: String,
+        action: crate::LicenseWriteOperation,
+        device_uuid: String,
+        request: Value,
+        _cancellation: &CancellationToken,
+    ) -> Result<crate::LicensePrepareResult, SdcError> {
+        // License/certificate operations have no queryable before state
+        let before = Value::Null;
+        let prepared = crate::SdcPreparedLicenseWrite::new(action, device_uuid, request, before)?;
+        let change_set = self
+            .coordinator
+            .create_change_set(
+                self.tenant.clone(),
+                vec![prepared.clone()],
+                owner,
+                prepared.plan_digest().to_owned(),
+                self.license_signature.clone(),
+            )
+            .await
+            .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        Ok(crate::LicensePrepareResult {
+            change_set,
+            prepared_change: prepared,
+        })
+    }
+
+    /// Apply, diff, and commit one exact approved license/certificate write.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when approval does not match or the SDC write fails.
+    pub async fn apply_license_write(
+        &self,
+        change_set_id: String,
+        owner: String,
+        expected_digest: String,
+        expected_plan_digest: String,
+        attribution: &Attribution,
+        cancellation: &CancellationToken,
+    ) -> Result<crate::LicenseApplyResult, SdcError> {
+        let transaction = crate::SdcLicenseTransaction::new(
+            self.client.clone(),
+            expected_plan_digest.clone(),
+            cancellation.clone(),
+        );
+        let applied = self
+            .coordinator
+            .apply_change_set(
+                change_set_id,
+                self.tenant.clone(),
+                self.endpoint.clone(),
+                owner.clone(),
+                expected_digest,
+                expected_plan_digest.clone(),
+                &transaction,
+                "license_write",
+                None,
+                attribution,
+                cancellation,
+            )
+            .await
+            .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        let operation_id = applied.operation_id;
+        let staged = applied.staged;
+        let plan = self
+            .coordinator
+            .diff_operation(
+                &operation_id,
+                &self.tenant,
+                &owner,
+                &expected_plan_digest,
+                &transaction,
+                &staged,
+                cancellation,
+            )
+            .await
+            .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        let validation = match self
+            .coordinator
+            .validate_operation(
+                &operation_id,
+                &self.tenant,
+                &owner,
+                &expected_plan_digest,
+                &transaction,
+                &staged,
+                cancellation,
+            )
+            .await
+        {
+            Ok(report) => report,
+            Err(error) => {
+                let detail = self
+                    .release_unwritten_license(
+                        &operation_id,
+                        &owner,
+                        &expected_plan_digest,
+                        &transaction,
+                        cancellation,
+                    )
+                    .await;
+                return Err(SdcError::ChangeControl(format!("{error}; {detail}")));
+            }
+        };
+        let outcome = match self
+            .coordinator
+            .commit_operation(
+                &operation_id,
+                &self.tenant,
+                &owner,
+                &expected_plan_digest,
+                &self.license_signature,
+                &transaction,
+                &staged,
+                attribution,
+                &CommitOptions::default(),
+                cancellation,
+            )
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                if !transaction.refused_before_write() {
+                    return Err(SdcError::ChangeControl(error.to_string()));
+                }
+                let detail = self
+                    .release_unwritten_license(
+                        &operation_id,
+                        &owner,
+                        &expected_plan_digest,
+                        &transaction,
+                        cancellation,
+                    )
+                    .await;
+                return Err(SdcError::ChangeControl(format!("{error}; {detail}")));
+            }
+        };
+        Ok(crate::LicenseApplyResult {
+            operation_id,
+            plan,
+            validation,
+            outcome,
+        })
+    }
+
+    /// Discard a license write that failed before anything was sent to SDC.
+    ///
+    /// Returns a caller-facing description rather than an error: the original
+    /// failure is what the operator needs, and this only says whether the
+    /// blocked record was cleared.
+    async fn release_unwritten_license(
+        &self,
+        operation_id: &str,
+        owner: &str,
+        expected_plan_digest: &str,
+        transaction: &crate::SdcLicenseTransaction,
+        cancellation: &CancellationToken,
+    ) -> String {
+        match self
+            .coordinator
+            .discard_operation(
+                operation_id,
+                &self.tenant,
+                owner,
+                expected_plan_digest,
+                transaction,
+                cancellation,
+            )
+            .await
+        {
+            Ok(_) => "the planned license write was discarded".to_owned(),
+            Err(discard_error) => format!(
+                "the planned license write also could not be discarded and needs manual resolution: {discard_error}"
             ),
         }
     }

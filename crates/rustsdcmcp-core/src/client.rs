@@ -795,6 +795,226 @@ impl SdcClient {
         .await
     }
 
+    /// Install a license on a device and poll until the operation completes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the device_uuid or body is invalid, or when the
+    /// SDC request or polling fails.
+    pub async fn install_license(
+        &self,
+        device_uuid: &str,
+        body: &Value,
+        cancellation: &CancellationToken,
+    ) -> Result<(String, DeploymentStatus), SdcError> {
+        validate_atom("device_uuid", device_uuid)?;
+        validate_object_body(body)?;
+        let response_value = self
+            .send_write(
+                Method::POST,
+                &["api", "v1", "devices", device_uuid, "install_license"],
+                Some(body),
+                cancellation,
+            )
+            .await?;
+        let response: JobStatus =
+            serde_json::from_value(response_value).map_err(|_| SdcError::Serialization)?;
+        let job_id = response
+            .deploy_id
+            .as_ref()
+            .ok_or(SdcError::InvalidInput("install_license response missing job id"))?
+            .clone();
+        validate_atom("job_id", &job_id)?;
+        let status = self
+            .poll_job(JobKind::InstallLicense, &job_id, cancellation)
+            .await?;
+        Ok((job_id, status.status))
+    }
+
+    /// Install a CA certificate on a device and poll until the operation completes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the device_uuid or body is invalid, or when the
+    /// SDC request or polling fails.
+    pub async fn install_ca_certificate(
+        &self,
+        device_uuid: &str,
+        body: &Value,
+        cancellation: &CancellationToken,
+    ) -> Result<(String, DeploymentStatus), SdcError> {
+        validate_atom("device_uuid", device_uuid)?;
+        validate_object_body(body)?;
+        let response_value = self
+            .send_write(
+                Method::POST,
+                &[
+                    "api",
+                    "v1",
+                    "devices",
+                    device_uuid,
+                    "install_ca_certificate",
+                ],
+                Some(body),
+                cancellation,
+            )
+            .await?;
+        let response: JobStatus =
+            serde_json::from_value(response_value).map_err(|_| SdcError::Serialization)?;
+        let job_id = response
+            .deploy_id
+            .as_ref()
+            .ok_or(SdcError::InvalidInput(
+                "install_ca_certificate response missing job id",
+            ))?
+            .clone();
+        validate_atom("job_id", &job_id)?;
+        let status = self
+            .poll_job(JobKind::InstallCaCertificate, &job_id, cancellation)
+            .await?;
+        Ok((job_id, status.status))
+    }
+
+    /// Install a local certificate on a device and poll until the operation completes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the device_uuid or body is invalid, or when the
+    /// SDC request or polling fails.
+    pub async fn install_local_certificate(
+        &self,
+        device_uuid: &str,
+        body: &Value,
+        cancellation: &CancellationToken,
+    ) -> Result<(String, DeploymentStatus), SdcError> {
+        validate_atom("device_uuid", device_uuid)?;
+        validate_object_body(body)?;
+        let response_value = self
+            .send_write(
+                Method::POST,
+                &[
+                    "api",
+                    "v1",
+                    "devices",
+                    device_uuid,
+                    "install_local_certificate",
+                ],
+                Some(body),
+                cancellation,
+            )
+            .await?;
+        let response: JobStatus =
+            serde_json::from_value(response_value).map_err(|_| SdcError::Serialization)?;
+        let job_id = response
+            .deploy_id
+            .as_ref()
+            .ok_or(SdcError::InvalidInput(
+                "install_local_certificate response missing job id",
+            ))?
+            .clone();
+        validate_atom("job_id", &job_id)?;
+        let status = self
+            .poll_job(JobKind::InstallLocalCertificate, &job_id, cancellation)
+            .await?;
+        Ok((job_id, status.status))
+    }
+
+    /// Delete a certificate from a device and poll until the operation completes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the device_uuid or body is invalid, or when the
+    /// SDC request or polling fails.
+    pub async fn delete_certificate(
+        &self,
+        device_uuid: &str,
+        body: &Value,
+        cancellation: &CancellationToken,
+    ) -> Result<(String, DeploymentStatus), SdcError> {
+        validate_atom("device_uuid", device_uuid)?;
+        validate_object_body(body)?;
+        let response_value = self
+            .send_write(
+                Method::POST,
+                &["api", "v1", "devices", device_uuid, "delete_certificate"],
+                Some(body),
+                cancellation,
+            )
+            .await?;
+        let response: JobStatus =
+            serde_json::from_value(response_value).map_err(|_| SdcError::Serialization)?;
+        let job_id = response
+            .deploy_id
+            .as_ref()
+            .ok_or(SdcError::InvalidInput("delete_certificate response missing job id"))?
+            .clone();
+        validate_atom("job_id", &job_id)?;
+        let status = self
+            .poll_job(JobKind::DeleteCertificate, &job_id, cancellation)
+            .await?;
+        Ok((job_id, status.status))
+    }
+
+    /// Read an install_license job status without polling.
+    pub async fn install_license_status(
+        &self,
+        job_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<JobStatus, SdcError> {
+        validate_atom("job_id", job_id)?;
+        self.get(
+            &["api", "v1", "devices", "install_license", job_id],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// Read an install_ca_certificate job status without polling.
+    pub async fn install_ca_certificate_status(
+        &self,
+        job_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<JobStatus, SdcError> {
+        validate_atom("job_id", job_id)?;
+        self.get(
+            &["api", "v1", "devices", "install_ca_certificate", job_id],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// Read an install_local_certificate job status without polling.
+    pub async fn install_local_certificate_status(
+        &self,
+        job_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<JobStatus, SdcError> {
+        validate_atom("job_id", job_id)?;
+        self.get(
+            &["api", "v1", "devices", "install_local_certificate", job_id],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// Read a delete_certificate job status without polling.
+    pub async fn delete_certificate_status(
+        &self,
+        job_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<JobStatus, SdcError> {
+        validate_atom("job_id", job_id)?;
+        self.get(
+            &["api", "v1", "devices", "delete_certificate", job_id],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
     /// Create a new NAT policy.
     ///
     /// # Errors
@@ -1132,6 +1352,20 @@ impl SdcClient {
                 match kind {
                     JobKind::Preview => self.preview_status(job_id, cancellation).await,
                     JobKind::Deploy => self.deploy_status(job_id, cancellation).await,
+                    JobKind::InstallLicense => {
+                        self.install_license_status(job_id, cancellation).await
+                    }
+                    JobKind::InstallCaCertificate => {
+                        self.install_ca_certificate_status(job_id, cancellation)
+                            .await
+                    }
+                    JobKind::InstallLocalCertificate => {
+                        self.install_local_certificate_status(job_id, cancellation)
+                            .await
+                    }
+                    JobKind::DeleteCertificate => {
+                        self.delete_certificate_status(job_id, cancellation).await
+                    }
                 }
             };
             let status = tokio::select! {
@@ -1355,6 +1589,10 @@ impl SdcClient {
 enum JobKind {
     Preview,
     Deploy,
+    InstallLicense,
+    InstallCaCertificate,
+    InstallLocalCertificate,
+    DeleteCertificate,
 }
 
 fn prepared_targets(request: &PreviewRequest) -> Result<Vec<SdcPreparedTarget>, SdcError> {
