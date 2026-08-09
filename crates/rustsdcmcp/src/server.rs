@@ -52,6 +52,11 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "get_sdc_nat_pool",
     "list_sdc_resources",
     "get_sdc_resource",
+    "list_sdc_ipsec_profiles",
+    "get_sdc_ipsec_profile",
+    "list_sdc_tunnels",
+    "get_sdc_tunnel",
+    "get_sdc_tunnel_count",
     "get_sdc_preview_status",
     "get_sdc_deploy_status",
     "get_sdc_preview_device_result",
@@ -399,6 +404,52 @@ pub struct ResourceArgs {
     pub resource: ResourceKind,
     /// Resource UUID.
     pub uuid: String,
+}
+
+/// Arguments for listing IPsec profiles.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IpsecProfileListArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Zero-based offset.
+    #[serde(default)]
+    pub from: u64,
+    /// Explicit positive page size.
+    pub size: u32,
+}
+
+/// Arguments for one IPsec profile.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IpsecProfileArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// IPsec profile name.
+    pub profile_name: String,
+}
+
+/// Arguments for listing tunnels.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TunnelListArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Zero-based offset.
+    #[serde(default)]
+    pub from: u64,
+    /// Explicit positive page size.
+    pub size: u32,
+}
+
+/// Arguments for one tunnel.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TunnelArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Tunnel ID.
+    pub tunnel_id: String,
 }
 
 /// Arguments for one asynchronous job.
@@ -1225,6 +1276,141 @@ impl SdcHandler {
                 .get_resource(args.resource, &args.uuid, &cancellation)
                 .await,
         ))
+    }
+
+    #[tool(
+        name = "list_sdc_ipsec_profiles",
+        description = "List IPsec profiles with bounded pagination. This is a /api/v2/ endpoint."
+    )]
+    async fn list_sdc_ipsec_profiles(
+        &self,
+        Parameters(args): Parameters<IpsecProfileListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_sdc_ipsec_profiles",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "list_sdc_ipsec_profiles", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
+            .map_err(SdcError::from);
+        let result = match result {
+            Ok(page) => self.client.list_ipsec_profiles(page, &cancellation).await,
+            Err(error) => Err(error),
+        };
+        Ok(finish(audit, result))
+    }
+
+    #[tool(
+        name = "get_sdc_ipsec_profile",
+        description = "Get one IPsec profile by name. Profiles are addressed by profile_name, not UUID."
+    )]
+    async fn get_sdc_ipsec_profile(
+        &self,
+        Parameters(args): Parameters<IpsecProfileArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "get_sdc_ipsec_profile",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "get_sdc_ipsec_profile", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish(
+            audit,
+            self.client
+                .get_ipsec_profile(&args.profile_name, &cancellation)
+                .await,
+        ))
+    }
+
+    #[tool(
+        name = "list_sdc_tunnels",
+        description = "List tunnels with bounded pagination. Tunnels are read-only derived state."
+    )]
+    async fn list_sdc_tunnels(
+        &self,
+        Parameters(args): Parameters<TunnelListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_sdc_tunnels",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "list_sdc_tunnels", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
+            .map_err(SdcError::from);
+        let result = match result {
+            Ok(page) => self.client.list_tunnels(page, &cancellation).await,
+            Err(error) => Err(error),
+        };
+        Ok(finish(audit, result))
+    }
+
+    #[tool(
+        name = "get_sdc_tunnel",
+        description = "Get one tunnel by ID. Tunnels are read-only derived state."
+    )]
+    async fn get_sdc_tunnel(
+        &self,
+        Parameters(args): Parameters<TunnelArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(caller, "get_sdc_tunnel", "read", vec![args.tenant.clone()]);
+        if let Err(error) = self.authorize(caller, "get_sdc_tunnel", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish(
+            audit,
+            self.client.get_tunnel(&args.tunnel_id, &cancellation).await,
+        ))
+    }
+
+    #[tool(
+        name = "get_sdc_tunnel_count",
+        description = "Get tunnel status count. Returns counts by status."
+    )]
+    async fn get_sdc_tunnel_count(
+        &self,
+        Parameters(args): Parameters<TenantArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "get_sdc_tunnel_count",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "get_sdc_tunnel_count", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish(audit, self.client.tunnel_count(&cancellation).await))
     }
 
     #[tool(
