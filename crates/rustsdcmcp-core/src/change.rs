@@ -245,6 +245,7 @@ pub struct ChangeManager {
     policy_signature: String,
     object_signature: String,
     nat_signature: String,
+    license_signature: String,
 }
 
 impl ChangeManager {
@@ -268,6 +269,8 @@ impl ChangeManager {
             mutation_policy_signature(format!("sdc-object-write-v1:{tenant}:{endpoint}"));
         let nat_signature =
             mutation_policy_signature(format!("sdc-nat-write-v1:{tenant}:{endpoint}"));
+        let license_signature =
+            mutation_policy_signature(format!("sdc-license-write-v1:{tenant}:{endpoint}"));
         let coordinator = ChangesetCoordinator::load_with_recovery(
             state_path,
             OperationLimits::default(),
@@ -284,6 +287,7 @@ impl ChangeManager {
             policy_signature,
             object_signature,
             nat_signature,
+            license_signature,
         })
     }
 
@@ -704,6 +708,251 @@ impl ChangeManager {
             Ok(_) => "the planned firewall write was discarded".to_owned(),
             Err(discard_error) => format!(
                 "the planned firewall write also could not be discarded and needs manual resolution: {discard_error}"
+            ),
+        }
+    }
+
+    /// Prepare a license or certificate write.
+    ///
+    /// Reads the current state of licenses or certificates on the device so
+    /// the plan records exactly what the write would change. Apply refuses if
+    /// that state has since moved.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the target cannot be read, the envelope is
+    /// invalid, or change-control state cannot be written.
+    pub async fn prepare_license_write(
+        &self,
+        owner: String,
+        action: crate::LicenseWriteOperation,
+        device_uuid: String,
+        request: Value,
+        cancellation: &CancellationToken,
+    ) -> Result<crate::LicensePrepareResult, SdcError> {
+        use crate::LicenseWriteOperation::*;
+        // Read the device's current license or certificate state so the digest
+        // binds to observed reality and apply can detect drift.
+        let before = match action {
+            InstallLicense => {
+                // Fetch all licenses on this device to capture the state before adding another
+                self.client
+                    .list_licenses(
+                        &device_uuid,
+                        crate::ListRequest::new(0, 100, 100)?,
+                        cancellation,
+                    )
+                    .await?
+            }
+            InstallCaCertificate => {
+                // Fetch all CA certificates on this device
+                self.client
+                    .list_device_ca_certificates(
+                        &device_uuid,
+                        crate::ListRequest::new(0, 100, 100)?,
+                        cancellation,
+                    )
+                    .await?
+            }
+            InstallLocalCertificate => {
+                // Fetch all local certificates on this device
+                self.client
+                    .list_device_local_certificates(
+                        &device_uuid,
+                        crate::ListRequest::new(0, 100, 100)?,
+                        cancellation,
+                    )
+                    .await?
+            }
+            DeleteCertificate => {
+                // Fetch both certificate types since delete can target either
+                let ca_certs = self
+                    .client
+                    .list_device_ca_certificates(
+                        &device_uuid,
+                        crate::ListRequest::new(0, 100, 100)?,
+                        cancellation,
+                    )
+                    .await?;
+                let local_certs = self
+                    .client
+                    .list_device_local_certificates(
+                        &device_uuid,
+                        crate::ListRequest::new(0, 100, 100)?,
+                        cancellation,
+                    )
+                    .await?;
+                serde_json::json!({
+                    "ca_certificates": ca_certs,
+                    "local_certificates": local_certs,
+                })
+            }
+        };
+        let prepared = crate::SdcPreparedLicenseWrite::new(action, device_uuid, request, before)?;
+        let change_set = self
+            .coordinator
+            .create_change_set(
+                self.tenant.clone(),
+                vec![prepared.clone()],
+                owner,
+                prepared.plan_digest().to_owned(),
+                self.license_signature.clone(),
+            )
+            .await
+            .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        Ok(crate::LicensePrepareResult {
+            change_set,
+            prepared_change: prepared,
+        })
+    }
+
+    /// Apply, diff, and commit one exact approved license/certificate write.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when approval does not match or the SDC write fails.
+    pub async fn apply_license_write(
+        &self,
+        change_set_id: String,
+        owner: String,
+        expected_digest: String,
+        expected_plan_digest: String,
+        attribution: &Attribution,
+        cancellation: &CancellationToken,
+    ) -> Result<crate::LicenseApplyResult, SdcError> {
+        let transaction = crate::SdcLicenseTransaction::new(
+            self.client.clone(),
+            expected_plan_digest.clone(),
+            cancellation.clone(),
+        );
+        let applied = self
+            .coordinator
+            .apply_change_set(
+                change_set_id,
+                self.tenant.clone(),
+                self.endpoint.clone(),
+                owner.clone(),
+                expected_digest,
+                expected_plan_digest.clone(),
+                &transaction,
+                "license_write",
+                None,
+                attribution,
+                cancellation,
+            )
+            .await
+            .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        let operation_id = applied.operation_id;
+        let staged = applied.staged;
+        let plan = self
+            .coordinator
+            .diff_operation(
+                &operation_id,
+                &self.tenant,
+                &owner,
+                &expected_plan_digest,
+                &transaction,
+                &staged,
+                cancellation,
+            )
+            .await
+            .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        let validation = match self
+            .coordinator
+            .validate_operation(
+                &operation_id,
+                &self.tenant,
+                &owner,
+                &expected_plan_digest,
+                &transaction,
+                &staged,
+                cancellation,
+            )
+            .await
+        {
+            Ok(report) => report,
+            Err(error) => {
+                let detail = self
+                    .release_unwritten_license(
+                        &operation_id,
+                        &owner,
+                        &expected_plan_digest,
+                        &transaction,
+                        cancellation,
+                    )
+                    .await;
+                return Err(SdcError::ChangeControl(format!("{error}; {detail}")));
+            }
+        };
+        let outcome = match self
+            .coordinator
+            .commit_operation(
+                &operation_id,
+                &self.tenant,
+                &owner,
+                &expected_plan_digest,
+                &self.license_signature,
+                &transaction,
+                &staged,
+                attribution,
+                &CommitOptions::default(),
+                cancellation,
+            )
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                if !transaction.refused_before_write() {
+                    return Err(SdcError::ChangeControl(error.to_string()));
+                }
+                let detail = self
+                    .release_unwritten_license(
+                        &operation_id,
+                        &owner,
+                        &expected_plan_digest,
+                        &transaction,
+                        cancellation,
+                    )
+                    .await;
+                return Err(SdcError::ChangeControl(format!("{error}; {detail}")));
+            }
+        };
+        Ok(crate::LicenseApplyResult {
+            operation_id,
+            plan,
+            validation,
+            outcome,
+        })
+    }
+
+    /// Discard a license write that failed before anything was sent to SDC.
+    ///
+    /// Returns a caller-facing description rather than an error: the original
+    /// failure is what the operator needs, and this only says whether the
+    /// blocked record was cleared.
+    async fn release_unwritten_license(
+        &self,
+        operation_id: &str,
+        owner: &str,
+        expected_plan_digest: &str,
+        transaction: &crate::SdcLicenseTransaction,
+        cancellation: &CancellationToken,
+    ) -> String {
+        match self
+            .coordinator
+            .discard_operation(
+                operation_id,
+                &self.tenant,
+                owner,
+                expected_plan_digest,
+                transaction,
+                cancellation,
+            )
+            .await
+        {
+            Ok(_) => "the planned license write was discarded".to_owned(),
+            Err(discard_error) => format!(
+                "the planned license write also could not be discarded and needs manual resolution: {discard_error}"
             ),
         }
     }
@@ -1556,6 +1805,200 @@ mod tests {
             .await
             .expect("an unchanged target validates");
         assert!(report.valid && report.target_unchanged);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn license_write_refuses_drift_through_full_prepare_path() {
+        // This tests the PREPARE layer: that prepare_license_write reads the
+        // current state and binds it into the digest, so apply can detect drift.
+        // The license_write.rs tests verify the transaction machinery given a
+        // populated before; this tests that prepare actually populates it.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        // Stub the license listing endpoint to return initial state at prepare time
+        let initial_state = Arc::new(std::sync::Mutex::new(json!({
+            "items": [{"uuid": "lic-1", "name": "initial"}],
+            "count": 1
+        })));
+        let state_for_route = initial_state.clone();
+
+        let app = Router::new().route(
+            "/api/v1/devices/device-123/licenses",
+            get(move || {
+                let state = state_for_route.lock().expect("test mutex").clone();
+                async move { Json(state) }
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        let client =
+            SdcClient::from_test_parts(base_url.clone(), "test-secret".to_owned(), 64 * 1024, 100);
+        let manager = ChangeManager::load(
+            client.clone(),
+            "tenant-a",
+            base_url.to_string(),
+            None,
+            Duration::from_secs(60),
+        )
+        .expect("change manager");
+        let cancellation = CancellationToken::new();
+
+        // Call the real prepare_license_write - this must read and bind the initial state
+        let prepared = manager
+            .prepare_license_write(
+                "alice".to_owned(),
+                crate::LicenseWriteOperation::InstallLicense,
+                "device-123".to_owned(),
+                json!({"license_key": "NEW-KEY"}),
+                &cancellation,
+            )
+            .await
+            .expect("prepare");
+
+        // The prepared change MUST have captured the observed license state,
+        // not Value::Null. This is what binds into the plan digest.
+        assert!(
+            !prepared.prepared_change.before().is_null(),
+            "prepare must read and bind the actual license state, not Null"
+        );
+        assert_eq!(
+            prepared.prepared_change.before()["items"][0]["uuid"],
+            "lic-1",
+            "prepare must capture the exact observed state"
+        );
+
+        // Now drift the state - someone else added a license
+        *initial_state.lock().expect("test mutex") = json!({
+            "items": [
+                {"uuid": "lic-1", "name": "initial"},
+                {"uuid": "lic-2", "name": "added-by-someone-else"}
+            ],
+            "count": 2
+        });
+
+        // Try to validate - must refuse because the state drifted
+        let transaction = crate::SdcLicenseTransaction::new(
+            client,
+            prepared.prepared_change.plan_digest().to_owned(),
+            cancellation.clone(),
+        );
+        let staged = transaction
+            .stage(std::slice::from_ref(&prepared.prepared_change))
+            .await
+            .expect("stages");
+
+        let error = transaction
+            .validate(&staged)
+            .await
+            .expect_err("a drifted license state must refuse");
+        assert!(
+            matches!(&error, SdcError::TargetDrifted),
+            "unexpected error: {error:?}"
+        );
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn certificate_delete_refuses_drift_through_full_prepare_path() {
+        // DeleteCertificate is the sharp case: drift means deleting the wrong cert.
+        // This must go through the real prepare path to prove it reads both lists.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let ca_state = Arc::new(std::sync::Mutex::new(json!({
+            "items": [{"uuid": "ca-1", "name": "original-ca"}],
+            "count": 1
+        })));
+        let local_state = Arc::new(std::sync::Mutex::new(json!({
+            "items": [{"uuid": "local-1", "name": "original-local"}],
+            "count": 1
+        })));
+
+        let ca_for_route = ca_state.clone();
+        let local_for_route = local_state.clone();
+
+        let app = Router::new()
+            .route(
+                "/api/v1/devices/device-456/ca_certificates",
+                get(move || {
+                    let state = ca_for_route.lock().expect("test mutex").clone();
+                    async move { Json(state) }
+                }),
+            )
+            .route(
+                "/api/v1/devices/device-456/local_certificates",
+                get(move || {
+                    let state = local_for_route.lock().expect("test mutex").clone();
+                    async move { Json(state) }
+                }),
+            );
+
+        let (base_url, server) = serve(app).await;
+        let client =
+            SdcClient::from_test_parts(base_url.clone(), "test-secret".to_owned(), 64 * 1024, 100);
+        let manager = ChangeManager::load(
+            client.clone(),
+            "tenant-a",
+            base_url.to_string(),
+            None,
+            Duration::from_secs(60),
+        )
+        .expect("change manager");
+        let cancellation = CancellationToken::new();
+
+        // Prepare a certificate deletion - reads both CA and local cert lists
+        let prepared = manager
+            .prepare_license_write(
+                "alice".to_owned(),
+                crate::LicenseWriteOperation::DeleteCertificate,
+                "device-456".to_owned(),
+                json!({"certificate_id": "ca-1"}),
+                &cancellation,
+            )
+            .await
+            .expect("prepare");
+
+        // The prepared change MUST have captured both certificate lists.
+        // DeleteCertificate reads both CA and local certs since either could be deleted.
+        assert!(
+            !prepared.prepared_change.before().is_null(),
+            "prepare must read certificate state, not Null"
+        );
+        assert!(
+            prepared.prepared_change.before()["ca_certificates"].is_object(),
+            "prepare must read CA certificates"
+        );
+        assert!(
+            prepared.prepared_change.before()["local_certificates"].is_object(),
+            "prepare must read local certificates"
+        );
+
+        // Drift: the CA cert was replaced between prepare and apply
+        *ca_state.lock().expect("test mutex") = json!({
+            "items": [{"uuid": "ca-2", "name": "replaced-by-someone-else"}],
+            "count": 1
+        });
+
+        // Try to validate - must refuse to prevent deleting the replacement
+        let transaction = crate::SdcLicenseTransaction::new(
+            client,
+            prepared.prepared_change.plan_digest().to_owned(),
+            cancellation,
+        );
+        let staged = transaction
+            .stage(std::slice::from_ref(&prepared.prepared_change))
+            .await
+            .expect("stages");
+
+        let error = transaction
+            .validate(&staged)
+            .await
+            .expect_err("drifted certificate state must refuse deletion");
+        assert!(
+            matches!(&error, SdcError::TargetDrifted),
+            "unexpected error: {error:?}"
+        );
+
         server.abort();
     }
 }

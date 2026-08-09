@@ -78,6 +78,8 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "apply_sdc_nat_write",
     "prepare_sdc_firewall_write",
     "apply_sdc_firewall_write",
+    "prepare_sdc_license_write",
+    "apply_sdc_license_write",
     "get_sdc_firewall_policy_state",
 ];
 
@@ -92,6 +94,8 @@ pub const WRITE_TOOLS: &[&str] = &[
     "apply_sdc_nat_write",
     "prepare_sdc_firewall_write",
     "apply_sdc_firewall_write",
+    "prepare_sdc_license_write",
+    "apply_sdc_license_write",
 ];
 
 /// Security Director Cloud MCP handler.
@@ -251,6 +255,37 @@ pub struct FirewallPolicyStateArgs {
     /// Include per-device deployment states in the response.
     #[serde(default)]
     pub include_assigned_devices: bool,
+}
+
+/// Arguments for planning one license/certificate write.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PrepareLicenseArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Which mutation to plan.
+    pub action: rustsdcmcp_core::LicenseWriteOperation,
+    /// Target device UUID.
+    pub device_uuid: String,
+    /// Request body (license key, certificate data, etc).
+    pub body: Value,
+}
+
+/// Arguments for applying one approved license/certificate write.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ApplyLicenseArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Change-set identifier.
+    pub change_set_id: String,
+    /// Exact approved plan digest.
+    pub expected_digest: String,
+    /// Exact plan digest returned by prepare.
+    pub expected_plan_digest: String,
+    /// Optional external ticket or change reference.
+    #[serde(default)]
+    pub change_ref: Option<String>,
 }
 
 /// Arguments for one device.
@@ -1425,6 +1460,78 @@ impl SdcHandler {
             audit,
             self.changes
                 .apply_firewall_write(
+                    args.change_set_id,
+                    owner(caller),
+                    args.expected_digest,
+                    args.expected_plan_digest,
+                    &attribution,
+                    &cancellation,
+                )
+                .await,
+        ))
+    }
+
+    #[tool(
+        name = "prepare_sdc_license_write",
+        description = "Plan one license or certificate install/delete and create a digest-bound change set. This does not write."
+    )]
+    async fn prepare_sdc_license_write(
+        &self,
+        Parameters(args): Parameters<PrepareLicenseArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "prepare_sdc_license_write",
+            "prepare",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "prepare_sdc_license_write", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish(
+            audit,
+            self.changes
+                .prepare_license_write(
+                    owner(caller),
+                    args.action,
+                    args.device_uuid,
+                    args.body,
+                    &cancellation,
+                )
+                .await,
+        ))
+    }
+
+    #[tool(
+        name = "apply_sdc_license_write",
+        description = "Apply only an independently approved SDC license/certificate write."
+    )]
+    async fn apply_sdc_license_write(
+        &self,
+        Parameters(args): Parameters<ApplyLicenseArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "apply_sdc_license_write",
+            "apply",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "apply_sdc_license_write", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let attribution = attribution(caller, args.change_ref);
+        Ok(finish(
+            audit,
+            self.changes
+                .apply_license_write(
                     args.change_set_id,
                     owner(caller),
                     args.expected_digest,
