@@ -627,6 +627,74 @@ impl SdcClient {
             .await
     }
 
+    /// List IPsec profiles with bounded pagination.
+    ///
+    /// This is a `/api/v2/` endpoint, unlike most policy and device operations.
+    pub async fn list_ipsec_profiles(
+        &self,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        self.list(&["api", "v2", "ipsec-profiles"], page, cancellation)
+            .await
+    }
+
+    /// Fetch one IPsec profile by name.
+    ///
+    /// IPsec profiles are addressed by `profile_name`, not UUID or numeric ID.
+    /// This is a `/api/v2/` endpoint.
+    pub async fn get_ipsec_profile(
+        &self,
+        profile_name: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("profile_name", profile_name)?;
+        self.get(
+            &["api", "v2", "ipsec-profile", profile_name],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// List tunnels with bounded pagination.
+    ///
+    /// This is a `/api/v2/` endpoint. Tunnels are read-only derived state,
+    /// not directly created or deleted.
+    pub async fn list_tunnels(
+        &self,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        self.list(&["api", "v2", "tunnels"], page, cancellation)
+            .await
+    }
+
+    /// Fetch one tunnel by ID.
+    ///
+    /// This is a `/api/v2/` endpoint.
+    pub async fn get_tunnel(
+        &self,
+        tunnel_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("tunnel_id", tunnel_id)?;
+        self.get(&["api", "v2", "tunnel", tunnel_id], &[], cancellation)
+            .await
+    }
+
+    /// Get tunnel status count.
+    ///
+    /// This is a `/api/v2/` endpoint.
+    pub async fn tunnel_count(&self, cancellation: &CancellationToken) -> Result<Value, SdcError> {
+        self.get(
+            &["api", "v2", "tunnels", "status", "count"],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
     /// Create a new NAT policy.
     ///
     /// # Errors
