@@ -33,20 +33,34 @@ I/O therefore protect the management plane rather than merely decorate it.
 
 `rustsdcmcp` is available to repository collaborators as the private
 [`v0.1.0-lab.4` prerelease](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.1.0-lab.4),
-which targets `ee38d0891151cfc61f5f9c6ec6deb4559e45400d`. It exposes 17 MCP
-tools: 14 bounded read tools and three write tools—`prepare_sdc_policy_deploy`,
-`approve_sdc_change_set`, and `apply_sdc_change_set`—that can be used only
-through prepare → independent approval → apply.
+which targets `ee38d0891151cfc61f5f9c6ec6deb4559e45400d`. That prerelease
+exposes 17 MCP tools — 14 bounded read tools and three write tools
+(`prepare_sdc_policy_deploy`, `approve_sdc_change_set`, `apply_sdc_change_set`).
+It predates most of the current surface.
 
-Live, read-only validation against SDC was last performed on 2026-08-07 against
-commit `ea81805d2b4b97df9bdd3f70423e047524896a3d` with `mecmcp` `v0.5.0`. It
-verified credential-based startup tenant validation, `get_sdc_tenant_scope`,
-and `list_sdc_devices` with `from=0,size=1`; a read-only grant exposing exactly
-its 14 permitted tools and no write tools; `401` for missing and invalid
-bearers; and audit records carrying HMAC-redacted targets with no cleartext
-tenant identifier. No preview, approval, apply, deployment, or other SDC
-mutation has ever been attempted against a live tenant, and the remaining
-endpoint questions are tracked in
+Current `main` exposes **48 MCP tools**: 37 bounded read tools and 11
+change-control tools. Every mutation is reachable only through prepare →
+independent approval → apply; a wildcard token scope deliberately grants no
+write tool, so each must be named explicitly when a token is minted.
+
+Live validation against SDC has gone well beyond read-only. On 2026-08-07 a
+full `prepare → approve → apply` policy deploy ran against the lab tenant and
+reached a managed vSRX, which is how the destructive co-management behaviour in
+#23 was discovered — an SDC policy deploy removes device configuration SDC does
+not model. `JobStatus` and `DeviceStatusEntry` are validated against live
+preview and deploy responses.
+
+On 2026-08-12 the certificate and licence readers, `BulkSyncDevices`, and the
+template endpoints were exercised live. Device sync **imports** into SDC rather
+than pushing to the device, but reconciles inventory only and does not clear
+`device_config_state: OUT_OF_BAND_CHANGED`.
+
+Read-path security properties verified live: credential-based startup tenant
+validation, a scoped grant exposing exactly its permitted tools and no write
+tools, `401` for missing and invalid bearers, and audit records carrying
+HMAC-redacted targets with no cleartext tenant identifier.
+
+Observed response shapes and the remaining endpoint questions are tracked in
 [`docs/sdc-api/README.md`](docs/sdc-api/README.md#still-unverified).
 
 ## Private prerelease
