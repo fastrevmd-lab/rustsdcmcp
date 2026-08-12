@@ -222,11 +222,81 @@ What it does and does not change:
 
 If you want solo write-testing *without* waiving the control, mint two tokens
 with different names and use one to prepare and the other to approve: the
-principal is the token name, and self-approval is refused.
+principal is the token name, and self-approval is refused. That gives one person
+the complete lifecycle with the control intact, and is the better choice
+wherever the ceremony has any value.
 
-The flag follows `mecmcp`'s shared change-set CLI standard, alongside
-`--state-file` and `--approval-timeout-secs`. An explicitly supplied flag beats
-product configuration; otherwise `sdc.json` supplies the value.
+#### Enabling it
+
+Add the flag to the service unit. On a package install, use a drop-in rather
+than editing the shipped unit, so an upgrade does not silently drop it:
+
+```console
+sudo systemctl edit rustsdcmcp
+```
+
+Replacing `ExecStart` means restating it in full, so **copy the shipped
+command and append the flag** rather than writing a shorter one. Dropping the
+`--audit-*` arguments would turn off HMAC target redaction and structured
+journald auditing as a side effect of enabling lab mode:
+
+```ini
+[Service]
+# Clear the shipped ExecStart before replacing it; systemd appends otherwise.
+ExecStart=
+ExecStart=/usr/local/bin/rustsdcmcp \
+    --device-mapping /etc/rustsdcmcp/sdc.json \
+    --transport streamable-http \
+    --host 127.0.0.1 \
+    --port 30032 \
+    --tokens-file /etc/rustsdcmcp/tokens.json \
+    --audit-format json \
+    --audit-journald \
+    --audit-redact devices=hmac \
+    --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key \
+    --lab-mode
+```
+
+Check it against `packaging/systemd/rustsdcmcp.service` before applying it — the
+shipped arguments are the authority, and this snippet is a copy that can age.
+
+```console
+sudo systemctl daemon-reload && sudo systemctl restart rustsdcmcp
+```
+
+Confirm it took effect. The two startup records use different spellings —
+`--lab-mode` in the warning and `lab_mode` in the resolved-configuration line —
+so match both, and read the journal with enough privilege to see a system unit:
+
+```console
+sudo journalctl -u rustsdcmcp -b | grep -E 'lab.mode'
+{"level":"WARN","fields":{"message":"--lab-mode: two-person control is DISABLED. …"}}
+{"level":"INFO","fields":{"message":"change-control configuration resolved","lab_mode":true,…}}
+```
+
+Silence means it is off. An unprivileged `journalctl` can also print nothing
+here for lack of access rather than because the flag is unset, which is why the
+command uses `sudo`.
+
+A waived change set then reports `"state": "approved"` with `"approver": null`
+and `"approval_waiver": "lab-mode"` straight out of `prepare_sdc_policy_deploy`,
+and `apply_sdc_change_set` needs no separate approval call.
+
+For a one-off run rather than a service, pass `--lab-mode` on the command line
+the same way.
+
+#### Precedence
+
+`--lab-mode` is part of `mecmcp`'s shared change-set CLI standard, alongside
+`--state-file` and `--approval-timeout-secs`. For those other two, an
+explicitly supplied flag wins and `sdc.json` supplies the value otherwise
+(`changeset_state_file`, `approval_ttl_secs`).
+
+**`--lab-mode` is CLI-only.** There is no `sdc.json` field for it, deliberately:
+a relaxed security control should have to be typed into the unit an operator can
+see, not inherited from a configuration file edited months ago. Whether the
+shared standard permits a product-config fallback is an open upstream question
+(mecmcp#267); this server takes the conservative reading.
 
 ## Deployment maturity
 
