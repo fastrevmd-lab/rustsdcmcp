@@ -1,9 +1,8 @@
 //! Security Director Cloud MCP server executable.
 
 use anyhow::{Context, Result};
-use clap::Parser as _;
 use mecmcp_auth::{NoGrant, TokenStoreFile};
-use mecmcp_runtime::cli::{Cli, Command, Transport};
+use mecmcp_runtime::cli::{Cli, Command, ParsedCli, Transport};
 use rmcp::ServiceExt as _;
 use rustsdcmcp::{KNOWN_TOOLS, SdcHandler, serve_http};
 use rustsdcmcp_core::{ChangeManager, SdcClient, SdcConfig};
@@ -13,6 +12,69 @@ use std::{
     time::Duration,
 };
 use tokio_util::sync::CancellationToken;
+
+/// Security Director Cloud MCP server.
+//
+// This is the shared `mecmcp` CLI plus the three standardized change-set
+// flags. `mecmcp/docs/PACKAGING.md` standardizes `--lab-mode`, `--state-file`,
+// and `--approval-timeout-secs` across every server in the family, and
+// specifies that each server declares them on *its own* CLI type rather than in
+// the shared `Cli` — `parse_with_provenance` parses this struct, not that one.
+// Flattening keeps every shared flag while adding the three here.
+//
+// Doc comments on this struct become `--help` text, so the rationale stays in
+// ordinary comments and only the description above is a doc comment.
+#[derive(Debug, clap::Parser)]
+struct ServerCli {
+    /// Arguments shared by every mecmcp server.
+    #[command(flatten)]
+    shared: Cli,
+
+    /// Run without two-person control; change sets are approved on creation.
+    ///
+    /// Off by default. The waiver is recorded, never fabricated: a waived
+    /// change set carries `approver: null` alongside
+    /// `approval_waiver: "lab-mode"`, and its own digest, so it stays
+    /// distinguishable from a genuine two-person approval.
+    #[arg(long)]
+    lab_mode: bool,
+
+    /// Absolute path to the change-set and operation state file.
+    ///
+    /// Falls back to `changeset_state_file` in the product configuration.
+    #[arg(long)]
+    state_file: Option<PathBuf>,
+
+    /// How long an approval stays valid, in seconds.
+    ///
+    /// Falls back to `approval_ttl_secs` in the product configuration.
+    #[arg(long, default_value_t = DEFAULT_APPROVAL_TIMEOUT_SECS)]
+    approval_timeout_secs: u64,
+}
+
+/// Parser default for `--approval-timeout-secs`.
+///
+/// Only reached when neither the flag nor product configuration supplies a
+/// value, because `SdcConfig` carries its own serde default.
+const DEFAULT_APPROVAL_TIMEOUT_SECS: u64 = 900;
+
+/// Resolve one standard flag against product configuration.
+///
+/// The rule is `mecmcp/docs/PACKAGING.md`'s: an explicitly supplied CLI value
+/// wins, otherwise product configuration, otherwise the built-in default.
+///
+/// The trap is deciding "explicitly supplied". A defaulted flag is
+/// indistinguishable from a typed one by value alone, so comparing against the
+/// default gets it wrong in both directions — it ignores a flag the operator
+/// did type, and it overrides a configured value with a default nobody chose.
+/// `was_supplied` answers from clap's own provenance instead.
+fn resolve<T>(supplied_on_cli: bool, from_cli: T, from_config: T) -> T {
+    if supplied_on_cli {
+        from_cli
+    } else {
+        from_config
+    }
+}
 
 /// Bearer-token boundary selected for the Streamable HTTP listener.
 #[derive(Debug, PartialEq, Eq)]
@@ -65,7 +127,24 @@ fn install_shutdown_signals(shutdown: CancellationToken) -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Cli::parse();
+    // `parse_for`/`parse_with_provenance` name the binary and its version, so
+    // `--version` answers instead of failing as an unknown argument. Parsing
+    // the shared `Cli` directly leaves it with no version of its own
+    // (mecmcp#159), which breaks the package-identity check a deployment runs.
+    let parsed: ParsedCli<ServerCli> = mecmcp_runtime::cli::parse_with_provenance::<ServerCli>(
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION"),
+    );
+    // Read provenance before consuming `parsed.cli`; `Command` is not `Clone`,
+    // so the shared arguments have to be moved out rather than borrowed.
+    let state_file_supplied = parsed.was_supplied("state_file");
+    let approval_timeout_supplied = parsed.was_supplied("approval_timeout_secs");
+    let ServerCli {
+        shared: args,
+        lab_mode,
+        state_file: cli_state_file,
+        approval_timeout_secs: cli_approval_timeout_secs,
+    } = parsed.cli;
     mecmcp_runtime::cli_validate::validate(&args).map_err(|error| anyhow::anyhow!("{error}"))?;
 
     // Decide the listener's authentication boundary alongside the rest of the
@@ -112,6 +191,38 @@ async fn main() -> Result<()> {
             .map_err(anyhow::Error::from);
     }
 
+    // Explicit CLI beats product configuration, but only when actually typed.
+    let state_file = resolve(
+        state_file_supplied,
+        cli_state_file,
+        config.changeset_state_file.clone(),
+    );
+    let approval_ttl_secs = resolve(
+        approval_timeout_supplied,
+        cli_approval_timeout_secs,
+        config.approval_ttl_secs,
+    );
+
+    if lab_mode {
+        // A relaxed security control should be visible where someone will see
+        // it, not inferred from flags typed weeks ago.
+        tracing::warn!(
+            "--lab-mode: two-person control is DISABLED. Change sets are approved on \
+             creation with approver=null and approval_waiver=\"lab-mode\". Every \
+             mutation still goes through prepare and apply, and waived approvals stay \
+             distinguishable from genuine ones in the audit trail."
+        );
+    }
+    tracing::info!(
+        lab_mode,
+        approval_ttl_secs,
+        state_file = state_file
+            .as_deref()
+            .and_then(Path::to_str)
+            .unwrap_or("<in-memory>"),
+        "change-control configuration resolved"
+    );
+
     let provider = rustls::crypto::ring::default_provider();
     provider
         .clone()
@@ -143,8 +254,9 @@ async fn main() -> Result<()> {
         client.clone(),
         config.tenant.clone(),
         config.endpoint.clone(),
-        config.changeset_state_file.as_deref(),
-        Duration::from_secs(config.approval_ttl_secs),
+        state_file.as_deref(),
+        Duration::from_secs(approval_ttl_secs),
+        lab_mode,
     )?);
     let handler = SdcHandler::new(Arc::<str>::from(config.tenant.as_str()), client, changes);
 
@@ -238,7 +350,9 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AuthMode, resolve_auth_mode};
+    use super::{
+        AuthMode, DEFAULT_APPROVAL_TIMEOUT_SECS, ParsedCli, ServerCli, resolve, resolve_auth_mode,
+    };
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -266,5 +380,134 @@ mod tests {
     #[test]
     fn a_listener_with_no_authentication_decision_is_refused() {
         assert!(resolve_auth_mode(None, false).is_err());
+    }
+
+    /// Parse an argument list through the same path `main` uses.
+    fn parse(args: &[&str]) -> ParsedCli<ServerCli> {
+        mecmcp_runtime::cli::try_parse_from::<ServerCli, _, _>("rustsdcmcp", "0.0.0-test", args)
+            .expect("parses")
+    }
+
+    #[test]
+    fn version_answers_instead_of_erroring() {
+        // Parsing the shared `Cli` directly made `--version` an unknown
+        // argument, which broke the package-identity check a deployment runs
+        // (mecmcp#159). The error carries the rendered version, not a failure.
+        let error = mecmcp_runtime::cli::try_parse_from::<ServerCli, _, _>(
+            "rustsdcmcp",
+            "9.9.9-test",
+            ["rustsdcmcp", "--version"],
+        )
+        .expect_err("--version exits through clap");
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayVersion);
+        assert!(
+            error.to_string().contains("9.9.9-test"),
+            "--version must name this binary's version, got: {error}"
+        );
+    }
+
+    #[test]
+    fn omitted_flags_fall_back_to_product_configuration() {
+        let parsed = parse(&["rustsdcmcp", "--transport", "stdio"]);
+        assert!(!parsed.was_supplied("approval_timeout_secs"));
+        assert!(!parsed.was_supplied("state_file"));
+
+        // The parser default must not win over a configured value.
+        assert_eq!(
+            resolve(
+                parsed.was_supplied("approval_timeout_secs"),
+                parsed.cli.approval_timeout_secs,
+                3600
+            ),
+            3600
+        );
+    }
+
+    #[test]
+    fn an_explicit_flag_beats_product_configuration() {
+        let parsed = parse(&["rustsdcmcp", "--approval-timeout-secs", "120"]);
+        assert!(parsed.was_supplied("approval_timeout_secs"));
+        assert_eq!(
+            resolve(
+                parsed.was_supplied("approval_timeout_secs"),
+                parsed.cli.approval_timeout_secs,
+                3600
+            ),
+            120
+        );
+    }
+
+    #[test]
+    fn a_flag_typed_with_the_default_value_still_wins() {
+        // The trap PACKAGING.md names: comparing against the default cannot
+        // tell a typed value from a defaulted one, so it would silently hand
+        // this operator the configured 3600 they were overriding.
+        let typed = format!("{DEFAULT_APPROVAL_TIMEOUT_SECS}");
+        let parsed = parse(&["rustsdcmcp", "--approval-timeout-secs", &typed]);
+        assert!(parsed.was_supplied("approval_timeout_secs"));
+        assert_eq!(
+            resolve(
+                parsed.was_supplied("approval_timeout_secs"),
+                parsed.cli.approval_timeout_secs,
+                3600
+            ),
+            DEFAULT_APPROVAL_TIMEOUT_SECS
+        );
+    }
+
+    #[test]
+    fn state_file_resolves_without_moving_an_existing_deployment() {
+        // Adoption must not silently relocate durable state. With the flag
+        // absent, the configured path must survive untouched.
+        let configured = Some(PathBuf::from("/var/lib/rustsdcmcp/changeset-state.json"));
+        let parsed = parse(&["rustsdcmcp"]);
+        assert_eq!(
+            resolve(
+                parsed.was_supplied("state_file"),
+                parsed.cli.state_file.clone(),
+                configured.clone()
+            ),
+            configured
+        );
+
+        let parsed = parse(&["rustsdcmcp", "--state-file", "/tmp/other.json"]);
+        assert_eq!(
+            resolve(
+                parsed.was_supplied("state_file"),
+                parsed.cli.state_file.clone(),
+                configured
+            ),
+            Some(PathBuf::from("/tmp/other.json"))
+        );
+    }
+
+    #[test]
+    fn lab_mode_is_off_unless_asked_for() {
+        assert!(!parse(&["rustsdcmcp"]).cli.lab_mode);
+        assert!(parse(&["rustsdcmcp", "--lab-mode"]).cli.lab_mode);
+    }
+
+    #[test]
+    fn the_shared_flags_survive_flattening() {
+        // Declaring the standard flags locally must not drop any shared one.
+        let parsed = parse(&[
+            "rustsdcmcp",
+            "--transport",
+            "streamable-http",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "30032",
+            "--allowed-host",
+            "rustsdcmcp-612.mechub.org:30032",
+            "--lab-mode",
+        ]);
+        assert_eq!(parsed.cli.shared.host, "0.0.0.0");
+        assert_eq!(parsed.cli.shared.port, 30032);
+        assert_eq!(
+            parsed.cli.shared.allowed_host,
+            vec!["rustsdcmcp-612.mechub.org:30032".to_owned()]
+        );
+        assert!(parsed.cli.lab_mode);
     }
 }

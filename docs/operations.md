@@ -347,6 +347,69 @@ Write tools require an authenticated bearer token and exact tool grants.
 Wildcard tool scope deliberately excludes them. Stdio and `--allow-no-auth`
 are read-only.
 
+This is worth stating concretely, because it surprises people: a token minted
+with `--tools '*'` sees the read tools **only**. Every write tool must be named
+when the token is minted. `mecmcp-auth` enforces this — a wildcard scope is
+defined as "everything except the server's declared write tools" — so there is
+no token scope that grants mutation implicitly.
+
+### Single-operator lab mode
+
+`--lab-mode` waives the second principal. It is off by default, and the server
+warns at startup whenever it is on.
+
+```
+ExecStart=/usr/local/bin/rustsdcmcp \
+    ... \
+    --lab-mode
+```
+
+Step 2 above disappears; steps 1, 3, 4, and 5 are unchanged. The waiver is
+applied automatically when the change set is created, so there is no waive tool
+to call and the operator's flow stays prepare → apply.
+
+What lab mode does **not** relax: the plan is still digest-bound, drift is still
+detected against the state observed at prepare, and apply still revalidates
+ownership, fingerprints, and the policy signature.
+
+A waived change set is recorded as waived, never as approved:
+
+| Field | Genuine approval | Lab-mode waiver |
+|---|---|---|
+| `approver` | the approving principal | `null` |
+| `approval_waiver` | absent | `"lab-mode"` |
+| digest | approval digest | waiver digest over `(change_set_id, plan_digest, owner, approved_at)` |
+
+Both fields matter. `approver: null` alone means *both* "nobody has approved
+this yet" and "approved without review", and an operator or SIEM has to tell
+those apart. The waiver is never encoded as a sentinel string inside
+`approver`, so a token happening to be named `lab-mode` cannot be confused for
+one.
+
+**Prefer two tokens to lab mode when you can.** The approving principal is the
+token name, and self-approval is refused, so minting `you-prepare` and
+`you-approve` gives one person the complete lifecycle with the control intact.
+Lab mode is for when that ceremony has no value; it is not a convenience to
+reach for on a shared or production tenant.
+
+### Standard change-set flags and precedence
+
+`--lab-mode`, `--state-file`, and `--approval-timeout-secs` are standardized
+across every `mecmcp` server, so an operator who learns one does not relearn
+the next. This server also stores two of those values in `sdc.json`
+(`changeset_state_file`, `approval_ttl_secs`), so precedence is defined:
+
+1. an explicitly supplied CLI value wins;
+2. otherwise product configuration;
+3. otherwise the built-in default.
+
+"Explicitly supplied" means the operator typed it, not that it differs from the
+default — a flag typed with the same value as the default still wins. Adopting
+these flags therefore cannot silently relocate a durable state file or change
+an approval lifetime on an existing deployment.
+
+The effective values are logged at startup.
+
 ## Co-managing an SRX with SDC
 
 SDC deploys its own complete model of the hierarchies it owns. Device-local
