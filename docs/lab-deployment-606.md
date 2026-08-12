@@ -13,9 +13,17 @@
 - SHA-256:
   `74723b532f81967bf34dbfc87ce7cb7464fe997d342186fb4062e7891e14779d`
 - mecmcp reference: `changeset-v0.3.6`
-- Compatibility boundary: 59 temporary, issue-linked Rust symbols are recorded
-  one-to-one in [the compatibility ledger](mecmcp-compatibility.md). Their
-  upstream issues are `fastrevmd-lab/mecmcp` issues 96 through 154.
+- Compatibility boundary: 59 temporary, issue-linked Rust symbols were recorded
+  one-to-one in a compatibility ledger. Their upstream issues were
+  `fastrevmd-lab/mecmcp` issues 96 through 154.
+
+> **Superseded 2026-08-12.** This file is the immutable acceptance record for
+> the 2026-07-29 deployment and the statements above were true then. They no
+> longer describe the repository. The `compat/` layer was deleted in #36 on the
+> move to mecmcp 0.7.2, and `docs/mecmcp-compatibility.{md,tsv}` were removed in
+> `369f9bb` on the move to 0.8.0 — which is why the ledger is named here but no
+> longer linked. Current state is in [`../README.md`](../README.md) and
+> [`operations.md`](operations.md).
 
 ## Infrastructure
 
@@ -74,3 +82,9 @@ All 59 symbols must first ship together in one coherent mecmcp release, after
 which rustsdcmcp must replace the temporary implementation with the
 standardized library API and pass the complete test, package, security, and
 live read-only acceptance suite again.
+
+> **Superseded 2026-08-12.** The condition above was met. mecmcp 0.8.0 replaced
+> the temporary implementation, the `compat/` layer is gone, and this specific
+> blocker no longer applies. Remaining blockers to a public release are
+> operational and are tracked in [`../README.md`](../README.md) under Roadmap.
+> This paragraph is retained because it records what gated *this* build.
