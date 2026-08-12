@@ -13,6 +13,7 @@ mod models;
 mod nat_write;
 mod object_write;
 mod prepared;
+mod projection;
 
 pub use catalog::ResourceKind;
 pub use change::{

@@ -707,6 +707,7 @@ impl SdcClient {
             cancellation,
         )
         .await
+        .map(crate::projection::project_ca_certificates)
     }
 
     /// List local certificates across all devices with bounded pagination.
@@ -721,6 +722,7 @@ impl SdcClient {
             cancellation,
         )
         .await
+        .map(crate::projection::project_local_certificates)
     }
 
     /// List CA certificates for one device with bounded pagination.
@@ -737,6 +739,7 @@ impl SdcClient {
             cancellation,
         )
         .await
+        .map(crate::projection::project_ca_certificates)
     }
 
     /// List local certificates for one device with bounded pagination.
@@ -753,6 +756,7 @@ impl SdcClient {
             cancellation,
         )
         .await
+        .map(crate::projection::project_local_certificates)
     }
 
     /// List licenses for one device with bounded pagination.
@@ -769,6 +773,7 @@ impl SdcClient {
             cancellation,
         )
         .await
+        .map(crate::projection::project_licenses)
     }
 
     /// Fetch one license by device UUID and license UUID.
@@ -793,6 +798,7 @@ impl SdcClient {
             cancellation,
         )
         .await
+        .map(crate::projection::project_license)
     }
 
     /// Install a license on a device and poll until the operation completes.
