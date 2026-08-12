@@ -449,6 +449,35 @@ deleting unreferenced `dynamic-address` config; nothing tested here shows that a
 template origin changes that outcome. Answering it needs a custom template
 deployed and then a policy deploy run over the same device.
 
+### 9. `DEVICE_GROUP` is not a supported deploy target (2026-08-12)
+
+Straight from the vendored spec, and it contradicts a claim in #34:
+
+```
+apiTargetType.description
+  - DEVICE: Individual device (default)
+  - DEVICE_GROUP: Group of devices (Not supported, future support)
+
+Target1.properties.type.description
+  DEVICE_GROUP will be supported later.
+```
+
+`TargetType::DeviceGroup` exists in `models.rs` and serializes to
+`device_group`, so this repository will happily build a preview or deploy
+request naming a device group — and SDC will reject it. #34 asserts the
+opposite ("already exists in `models.rs` and is deployable today"), and that
+assertion is what made device-group membership look like a blast-radius gap.
+It is not one: you cannot deploy to a group at all yet.
+
+The real defect is smaller and different — a target type the API does not
+support is accepted locally and fails downstream instead of being refused with
+a clear message. Device-group *reads* remain useful for inventory, just not for
+the reason #34 gives.
+
+`DEVICE_GROUP` **is** meaningful for templates: `apiDeviceType` uses the same
+name to distinguish template targets, with no "not supported" note. Do not
+generalize the deploy restriction to template operations.
+
 ## Still unverified
 
 Not answered by the spec; do not write code that assumes an answer:

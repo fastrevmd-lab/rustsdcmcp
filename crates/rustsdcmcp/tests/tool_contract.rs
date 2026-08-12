@@ -5,8 +5,10 @@ use std::collections::BTreeSet;
 
 #[test]
 fn tool_registry_has_expected_unique_surface() {
-    // 37 reads / 11 writes: #32 added 6 license/certificate reads (PR #49) and 2 license/certificate writes.
-    assert_eq!(KNOWN_TOOLS.len(), 48);
+    // 39 reads / 11 writes. #32 added 6 license/certificate reads (PR #49) and
+    // 2 license/certificate writes; #34 added device-group list and get, so a
+    // deploy target is inspectable before it is approved.
+    assert_eq!(KNOWN_TOOLS.len(), 50);
     assert_eq!(
         KNOWN_TOOLS.iter().copied().collect::<BTreeSet<_>>().len(),
         KNOWN_TOOLS.len()
@@ -59,4 +61,23 @@ fn write_tools_are_all_registered_and_named_for_their_lifecycle() {
             "{tool} mutates but is not named for a change-control phase"
         );
     }
+}
+
+#[test]
+fn a_device_group_list_accepts_an_omitted_from_and_fields() {
+    // `ListArgs::from` is `#[serde(default)]`, so every other list tool accepts
+    // a call without `from`. The device-group list uses its own argument type
+    // to carry `fields`, and dropping that default would have broken a
+    // previously valid call shape without any test noticing.
+    let args: rustsdcmcp::DeviceGroupListArgs =
+        serde_json::from_value(serde_json::json!({"tenant": "production", "size": 10}))
+            .expect("omitting from must stay valid");
+    assert_eq!(args.from, 0);
+    assert!(args.fields.is_empty());
+
+    let projected: rustsdcmcp::DeviceGroupListArgs = serde_json::from_value(
+        serde_json::json!({"tenant": "production", "size": 10, "fields": ["uuid", "name"]}),
+    )
+    .expect("fields is a list, not a comma-joined string");
+    assert_eq!(projected.fields, vec!["uuid".to_owned(), "name".to_owned()]);
 }

@@ -7,4 +7,4 @@ mod http_transport;
 mod server;
 
 pub use http_transport::{build_http_router, serve_http};
-pub use server::{KNOWN_TOOLS, SdcHandler, WRITE_TOOLS};
+pub use server::{DeviceGroupListArgs, KNOWN_TOOLS, SdcHandler, WRITE_TOOLS};

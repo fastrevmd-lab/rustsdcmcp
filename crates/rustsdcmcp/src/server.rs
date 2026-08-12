@@ -51,6 +51,8 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "get_sdc_nat_hierarchy",
     "list_sdc_nat_pools",
     "get_sdc_nat_pool",
+    "list_sdc_device_groups",
+    "get_sdc_device_group",
     "list_sdc_resources",
     "get_sdc_resource",
     "list_sdc_ipsec_profiles",
@@ -210,6 +212,38 @@ pub struct NatPoolArgs {
     pub tenant: String,
     /// NAT pool ID.
     pub pool_id: String,
+}
+
+/// Arguments for one device group.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceGroupArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Device group UUID.
+    pub group_uuid: String,
+}
+
+/// Arguments for a device group list, with an optional server-side projection.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceGroupListArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Zero-based start index.
+    ///
+    /// Defaulted like `ListArgs::from`; omitting it must stay valid.
+    #[serde(default)]
+    pub from: u64,
+    /// Explicit positive page size.
+    pub size: u32,
+    /// Optional `fields` projection applied by the API, one entry per field.
+    ///
+    /// `size` bounds the number of groups, not the size of each one, and a
+    /// group embeds its membership. Projecting keeps an estate-scale list
+    /// readable.
+    #[serde(default)]
+    pub fields: Vec<String>,
 }
 
 /// Arguments for planning one firewall policy write.
@@ -1181,6 +1215,69 @@ impl SdcHandler {
             Err(error) => Err(error),
         };
         Ok(finish(audit, result))
+    }
+
+    #[tool(
+        name = "list_sdc_device_groups",
+        description = "List SDC device groups with bounded pagination. Optional `fields` applies the API's server-side projection; a group embeds its membership, so an unprojected list of large groups can exceed the response limit."
+    )]
+    async fn list_sdc_device_groups(
+        &self,
+        Parameters(args): Parameters<DeviceGroupListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_sdc_device_groups",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "list_sdc_device_groups", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
+            .map_err(SdcError::from);
+        let result = match result {
+            Ok(page) => {
+                self.client
+                    .list_device_groups(page, &args.fields, &cancellation)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        Ok(finish(audit, result))
+    }
+
+    #[tool(
+        name = "get_sdc_device_group",
+        description = "Get one SDC device group by UUID, including its member devices. Note that SDC does not currently support deploying policy to a device group: the pinned API marks the DEVICE_GROUP target type as not supported, future support."
+    )]
+    async fn get_sdc_device_group(
+        &self,
+        Parameters(args): Parameters<DeviceGroupArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "get_sdc_device_group",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "get_sdc_device_group", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish(
+            audit,
+            self.client
+                .get_device_group(&args.group_uuid, &cancellation)
+                .await,
+        ))
     }
 
     #[tool(name = "get_sdc_nat_pool", description = "Get one SDC NAT pool by ID.")]
