@@ -707,7 +707,6 @@ impl SdcClient {
             cancellation,
         )
         .await
-        .map(crate::projection::project_ca_certificates)
     }
 
     /// List local certificates across all devices with bounded pagination.
@@ -722,7 +721,6 @@ impl SdcClient {
             cancellation,
         )
         .await
-        .map(crate::projection::project_local_certificates)
     }
 
     /// List CA certificates for one device with bounded pagination.
@@ -739,7 +737,6 @@ impl SdcClient {
             cancellation,
         )
         .await
-        .map(crate::projection::project_ca_certificates)
     }
 
     /// List local certificates for one device with bounded pagination.
@@ -756,7 +753,6 @@ impl SdcClient {
             cancellation,
         )
         .await
-        .map(crate::projection::project_local_certificates)
     }
 
     /// List licenses for one device with bounded pagination.
@@ -773,7 +769,6 @@ impl SdcClient {
             cancellation,
         )
         .await
-        .map(crate::projection::project_licenses)
     }
 
     /// Fetch one license by device UUID and license UUID.
@@ -798,7 +793,6 @@ impl SdcClient {
             cancellation,
         )
         .await
-        .map(crate::projection::project_license)
     }
 
     /// Install a license on a device and poll until the operation completes.
@@ -2197,6 +2191,39 @@ mod tests {
             .await
             .expect("list succeeds");
         assert_eq!(result["count"], 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn certificate_reads_stay_unprojected_at_the_client_layer() {
+        // The allowlist projection belongs at the MCP tool boundary, not here.
+        // prepare_license_write and the apply-time drift check both read
+        // through this method and digest the result, so projecting it would
+        // erase an unknown field from both sides of the comparison and let a
+        // drifted write apply as unchanged.
+        let app = Router::new().route(
+            "/api/v1/devices/ca_certificates",
+            get(|| async {
+                Json(serde_json::json!({
+                    "items": [{"uuid": "u", "field_added_upstream": "visible"}],
+                    "count": 1,
+                }))
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        let result = client(base_url, 4096)
+            .list_ca_certificates(
+                ListRequest::new(0, 10, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("list succeeds");
+
+        assert_eq!(
+            result["items"][0]["field_added_upstream"], "visible",
+            "the client must return upstream fields verbatim so change control \
+             can detect drift in them"
+        );
         server.abort();
     }
 

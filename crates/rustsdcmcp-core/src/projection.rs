@@ -1,24 +1,38 @@
 //! Field allowlists for certificate and licence reads.
 //!
-//! Every other reader on [`crate::SdcClient`] passes upstream JSON through
-//! verbatim. Certificates and licences do not, because they are the only
-//! surfaces whose responses could plausibly carry material that is sensitive in
-//! kind rather than merely in scope — key material, CSRs, or passphrases.
+//! Certificates and licences are the only surfaces whose responses could
+//! plausibly carry material that is sensitive in kind rather than merely in
+//! scope — key material, CSRs, or passphrases. Live capture on 2026-08-12 found
+//! none of that; the responses are metadata only. The allowlist exists for the
+//! case that has no observation, which is any field upstream adds later. With
+//! passthrough there is no point at which such a field would be noticed; it
+//! would simply start flowing to callers.
 //!
-//! Live capture on 2026-08-12 found none of that: the responses are metadata
-//! only. The allowlist exists for the case that has no observation, which is
-//! any field upstream adds later. With passthrough there is no point at which
-//! such a field would be noticed; it would simply start flowing to callers.
+//! # Where this is applied, and why not lower
 //!
-//! The allowlists below therefore contain exactly the fields observed on a live
-//! tenant, and nothing inferred. A field that upstream adds is dropped and its
-//! *name* is logged, so the addition is visible and can be allowlisted
-//! deliberately. Names only are logged, never values.
+//! **At the MCP tool boundary only, never inside [`crate::SdcClient`].**
+//!
+//! Projection is a presentation concern. The change-control path reads the same
+//! certificate and licence endpoints through the client to capture before-state
+//! — `prepare_license_write` digests that value, and apply compares against it
+//! to detect drift. Projecting in the client would erase an unknown field from
+//! *both* sides of that comparison, so a write whose target had drifted in that
+//! field would apply as unchanged. The client therefore returns upstream JSON
+//! verbatim, exactly as every other reader does, and a test pins that.
+//!
+//! # What is projected
+//!
+//! The allowlists below contain exactly the fields observed on a live tenant,
+//! and nothing inferred. A field upstream adds is dropped and its *name* is
+//! logged, so the addition is visible and can be allowlisted deliberately.
+//! Names only are logged, never values.
 //!
 //! Collection envelopes (`items`, `count`) pass through unprojected. Sensitive
 //! material would live on the certificate objects, not alongside them, and
 //! projecting the envelope risks silently discarding a pagination field that
-//! upstream adds. Unknown envelope keys are logged for the same visibility.
+//! upstream adds. Unknown envelope keys are logged as *preserved*, with wording
+//! distinct from the dropped-field warning — a warning that said "dropped"
+//! would tell an operator the field never reached callers when in fact it did.
 
 use serde_json::{Map, Value};
 
@@ -94,22 +108,22 @@ const LICENSE_FIELDS: &[&str] = &[
 const ENVELOPE_FIELDS: &[&str] = &["items", "count"];
 
 /// Project a CA-certificate collection onto its allowlist.
-pub(crate) fn project_ca_certificates(value: Value) -> Value {
+pub fn project_ca_certificates(value: Value) -> Value {
     project_collection(value, CA_CERTIFICATE_FIELDS, "ca_certificates")
 }
 
 /// Project a local-certificate collection onto its allowlist.
-pub(crate) fn project_local_certificates(value: Value) -> Value {
+pub fn project_local_certificates(value: Value) -> Value {
     project_collection(value, LOCAL_CERTIFICATE_FIELDS, "local_certificates")
 }
 
 /// Project a licence collection onto its allowlist.
-pub(crate) fn project_licenses(value: Value) -> Value {
+pub fn project_licenses(value: Value) -> Value {
     project_collection(value, LICENSE_FIELDS, "licenses")
 }
 
 /// Project a single licence object onto its allowlist.
-pub(crate) fn project_license(value: Value) -> Value {
+pub fn project_license(value: Value) -> Value {
     match value {
         Value::Object(object) => Value::Object(retain_allowed(object, LICENSE_FIELDS, "license")),
         other => other,
@@ -131,13 +145,20 @@ fn project_collection(value: Value, allowed: &[&str], surface: &str) -> Value {
         .filter(|key| !ENVELOPE_FIELDS.contains(key))
         .collect();
     if !unknown_envelope.is_empty() {
-        report_unknown(surface, "envelope", &unknown_envelope);
+        report_preserved_envelope(surface, &unknown_envelope);
     }
 
-    let Some(Value::Array(items)) = envelope.remove("items") else {
-        // Either no `items` key, or it is not an array. Restore nothing and
-        // return what remains; the caller sees the response unmodified.
-        return Value::Object(envelope);
+    let items = match envelope.remove("items") {
+        Some(Value::Array(items)) => items,
+        Some(other) => {
+            // `items` is present but not an array — a malformed or
+            // transitional response. Put it back exactly as received rather
+            // than returning an envelope that silently lost the key.
+            envelope.insert("items".to_owned(), other);
+            return Value::Object(envelope);
+        }
+        // An empty tenant returns a bare `{}` with no `items` at all.
+        None => return Value::Object(envelope),
     };
 
     let mut dropped: Vec<String> = Vec::new();
@@ -158,7 +179,7 @@ fn project_collection(value: Value, allowed: &[&str], surface: &str) -> Value {
 
     if !dropped.is_empty() {
         let names: Vec<&str> = dropped.iter().map(String::as_str).collect();
-        report_unknown(surface, "item", &names);
+        report_dropped(surface, "item", &names);
     }
 
     envelope.insert("items".to_owned(), Value::Array(projected));
@@ -177,7 +198,7 @@ fn retain_allowed(
         .filter(|key| !allowed.contains(key))
         .collect();
     if !dropped.is_empty() {
-        report_unknown(surface, "object", &dropped);
+        report_dropped(surface, "object", &dropped);
     }
     retain_only(object, allowed)
 }
@@ -188,17 +209,34 @@ fn retain_only(mut object: Map<String, Value>, allowed: &[&str]) -> Map<String, 
     object
 }
 
-/// Log the names of fields excluded by an allowlist.
+/// Log the names of fields excluded by an allowlist and withheld from callers.
 ///
 /// Names only. A value is never logged, because the reason a field is unknown
 /// may be that it carries something that must not reach a log.
-fn report_unknown(surface: &str, scope: &str, names: &[&str]) {
+fn report_dropped(surface: &str, scope: &str, names: &[&str]) {
     tracing::warn!(
         surface,
         scope,
         fields = names.join(","),
         "dropped fields absent from the certificate/licence allowlist; \
-         upstream may have added fields that should be reviewed and allowlisted"
+         these did NOT reach the caller. Upstream may have added fields that \
+         should be reviewed and allowlisted"
+    );
+}
+
+/// Log unknown envelope keys, which are **preserved** rather than dropped.
+///
+/// Kept distinct from [`report_dropped`] deliberately. These warnings are the
+/// signal that upstream changed something, so one that said "dropped" here
+/// would tell an operator the field never reached callers when in fact it did.
+fn report_preserved_envelope(surface: &str, names: &[&str]) {
+    tracing::warn!(
+        surface,
+        scope = "envelope",
+        fields = names.join(","),
+        "unrecognized envelope fields were PRESERVED and returned to the \
+         caller unprojected; only item fields are allowlisted. Review whether \
+         these should be projected"
     );
 }
 
@@ -386,6 +424,23 @@ mod tests {
         assert_eq!(projected["count"], 1);
         assert!(projected["items"][0].get("surprise").is_none());
         assert_eq!(projected["items"][0]["uuid"], "u");
+    }
+
+    #[test]
+    fn non_array_items_value_is_preserved_not_swallowed() {
+        // A malformed or transitional response must pass through intact. An
+        // earlier version removed `items` to inspect it and returned without
+        // putting it back, so the caller received an envelope missing the key.
+        for malformed in [
+            json!({"items": null, "count": 0}),
+            json!({"items": {"a": 1}}),
+        ] {
+            assert_eq!(
+                project_licenses(malformed.clone()),
+                malformed,
+                "a non-array items value must be returned exactly as received"
+            );
+        }
     }
 
     #[test]
