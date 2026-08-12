@@ -107,7 +107,7 @@ impl DeviceTransaction for SdcTransaction {
             || prepared.preview_digest() != self.expected_preview_digest
         {
             return Err(SdcError::PreparedChange(
-                "prepared action does not match the approved preview digest".to_owned(),
+                "apply input does not match the previewed effect".to_owned(),
             ));
         }
         Ok(prepared.clone())
@@ -1458,6 +1458,38 @@ mod tests {
             .await
             .expect_err("a preview that no longer matches its digest must be refused");
         assert!(matches!(error, SdcError::PreparedChange(_)), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn wrong_expected_preview_digest_names_the_right_field() {
+        // Issue #52: when expected_preview_digest is wrong, the error must name
+        // that field, not expected_digest.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = SdcClient::from_test_parts(
+            Url::parse("https://example.invalid/").expect("url"),
+            "test-secret".to_owned(),
+            64 * 1024,
+            100,
+        );
+        let prepared = prepared_fixture();
+        let wrong_digest =
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+        let transaction =
+            SdcTransaction::new(client, wrong_digest.to_owned(), CancellationToken::new());
+
+        let error = transaction
+            .stage(std::slice::from_ref(&prepared))
+            .await
+            .expect_err("wrong expected_preview_digest must be refused");
+        match error {
+            SdcError::PreparedChange(msg) => {
+                assert_eq!(
+                    msg, "apply input does not match the previewed effect",
+                    "error message must describe the preview digest check, not the plan digest"
+                );
+            }
+            _ => panic!("expected PreparedChange error, got {error:?}"),
+        }
     }
 
     #[tokio::test]
