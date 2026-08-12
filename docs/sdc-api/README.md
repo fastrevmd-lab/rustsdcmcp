@@ -478,6 +478,88 @@ the reason #34 gives.
 name to distinguish template targets, with no "not supported" note. Do not
 generalize the deploy restriction to template operations.
 
+### 10. Templates do not protect config from a policy deploy (2026-08-12)
+
+The experiment #33 asked for, run against `vsrx-ci` on the live tenant.
+
+#### Uploading a custom template
+
+`POST /api/v1/templates/workflow_definitions` takes `multipart/form-data` with
+the YAML in `definition_file`, and only `.yaml`/`.yml` is accepted. The YAML
+schema is **not in the spec**; it was derived from the endpoint's own errors and
+is:
+
+```yaml
+action-category: template-create   # or template-update
+spec:
+  name: MY_TEMPLATE
+  description: "..."
+  format: CLI
+  body: |
+    set security dynamic-address address-name example profile feed-name feed
+```
+
+`template-update` reuses the same `spec.name` and returns the same
+`resource_id`.
+
+#### An edge WAF blocks plaintext HTTP to private addresses
+
+A template whose body contains `http://` followed by an RFC1918 address is
+rejected with a bare **HTML `403 Forbidden`** — not SDC's JSON error shape — so
+it is an edge proxy, not the API. Isolated by probe:
+
+| Body contains | Result |
+|---|---|
+| `url http://192.168.1.206/bundle.tgz` | **403 HTML** |
+| `url https://example.com/bundle.tgz` | 400 (reaches the API) |
+| `server 192.168.1.206` (no scheme) | 400 (reaches the API) |
+| the word `url` alone | 400 (reaches the API) |
+
+This matters because it is exactly the shape of a `dynamic-address feed-server`
+pointing at an internal feed host: that config cannot be uploaded as a template
+through this API, though it can be set from the CLI.
+
+#### The finding
+
+A custom template **can** place `security dynamic-address` config. Verified on
+the device, committed by `sduser` with `Component:Config-Template`.
+
+A subsequent **policy deploy targets that config for deletion.** Controlled
+comparison, same policy and same device:
+
+| Device state at prepare | Deletes in the preview |
+|---|---|
+| Template-placed `address-name tmpl-unreferenced` present | `delete security dynamic-address address-name tmpl-unreferenced` |
+| Same object removed | **none** (397-line diff, zero delete lines) |
+
+So **template origin confers no protection**, and #23's predictor is unchanged:
+what survives is reachability from a policy SDC imported, not how the config got
+there. The co-management split in `operations.md` stands, and templates are
+**not** a remedy for the deletion problem.
+
+#### What this does not show
+
+No committed apply removed the object. Both applies failed and SDC rolled the
+device back, so the evidence is SDC's stated intent in the preview rather than
+an observed deletion. #23 established that apply matches preview exactly, and
+the A/B above is consistent, but this is one inference short of proof.
+
+The second failure is explained and was self-inflicted: Junos refuses a second
+dynamic address on one feed — *"Feed blocklist has already been referenced by
+dynamic address wilddns-blocklist. One feed can only be referenced by one
+dynamic address."* The first failure's cause is **unknown**; the device log
+shows `commit confirmed` followed by `discard-changes` and a rollback, and the
+feed-download error in that log arrived 20 seconds *after* the rollback, so it
+is not the cause.
+
+#### Operational consequence
+
+A failed deploy leaves an operation in state `failed` in the change-set store,
+and every later apply on that tenant is refused with *"the device already has an
+active or unreconciled operation"*. `mecmcp-changeset` has
+`discard_operation`, but this server exposes no tool for it, so there is no
+supported way to clear it.
+
 ## Still unverified
 
 Not answered by the spec; do not write code that assumes an answer:
