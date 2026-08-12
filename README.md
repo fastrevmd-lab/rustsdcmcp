@@ -32,16 +32,16 @@ I/O therefore protect the management plane rather than merely decorate it.
 ## Current status
 
 `rustsdcmcp` is available to repository collaborators as the private
-[`v0.1.0-lab.4` prerelease](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.1.0-lab.4),
-which targets `ee38d0891151cfc61f5f9c6ec6deb4559e45400d`. That prerelease
-exposes 17 MCP tools — 14 bounded read tools and three write tools
-(`prepare_sdc_policy_deploy`, `approve_sdc_change_set`, `apply_sdc_change_set`).
-It predates most of the current surface.
+[`v0.1.0-lab.5` prerelease](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.1.0-lab.5),
+which targets `0b3a661c3c680bae1f03356e999731828db63b3d`.
 
-Current `main` exposes **48 MCP tools**: 37 bounded read tools and 11
-change-control tools. Every mutation is reachable only through prepare →
-independent approval → apply; a wildcard token scope deliberately grants no
-write tool, so each must be named explicitly when a token is minted.
+It exposes **48 MCP tools**: 37 bounded read tools and 11 change-control
+tools. For contrast, the earlier `v0.1.0-lab.4` exposed 17 — 14 read tools and
+three write tools — so most of the current surface postdates it.
+
+Every mutation is reachable only through prepare → independent approval →
+apply. A wildcard token scope deliberately grants no write tool, so each must be
+named explicitly when a token is minted.
 
 Live validation against SDC has gone well beyond read-only. On 2026-08-07 a
 full `prepare → approve → apply` policy deploy ran against the lab tenant and
@@ -72,21 +72,21 @@ Observed response shapes and the remaining endpoint questions are tracked in
 ## Private prerelease
 
 Repository collaborators can download the private
-[`v0.1.0-lab.4` prerelease](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.1.0-lab.4)
+[`v0.1.0-lab.5` prerelease](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.1.0-lab.5)
 and verify its archive:
 
 ```console
-gh release download v0.1.0-lab.4 \
+gh release download v0.1.0-lab.5 \
   --repo fastrevmd-lab/rustsdcmcp \
-  --pattern 'rustsdcmcp_0.1.0-lab.20260805.ee38d0891151_amd64.tar.gz*'
-sha256sum -c rustsdcmcp_0.1.0-lab.20260805.ee38d0891151_amd64.tar.gz.sha256
-sha256sum rustsdcmcp_0.1.0-lab.20260805.ee38d0891151_amd64.tar.gz
+  --pattern 'rustsdcmcp_0.1.0-lab.20260812.0b3a661c3c68_amd64.tar.gz*'
+sha256sum -c rustsdcmcp_0.1.0-lab.20260812.0b3a661c3c68_amd64.tar.gz.sha256
+sha256sum rustsdcmcp_0.1.0-lab.20260812.0b3a661c3c68_amd64.tar.gz
 ```
 
 The final command must print:
 
 ```text
-cfb3c836d44ad711d971fc0010fc984aff5f02e0de2c808ecd2f876e6c1add5a  rustsdcmcp_0.1.0-lab.20260805.ee38d0891151_amd64.tar.gz
+e46e17473728b8b056fd2aba2bcc7749e4061b3fca908940f6ee3b3c8662275c  rustsdcmcp_0.1.0-lab.20260812.0b3a661c3c68_amd64.tar.gz
 ```
 
 ## Build from approved source
@@ -96,7 +96,7 @@ the authorized commit, operators must first bind their detached checkout to
 that commit before building, testing, or packaging:
 
 ```console
-approved_commit=ee38d0891151cfc61f5f9c6ec6deb4559e45400d
+approved_commit=0b3a661c3c680bae1f03356e999731828db63b3d
 git checkout --detach "$approved_commit"
 test "$(git rev-parse HEAD)" = "$approved_commit"
 cargo build --release --locked
@@ -113,7 +113,7 @@ records only the archive basename:
 
 ```console
 artifact_dir="dist/$approved_commit"
-archive="$artifact_dir/rustsdcmcp_0.1.0-lab.20260805.ee38d0891151_amd64.tar.gz"
+archive="$artifact_dir/rustsdcmcp_0.1.0-lab.20260812.0b3a661c3c68_amd64.tar.gz"
 (cd "$artifact_dir" && sha256sum -c "$(basename "$archive").sha256")
 package_root=$(tar -tzf "$archive" | sed -n '1s#/.*##p')
 test -n "$package_root"
@@ -134,7 +134,7 @@ After downloading the release assets, install the verified package:
 
 ```bash
 set -euo pipefail
-archive=rustsdcmcp_0.1.0-lab.20260805.ee38d0891151_amd64.tar.gz
+archive=rustsdcmcp_0.1.0-lab.20260812.0b3a661c3c68_amd64.tar.gz
 sha256sum -c "$archive.sha256"
 package_root=$(tar -tzf "$archive" | sed -n '1s#/.*##p')
 test -n "$package_root"
@@ -269,8 +269,9 @@ rather than forking it. Current source pins all six shared crates —
 `mecmcp-audit`, `mecmcp-auth`, `mecmcp-changeset`, `mecmcp-runtime`,
 `mecmcp-server`, and `mecmcp-transport` — to `v0.8.0`.
 
-Published prereleases predate that adoption: `v0.1.0-lab.4` pins
-`changeset-v0.3.7`, and `v0.1.0-lab.1` pins `changeset-v0.3.6`.
+`v0.1.0-lab.5` is the first prerelease built on `v0.8.0`. Earlier ones predate
+that adoption: `v0.1.0-lab.4` pins `changeset-v0.3.7`, and `v0.1.0-lab.1` pins
+`changeset-v0.3.6`.
 
 **The compatibility blocker is cleared.** Earlier revisions of this section
 said public `v0.1.0` was blocked until 59 temporary compatibility declarations
