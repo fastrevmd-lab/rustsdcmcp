@@ -110,6 +110,7 @@ fn sdc_router_inner(
             config.endpoint.clone(),
             None,
             Duration::from_secs(60),
+            false,
         )
         .expect("changes"),
     );

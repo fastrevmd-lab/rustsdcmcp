@@ -194,9 +194,39 @@ supplies its own SSH host; the server is never exposed directly.
 - Audit attribution is credential-safe and target values receive HMAC redaction.
 - Mutations require two-principal prepare → approve → apply change control.
 - There is no direct deploy tool and no unauthenticated write path.
+- A wildcard token scope grants **no** write tool. `--tools '*'` yields the read
+  surface only; every write tool must be named explicitly when minting a token.
 
 Detailed deployment, recovery, audit-retention, and write-workflow guidance is
 in [`docs/operations.md`](docs/operations.md).
+
+### `--lab-mode`
+
+`--lab-mode` waives the second principal, for a single-operator lab where
+two-person control is theatre rather than a control. **It is off by default and
+should stay off anywhere the estate matters.**
+
+What it does and does not change:
+
+- The waiver is applied automatically when the change set is created. There is
+  no waive tool, and the flow stays prepare → apply, identical to production.
+- Planning, the plan digest, drift detection, and apply-time revalidation all
+  still run. Lab mode removes the *second reviewer*, not the change record.
+- **No approver is ever fabricated.** A waived change set records
+  `approver: null` alongside `approval_waiver: "lab-mode"`, and carries a
+  waiver digest over `(change_set_id, plan_digest, owner, approved_at)`. It is
+  cryptographically distinguishable from a genuine two-person approval and
+  cannot be relabelled afterwards — which matters if anyone later has to prove
+  which changes had real separation of duties.
+- The server warns loudly at startup whenever it is enabled.
+
+If you want solo write-testing *without* waiving the control, mint two tokens
+with different names and use one to prepare and the other to approve: the
+principal is the token name, and self-approval is refused.
+
+The flag follows `mecmcp`'s shared change-set CLI standard, alongside
+`--state-file` and `--approval-timeout-secs`. An explicitly supplied flag beats
+product configuration; otherwise `sdc.json` supplies the value.
 
 ## Deployment maturity
 

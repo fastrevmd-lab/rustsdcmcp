@@ -254,12 +254,19 @@ impl ChangeManager {
     /// # Errors
     ///
     /// Returns an error when an absolute state path cannot be loaded safely.
+    /// `lab_mode` waives the second principal for single-operator use. It is
+    /// off in every deployment that does not ask for it, and the waiver is
+    /// recorded rather than faked: `mecmcp-changeset` stores `approver: null`
+    /// with `approval_waiver: "lab-mode"` and a waiver digest binding
+    /// `(change_set_id, plan_digest, owner, approved_at)`, so a waived change
+    /// set can never be mistaken for a genuine two-person approval.
     pub fn load(
         client: SdcClient,
         tenant: impl Into<String>,
         endpoint: impl Into<String>,
         state_path: Option<&Path>,
         approval_ttl: Duration,
+        lab_mode: bool,
     ) -> Result<Self, SdcError> {
         let tenant = tenant.into();
         let endpoint = endpoint.into();
@@ -275,7 +282,7 @@ impl ChangeManager {
             state_path,
             OperationLimits::default(),
             approval_ttl,
-            false,
+            lab_mode,
             StagedRecovery::Discard,
         )
         .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
@@ -328,12 +335,13 @@ impl ChangeManager {
             .create_change_set(
                 self.tenant.clone(),
                 vec![prepared.clone()],
-                owner,
+                owner.clone(),
                 prepared.plan_digest().to_owned(),
                 self.object_signature.clone(),
             )
             .await
             .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        let change_set = self.waive_if_lab_mode(change_set, &owner).await?;
         Ok(ObjectPrepareResult {
             change_set,
             prepared_change: prepared,
@@ -540,12 +548,13 @@ impl ChangeManager {
             .create_change_set(
                 self.tenant.clone(),
                 vec![prepared.clone()],
-                owner,
+                owner.clone(),
                 prepared.plan_digest().to_owned(),
                 "firewall-policy-write-v1".to_owned(),
             )
             .await
             .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        let change_set = self.waive_if_lab_mode(change_set, &owner).await?;
         Ok(crate::FirewallPrepareResult {
             change_set,
             prepared_change: prepared,
@@ -794,12 +803,13 @@ impl ChangeManager {
             .create_change_set(
                 self.tenant.clone(),
                 vec![prepared.clone()],
-                owner,
+                owner.clone(),
                 prepared.plan_digest().to_owned(),
                 self.license_signature.clone(),
             )
             .await
             .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        let change_set = self.waive_if_lab_mode(change_set, &owner).await?;
         Ok(crate::LicensePrepareResult {
             change_set,
             prepared_change: prepared,
@@ -1016,12 +1026,13 @@ impl ChangeManager {
             .create_change_set(
                 self.tenant.clone(),
                 vec![prepared.clone()],
-                owner,
+                owner.clone(),
                 prepared.plan_digest().to_owned(),
                 self.nat_signature.clone(),
             )
             .await
             .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        let change_set = self.waive_if_lab_mode(change_set, &owner).await?;
         Ok(NatPrepareResult {
             change_set,
             prepared_change: prepared,
@@ -1204,16 +1215,53 @@ impl ChangeManager {
             .create_change_set(
                 self.tenant.clone(),
                 vec![prepared.clone()],
-                owner,
+                owner.clone(),
                 prepared.preview_digest().to_owned(),
                 self.policy_signature.clone(),
             )
             .await
             .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        let change_set = self.waive_if_lab_mode(change_set, &owner).await?;
         Ok(PrepareResult {
             change_set,
             prepared_change: prepared,
         })
+    }
+
+    /// Waive approval at creation when the server runs in lab mode.
+    ///
+    /// `mecmcp/docs/PACKAGING.md` requires the waiver be applied automatically
+    /// at creation rather than through a separate tool: starting the service
+    /// with `--lab-mode` is already the deliberate decision to run without a
+    /// second reviewer, and the operator's flow stays plan-then-apply exactly
+    /// as in production.
+    ///
+    /// Setting the coordinator's `lab_mode` flag alone is **not** enough —
+    /// nothing waives, and a single operator still cannot move a plan past
+    /// `Planned`. mecmcp#94 recorded exactly that defect on a sibling server,
+    /// where the flag was wired but no caller invoked the waiver. A test pins
+    /// this so the flag cannot become inert again.
+    ///
+    /// Upstream refuses the waiver unless lab mode is on and the caller owns
+    /// the change set, and records it as `approver: null` with
+    /// `approval_waiver: "lab-mode"` plus its own digest.
+    async fn waive_if_lab_mode(
+        &self,
+        change_set: ChangeSetOutput,
+        owner: &str,
+    ) -> Result<ChangeSetOutput, SdcError> {
+        if !self.coordinator.lab_mode() {
+            return Ok(change_set);
+        }
+        self.coordinator
+            .waive_approval(
+                change_set.change_set_id.clone(),
+                self.tenant.clone(),
+                owner.to_owned(),
+                change_set.digest.clone(),
+            )
+            .await
+            .map_err(|error| SdcError::ChangeControl(error.to_string()))
     }
 
     /// Record an independent principal's approval of one exact plan digest.
@@ -1492,6 +1540,122 @@ mod tests {
         }
     }
 
+    /// Lab mode is the single-operator path, and it must stay auditable.
+    ///
+    /// `mecmcp/docs/PACKAGING.md`: the waiver is applied automatically at
+    /// creation rather than through a separate tool, so the operator's flow
+    /// stays plan-then-apply exactly as in production.
+    #[tokio::test]
+    async fn lab_mode_lets_one_operator_apply_and_records_the_waiver() {
+        let calls = Arc::new(Calls::default());
+        let app = Router::new()
+            .route("/api/v1/policies/preview", post(preview))
+            .route(
+                "/api/v1/policies/preview/{id}",
+                get(|| async {
+                    Json(json!({
+                        "preview_id": "preview-1",
+                        "status": "COMPLETED",
+                        "device_deployment_status": [],
+                        "message": ""
+                    }))
+                }),
+            )
+            .route("/api/v1/policies/deploy", post(deploy))
+            .route(
+                "/api/v1/policies/deploy/{id}",
+                get(|| async {
+                    Json(json!({
+                        "deploy_id": "deploy-1",
+                        "status": "COMPLETED",
+                        "device_deployment_status": [],
+                        "message": ""
+                    }))
+                }),
+            )
+            .with_state(calls.clone());
+        let (base_url, server) = serve(app).await;
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client =
+            SdcClient::from_test_parts(base_url.clone(), "test-secret".to_owned(), 64 * 1024, 100);
+        let manager = ChangeManager::load(
+            client,
+            "tenant-a",
+            base_url.to_string(),
+            None,
+            Duration::from_secs(60),
+            true,
+        )
+        .expect("change manager");
+        let cancellation = CancellationToken::new();
+
+        let prepared = manager
+            .prepare(
+                "alice".to_owned(),
+                vec![PolicyOperation {
+                    policy_id: "policy-1".to_owned(),
+                    policy_type: PolicyType::Firewall,
+                    deploy_targets: vec![Target::device("device-1")],
+                    undeploy_targets: Vec::new(),
+                }],
+                &cancellation,
+            )
+            .await
+            .expect("prepare");
+
+        // No approver is ever fabricated: the waiver leaves the field null
+        // rather than writing the owner into it (mecmcp#54).
+        let planned = serde_json::to_value(&prepared.change_set)
+            .expect("serialize change set")
+            .to_string();
+        assert!(
+            !planned.contains("\"approver\":\"alice\""),
+            "lab mode must not fabricate an approver; got {planned}"
+        );
+        assert!(
+            planned.contains("lab-mode"),
+            "the waiver must be recorded at creation so a waived change set is \
+             never mistaken for a genuine two-person approval; got {planned}"
+        );
+
+        let change_set_id = prepared.change_set.change_set_id.clone();
+
+        // No second principal, and no separate waive call: the operator's flow
+        // stays plan-then-apply, exactly as in production.
+        let result = manager
+            .apply(
+                change_set_id.clone(),
+                "alice".to_owned(),
+                prepared.change_set.digest,
+                prepared.prepared_change.preview_digest().to_owned(),
+                &Attribution::stdio(),
+                &cancellation,
+            )
+            .await
+            .expect("a single operator applies in lab mode");
+        assert!(matches!(result.outcome, CommitOutcome::Reconciled { .. }));
+        assert_eq!(calls.deploys.load(Ordering::SeqCst), 1);
+
+        let applied = serde_json::to_value(
+            manager
+                .status(change_set_id)
+                .await
+                .expect("status after apply"),
+        )
+        .expect("serialize status")
+        .to_string();
+        assert!(
+            !applied.contains("\"approver\":\"alice\""),
+            "an applied waived change set must still show no approver; got {applied}"
+        );
+        assert!(
+            applied.contains("lab-mode"),
+            "the waiver must survive into the applied record; got {applied}"
+        );
+
+        server.abort();
+    }
+
     #[tokio::test]
     async fn deployment_requires_preview_and_independent_approval() {
         let calls = Arc::new(Calls::default());
@@ -1531,6 +1695,7 @@ mod tests {
             base_url.to_string(),
             None,
             Duration::from_secs(60),
+            false,
         )
         .expect("change manager");
         let cancellation = CancellationToken::new();
@@ -1871,6 +2036,7 @@ mod tests {
             base_url.to_string(),
             None,
             Duration::from_secs(60),
+            false,
         )
         .expect("change manager");
         let cancellation = CancellationToken::new();
@@ -1974,6 +2140,7 @@ mod tests {
             base_url.to_string(),
             None,
             Duration::from_secs(60),
+            false,
         )
         .expect("change manager");
         let cancellation = CancellationToken::new();
