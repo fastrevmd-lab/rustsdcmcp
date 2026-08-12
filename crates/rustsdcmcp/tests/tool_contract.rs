@@ -62,3 +62,22 @@ fn write_tools_are_all_registered_and_named_for_their_lifecycle() {
         );
     }
 }
+
+#[test]
+fn a_device_group_list_accepts_an_omitted_from_and_fields() {
+    // `ListArgs::from` is `#[serde(default)]`, so every other list tool accepts
+    // a call without `from`. The device-group list uses its own argument type
+    // to carry `fields`, and dropping that default would have broken a
+    // previously valid call shape without any test noticing.
+    let args: rustsdcmcp::DeviceGroupListArgs =
+        serde_json::from_value(serde_json::json!({"tenant": "production", "size": 10}))
+            .expect("omitting from must stay valid");
+    assert_eq!(args.from, 0);
+    assert!(args.fields.is_empty());
+
+    let projected: rustsdcmcp::DeviceGroupListArgs = serde_json::from_value(
+        serde_json::json!({"tenant": "production", "size": 10, "fields": ["uuid", "name"]}),
+    )
+    .expect("fields is a list, not a comma-joined string");
+    assert_eq!(projected.fields, vec!["uuid".to_owned(), "name".to_owned()]);
+}

@@ -231,15 +231,19 @@ pub struct DeviceGroupListArgs {
     /// Configured tenant alias.
     pub tenant: String,
     /// Zero-based start index.
+    ///
+    /// Defaulted like `ListArgs::from`; omitting it must stay valid.
+    #[serde(default)]
     pub from: u64,
     /// Explicit positive page size.
     pub size: u32,
-    /// Optional comma-separated `fields` projection applied by the API.
+    /// Optional `fields` projection applied by the API, one entry per field.
     ///
     /// `size` bounds the number of groups, not the size of each one, and a
     /// group embeds its membership. Projecting keeps an estate-scale list
     /// readable.
-    pub fields: Option<String>,
+    #[serde(default)]
+    pub fields: Vec<String>,
 }
 
 /// Arguments for planning one firewall policy write.
@@ -1239,7 +1243,7 @@ impl SdcHandler {
         let result = match result {
             Ok(page) => {
                 self.client
-                    .list_device_groups(page, args.fields.as_deref(), &cancellation)
+                    .list_device_groups(page, &args.fields, &cancellation)
                     .await
             }
             Err(error) => Err(error),

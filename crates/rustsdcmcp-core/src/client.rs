@@ -302,7 +302,7 @@ impl SdcClient {
     pub async fn list_device_groups(
         &self,
         page: ListRequest,
-        fields: Option<&str>,
+        fields: &[String],
         cancellation: &CancellationToken,
     ) -> Result<Value, SdcError> {
         self.list_projected(&["api", "v1", "device_groups"], page, fields, cancellation)
@@ -1432,8 +1432,7 @@ impl SdcClient {
         page: ListRequest,
         cancellation: &CancellationToken,
     ) -> Result<Value, SdcError> {
-        self.list_projected(segments, page, None, cancellation)
-            .await
+        self.list_projected(segments, page, &[], cancellation).await
     }
 
     /// `list`, with the API's server-side `fields` projection.
@@ -1448,7 +1447,7 @@ impl SdcClient {
         &self,
         segments: &[&str],
         page: ListRequest,
-        fields: Option<&str>,
+        fields: &[String],
         cancellation: &CancellationToken,
     ) -> Result<Value, SdcError> {
         let page = ListRequest::new(page.from, page.size, self.max_page_size)?;
@@ -1456,9 +1455,13 @@ impl SdcClient {
             ("from", page.from.to_string()),
             ("size", page.size.to_string()),
         ];
-        if let Some(fields) = fields {
-            validate_atom("fields", fields)?;
-            query.push(("fields", fields.to_owned()));
+        // The spec declares `fields` as `style: form, explode: true` over an
+        // array, and its own example is `fields=uuid && fields=name`. One
+        // comma-joined value is a different request, and would likely be read
+        // as a single unknown field name.
+        for field in fields {
+            validate_atom("fields", field)?;
+            query.push(("fields", field.clone()));
         }
         let borrowed = query
             .iter()
@@ -2276,7 +2279,7 @@ mod tests {
         let result = client(base_url, 4096)
             .list_device_groups(
                 ListRequest::new(0, 10, 100).expect("test page"),
-                None,
+                &[],
                 &CancellationToken::new(),
             )
             .await
@@ -2318,8 +2321,17 @@ mod tests {
     async fn a_device_group_list_can_project_fields_and_omits_the_param_otherwise() {
         let app = Router::new().route(
             "/api/v1/device_groups",
-            get(|Query(query): Query<HashMap<String, String>>| async move {
-                Json(serde_json::json!({"fields": query.get("fields").cloned()}))
+            get(|uri: axum::http::Uri| async move {
+                // Collect every `fields` pair: the spec explodes the array, so
+                // a single comma-joined value would be the wrong request.
+                let fields: Vec<String> = uri
+                    .query()
+                    .unwrap_or_default()
+                    .split('&')
+                    .filter_map(|pair| pair.strip_prefix("fields="))
+                    .map(str::to_owned)
+                    .collect();
+                Json(serde_json::json!({"fields": fields}))
             }),
         );
         let (base_url, server) = serve(app).await;
@@ -2328,24 +2340,28 @@ mod tests {
         let projected = sdc
             .list_device_groups(
                 ListRequest::new(0, 10, 100).expect("test page"),
-                Some("uuid,name"),
+                &["uuid".to_owned(), "name".to_owned()],
                 &CancellationToken::new(),
             )
             .await
             .expect("list succeeds");
-        assert_eq!(projected["fields"], "uuid,name");
+        assert_eq!(
+            projected["fields"],
+            serde_json::json!(["uuid", "name"]),
+            "each field must be its own query item per the spec's exploded array"
+        );
 
         // Absent by default: a projection invented here would silently drop
         // fields, and no live group has been observed to derive one from.
         let unprojected = sdc
             .list_device_groups(
                 ListRequest::new(0, 10, 100).expect("test page"),
-                None,
+                &[],
                 &CancellationToken::new(),
             )
             .await
             .expect("list succeeds");
-        assert!(unprojected["fields"].is_null());
+        assert_eq!(unprojected["fields"], serde_json::json!([]));
         server.abort();
     }
 
