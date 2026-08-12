@@ -107,7 +107,7 @@ impl DeviceTransaction for SdcTransaction {
             || prepared.preview_digest() != self.expected_preview_digest
         {
             return Err(SdcError::PreparedChange(
-                "apply input does not match the previewed effect".to_owned(),
+                "expected_preview_digest does not match the prepared change".to_owned(),
             ));
         }
         Ok(prepared.clone())
@@ -1483,9 +1483,9 @@ mod tests {
             .expect_err("wrong expected_preview_digest must be refused");
         match error {
             SdcError::PreparedChange(msg) => {
-                assert_eq!(
-                    msg, "apply input does not match the previewed effect",
-                    "error message must describe the preview digest check, not the plan digest"
+                assert!(
+                    msg.contains("expected_preview_digest"),
+                    "error message must name expected_preview_digest, not expected_digest; got: {msg}"
                 );
             }
             _ => panic!("expected PreparedChange error, got {error:?}"),
