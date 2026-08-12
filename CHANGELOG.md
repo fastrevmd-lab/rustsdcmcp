@@ -12,6 +12,8 @@ live validation, and a tool surface that covers a minority of the SDC API.
 
 ## Unreleased
 
+## `v0.1.0-lab.5` — 2026-08-12
+
 ### Added since `v0.1.0-lab.4`
 
 - Certificate and licence tools: six read operations and eight write operations
@@ -29,6 +31,20 @@ live validation, and a tool surface that covers a minority of the SDC API.
   state (#50).
 
 ### Changed since `v0.1.0-lab.4`
+
+- Adopt the shared `mecmcp` change-set CLI standard: `--lab-mode`,
+  `--state-file`, and `--approval-timeout-secs`, with explicit CLI beating
+  product configuration and neither silently relocating an existing
+  deployment's state file (#54). Parsing through `parse_with_provenance` also
+  repairs `--version`, which previously failed as an unknown argument and is
+  how a deployment identifies the build it is running.
+- Wire `--lab-mode` through to the change-set coordinator. Setting the flag
+  alone was not enough: nothing called the waiver, so a single operator still
+  could not move a plan past `Planned`. The waiver is now applied at change-set
+  creation, records `approver: null` with `approval_waiver: "lab-mode"`, and
+  never fabricates an approver.
+- Refuse `--approval-timeout-secs 0`, which expired every change set at
+  creation and disabled the entire write surface.
 
 - Adopt mecmcp 0.8.0 and its generic scope preflight; adopt 0.7.2 and delete the
   local compatibility transport copies (#36). This removed the last temporary
@@ -50,6 +66,12 @@ live validation, and a tool surface that covers a minority of the SDC API.
 - Document SDC co-management and destructive deploy behaviour: a policy deploy
   removes device configuration SDC does not model (#23).
 - Document response-shape mismatches observed live (#26).
+- Correct release claims across README, CHANGELOG, and the operations guide.
+  Five places asserted a compatibility blocker that cleared in #36/`369f9bb`,
+  and the README denied a live policy deploy that had in fact happened and is
+  the reason #23 exists.
+- Document `--lab-mode`, what it weakens, and why two tokens are preferable
+  where the ceremony has value.
 
 ## `v0.1.0-lab.4` — 2026-08-05
 
