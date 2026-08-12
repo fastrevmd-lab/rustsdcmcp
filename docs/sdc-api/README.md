@@ -478,6 +478,140 @@ the reason #34 gives.
 name to distinguish template targets, with no "not supported" note. Do not
 generalize the deploy restriction to template operations.
 
+### 10. Templates do not protect config from a policy deploy (2026-08-12)
+
+The experiment #33 asked for, run against `vsrx-ci` on the live tenant.
+
+#### Uploading a custom template
+
+`POST /api/v1/templates/workflow_definitions` takes `multipart/form-data` with
+the YAML in `definition_file`, and only `.yaml`/`.yml` is accepted. The YAML
+schema is **not in the spec**; it was derived from the endpoint's own errors and
+is:
+
+```yaml
+action-category: template-create   # or template-update
+spec:
+  name: MY_TEMPLATE
+  description: "..."
+  format: CLI
+  body: |
+    set security dynamic-address address-name example profile feed-name feed
+```
+
+`template-update` reuses the same `spec.name` and returns the same
+`resource_id`.
+
+#### An edge WAF blocks plaintext HTTP to private addresses
+
+A template whose body contains `http://` followed by an RFC1918 address is
+rejected with a bare **HTML `403 Forbidden`** — not SDC's JSON error shape — so
+it is an edge proxy, not the API. Isolated by probe:
+
+| Body contains | Result |
+|---|---|
+| `url http://192.168.1.206/bundle.tgz` | **403 HTML** |
+| `url https://example.com/bundle.tgz` | 400 (reaches the API) |
+| `server 192.168.1.206` (no scheme) | 400 (reaches the API) |
+| the word `url` alone | 400 (reaches the API) |
+
+This matters because it is exactly the shape of a `dynamic-address feed-server`
+pointing at an internal feed host: that config cannot be uploaded as a template
+through this API, though it can be set from the CLI.
+
+#### The finding
+
+A custom template **can** place `security dynamic-address` config. Verified on
+the device, committed by `sduser` with `Component:Config-Template`.
+
+A subsequent **policy deploy targets that config for deletion.** Controlled
+comparison, same policy and same device:
+
+| Device state at prepare | Deletes in the preview |
+|---|---|
+| Template-placed `address-name tmpl-unreferenced` present | `delete security dynamic-address address-name tmpl-unreferenced` |
+| Same object removed | **none** (397-line diff, zero delete lines) |
+
+So **template origin confers no protection**, and #23's predictor is unchanged:
+what survives is reachability from a policy SDC imported, not how the config got
+there. The co-management split in `operations.md` stands, and templates are
+**not** a remedy for the deletion problem.
+
+#### Confirmed by a committed apply (2026-08-12, second run)
+
+The first run could not commit — every deploy failed while the tenant carried a
+policy the device rejected at check-out (#64). After that policy was replaced
+with a single any/any permit, the experiment was repeated end to end:
+
+1. A custom template placed `feed-server expfeeder` and
+   `address-name exp-unreferenced` on the device. Template deploy `SUCCESS`,
+   committed by `sduser` with `Component:Config-Template`.
+2. A policy deploy through this server previewed exactly one line:
+   `delete security dynamic-address address-name exp-unreferenced`.
+3. Apply returned `succeeded: true`, `SDC deployment ended with Completed`.
+4. The device confirms the removal.
+
+So the finding is now observed, not inferred: **a policy deploy deletes
+template-placed configuration that no imported policy references.**
+
+### 11. A deploy can commit more than its preview disclosed (2026-08-12)
+
+Found while confirming §10, and it matters more than the finding it came from.
+
+The preview above contained **one** delete line, naming only the address-name.
+The committed change removed the feed-server as well:
+
+```
+$ show configuration | compare rollback 2
+[edit security dynamic-address]
+-    feed-server expfeeder {
+-        url https://feeds.example.com/bundle.tgz;
+-        update-interval 3600;
+-        feed-name expfeed { path bundle/blocklist; }
+-    }
+-    address-name exp-unreferenced {
+-        profile { feed-name expfeed; }
+-    }
+```
+
+This is not a parsing artifact. The string `expfeeder` appears **zero times** in
+the entire prepared-change artifact — the same artifact the preview digest is
+computed over — while `exp-unreferenced` appears once, in a 61-character
+`config_diff`.
+
+**Why this matters more than the deletion itself.** The whole premise of the
+change-control binding is that an approver approves the preview, and the digest
+proves the applied change is that one. Here the approver saw one object being
+removed and two were removed. The digest is intact and the binding did its job;
+what was bound simply did not describe the whole change.
+
+It also contradicts what this document previously recorded from #23 — *"Apply
+matched the preview exactly"* — which was true of that observation and is not
+true in general. Treat a preview as a lower bound on what a deploy will change,
+not a complete statement of it, until the conditions under which it
+under-reports are understood.
+
+Filed as an issue. Unknown so far: whether the omission is specific to a
+feed-server orphaned by the removal of its consumer, whether the XML preview
+form discloses more than the CLI one, and whether other object families behave
+the same way.
+
+#### On the first run's failures
+
+Both applies in the first run failed for reasons now understood. The tenant
+policy was rejected by the device at check-out (#64), which had nothing to do
+with templates. One template deploy additionally hit a Junos constraint —
+*"Feed blocklist has already been referenced by dynamic address
+wilddns-blocklist. One feed can only be referenced by one dynamic address."*
+
+#### Operational consequence
+
+A failed deploy leaves an operation in state `failed` in the change-set store,
+and every later apply on that tenant is refused with *"the device already has an
+active or unreconciled operation"*. `mecmcp-changeset` has
+`discard_operation`, but this server exposes no tool for it, so there is no
+supported way to clear it.
+
 ## Still unverified
 
 Not answered by the spec; do not write code that assumes an answer:
