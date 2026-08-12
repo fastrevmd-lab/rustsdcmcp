@@ -34,6 +34,7 @@
 //! distinct from the dropped-field warning — a warning that said "dropped"
 //! would tell an operator the field never reached callers when in fact it did.
 
+use crate::SdcError;
 use serde_json::{Map, Value};
 
 /// Fields observed on `ListCaCertificates` and `ListDeviceCaCertificates`.
@@ -108,35 +109,44 @@ const LICENSE_FIELDS: &[&str] = &[
 const ENVELOPE_FIELDS: &[&str] = &["items", "count"];
 
 /// Project a CA-certificate collection onto its allowlist.
-pub fn project_ca_certificates(value: Value) -> Value {
+pub fn project_ca_certificates(value: Value) -> Result<Value, SdcError> {
     project_collection(value, CA_CERTIFICATE_FIELDS, "ca_certificates")
 }
 
 /// Project a local-certificate collection onto its allowlist.
-pub fn project_local_certificates(value: Value) -> Value {
+pub fn project_local_certificates(value: Value) -> Result<Value, SdcError> {
     project_collection(value, LOCAL_CERTIFICATE_FIELDS, "local_certificates")
 }
 
 /// Project a licence collection onto its allowlist.
-pub fn project_licenses(value: Value) -> Value {
+pub fn project_licenses(value: Value) -> Result<Value, SdcError> {
     project_collection(value, LICENSE_FIELDS, "licenses")
 }
 
 /// Project a single licence object onto its allowlist.
-pub fn project_license(value: Value) -> Value {
+pub fn project_license(value: Value) -> Result<Value, SdcError> {
     match value {
-        Value::Object(object) => Value::Object(retain_allowed(object, LICENSE_FIELDS, "license")),
-        other => other,
+        Value::Object(object) => Ok(Value::Object(retain_allowed(
+            object,
+            LICENSE_FIELDS,
+            "license",
+        ))),
+        // Fail closed. A response that is not an object cannot be projected,
+        // and passing it through would carry unallowlisted content across the
+        // MCP boundary on exactly the surface this module exists to guard.
+        _ => Err(SdcError::InvalidJson),
     }
 }
 
 /// Project each member of an `{"items": [...], "count": N}` envelope.
 ///
-/// A response that is not that shape is returned unchanged. An empty tenant
-/// returns a bare `{}`, which has no `items` to project.
-fn project_collection(value: Value, allowed: &[&str], surface: &str) -> Value {
+/// An empty tenant returns a bare `{}`, which has no `items` and is returned
+/// as-is. Any other departure from the expected shape fails closed with
+/// [`SdcError::InvalidJson`] rather than passing unprojected content through
+/// the boundary this module exists to guard.
+fn project_collection(value: Value, allowed: &[&str], surface: &str) -> Result<Value, SdcError> {
     let Value::Object(mut envelope) = value else {
-        return value;
+        return Err(SdcError::InvalidJson);
     };
 
     let unknown_envelope: Vec<&str> = envelope
@@ -150,32 +160,30 @@ fn project_collection(value: Value, allowed: &[&str], surface: &str) -> Value {
 
     let items = match envelope.remove("items") {
         Some(Value::Array(items)) => items,
-        Some(other) => {
-            // `items` is present but not an array — a malformed or
-            // transitional response. Put it back exactly as received rather
-            // than returning an envelope that silently lost the key.
-            envelope.insert("items".to_owned(), other);
-            return Value::Object(envelope);
-        }
+        // `items` present but not an array. Fail closed rather than passing it
+        // through: an object-valued `items` would carry arbitrary unprojected
+        // content to the caller, defeating the allowlist entirely.
+        Some(_) => return Err(SdcError::InvalidJson),
         // An empty tenant returns a bare `{}` with no `items` at all.
-        None => return Value::Object(envelope),
+        None => return Ok(Value::Object(envelope)),
     };
 
     let mut dropped: Vec<String> = Vec::new();
-    let projected: Vec<Value> = items
-        .into_iter()
-        .map(|item| match item {
-            Value::Object(object) => {
-                for key in object.keys() {
-                    if !allowed.contains(&key.as_str()) && !dropped.contains(key) {
-                        dropped.push(key.clone());
-                    }
-                }
-                Value::Object(retain_only(object, allowed))
+    let mut projected: Vec<Value> = Vec::with_capacity(items.len());
+    for item in items {
+        // Fail closed on a non-object member for the same reason as a
+        // non-array `items`: it cannot be projected, and a nested array could
+        // carry objects the allowlist never inspects.
+        let Value::Object(object) = item else {
+            return Err(SdcError::InvalidJson);
+        };
+        for key in object.keys() {
+            if !allowed.contains(&key.as_str()) && !dropped.contains(key) {
+                dropped.push(key.clone());
             }
-            other => other,
-        })
-        .collect();
+        }
+        projected.push(Value::Object(retain_only(object, allowed)));
+    }
 
     if !dropped.is_empty() {
         let names: Vec<&str> = dropped.iter().map(String::as_str).collect();
@@ -183,7 +191,7 @@ fn project_collection(value: Value, allowed: &[&str], surface: &str) -> Value {
     }
 
     envelope.insert("items".to_owned(), Value::Array(projected));
-    Value::Object(envelope)
+    Ok(Value::Object(envelope))
 }
 
 /// Retain allowed keys on one object, reporting the names of any dropped.
@@ -257,7 +265,7 @@ mod tests {
             "count": 1,
         });
 
-        let projected = project_local_certificates(response);
+        let projected = project_local_certificates(response).expect("projects");
         let item = &projected["items"][0];
 
         assert!(item.get("private_key").is_none());
@@ -275,7 +283,7 @@ mod tests {
             "count": 1,
         });
 
-        let projected = project_local_certificates(response);
+        let projected = project_local_certificates(response).expect("projects");
         let item = &projected["items"][0];
 
         assert_eq!(item["public_key_algorithm"], "rsaEncryption");
@@ -304,7 +312,7 @@ mod tests {
             "count": 1,
         });
 
-        let projected = project_ca_certificates(response.clone());
+        let projected = project_ca_certificates(response.clone()).expect("projects");
 
         assert_eq!(
             projected["items"][0], response["items"][0],
@@ -324,7 +332,7 @@ mod tests {
             "end_date": "2026-08-16",
         });
 
-        assert_eq!(project_license(licence.clone()), licence);
+        assert_eq!(project_license(licence.clone()).expect("projects"), licence);
     }
 
     #[test]
@@ -405,7 +413,7 @@ mod tests {
     #[test]
     fn empty_tenant_response_is_unchanged() {
         // An empty collection returns a bare `{}` (see docs/sdc-api §3).
-        assert_eq!(project_licenses(json!({})), json!({}));
+        assert_eq!(project_licenses(json!({})).expect("projects"), json!({}));
     }
 
     #[test]
@@ -418,7 +426,7 @@ mod tests {
             "next_page_token": "abc",
         });
 
-        let projected = project_licenses(response);
+        let projected = project_licenses(response).expect("projects");
 
         assert_eq!(projected["next_page_token"], "abc");
         assert_eq!(projected["count"], 1);
@@ -427,25 +435,26 @@ mod tests {
     }
 
     #[test]
-    fn non_array_items_value_is_preserved_not_swallowed() {
-        // A malformed or transitional response must pass through intact. An
-        // earlier version removed `items` to inspect it and returned without
-        // putting it back, so the caller received an envelope missing the key.
+    fn malformed_collections_fail_closed() {
+        // An object-valued `items` would otherwise reach the caller verbatim,
+        // carrying arbitrary unprojected content across the boundary this
+        // module guards. Refuse rather than pass through.
         for malformed in [
             json!({"items": null, "count": 0}),
-            json!({"items": {"a": 1}}),
+            json!({"items": {"private_key": "leaked"}}),
+            json!({"items": [["nested"]]}),
+            json!({"items": ["scalar"]}),
         ] {
-            assert_eq!(
-                project_licenses(malformed.clone()),
-                malformed,
-                "a non-array items value must be returned exactly as received"
+            assert!(
+                project_licenses(malformed.clone()).is_err(),
+                "malformed collection must be refused, not passed through: {malformed}"
             );
         }
     }
 
     #[test]
-    fn non_object_response_is_unchanged() {
-        assert_eq!(project_licenses(json!([1, 2])), json!([1, 2]));
-        assert_eq!(project_license(json!("nope")), json!("nope"));
+    fn non_object_response_fails_closed() {
+        assert!(project_licenses(json!([1, 2])).is_err());
+        assert!(project_license(json!("nope")).is_err());
     }
 }

@@ -1235,7 +1235,7 @@ impl SdcHandler {
                 .client
                 .list_ca_certificates(page, &cancellation)
                 .await
-                .map(project_ca_certificates),
+                .and_then(project_ca_certificates),
             Err(error) => Err(error),
         };
         Ok(finish(audit, result))
@@ -1269,7 +1269,7 @@ impl SdcHandler {
                 .client
                 .list_local_certificates(page, &cancellation)
                 .await
-                .map(project_local_certificates),
+                .and_then(project_local_certificates),
             Err(error) => Err(error),
         };
         Ok(finish(audit, result))
@@ -1304,7 +1304,7 @@ impl SdcHandler {
                 .client
                 .list_device_ca_certificates(&args.device_uuid, page, &cancellation)
                 .await
-                .map(project_ca_certificates),
+                .and_then(project_ca_certificates),
             Err(error) => Err(error),
         };
         Ok(finish(audit, result))
@@ -1340,7 +1340,7 @@ impl SdcHandler {
                 .client
                 .list_device_local_certificates(&args.device_uuid, page, &cancellation)
                 .await
-                .map(project_local_certificates),
+                .and_then(project_local_certificates),
             Err(error) => Err(error),
         };
         Ok(finish(audit, result))
@@ -1374,7 +1374,7 @@ impl SdcHandler {
                 .client
                 .list_licenses(&args.device_uuid, page, &cancellation)
                 .await
-                .map(project_licenses),
+                .and_then(project_licenses),
             Err(error) => Err(error),
         };
         Ok(finish(audit, result))
@@ -1401,7 +1401,7 @@ impl SdcHandler {
             self.client
                 .get_license(&args.device_uuid, &args.license_uuid, &cancellation)
                 .await
-                .map(project_license),
+                .and_then(project_license),
         ))
     }
 
