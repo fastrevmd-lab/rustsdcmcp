@@ -12,6 +12,38 @@ live validation, and a tool surface that covers a minority of the SDC API.
 
 ## Unreleased
 
+## `v0.1.0-lab.6` — 2026-08-12
+
+### Added
+
+- Device group read tools: `list_sdc_device_groups` and `get_sdc_device_group`
+  (#34). The tool surface is now 50: 39 reads and 11 change-control tools.
+
+  **Anyone holding a token minted against the previous 48 must re-mint it.** A
+  token's tool scope is an explicit allowlist of names, so an upgrade that adds
+  tools leaves existing tokens seeing exactly what they saw before. The new
+  tools simply do not appear, which looks like a failed deployment and is not.
+
+### Documentation
+
+- Show how to enable `--lab-mode`, which the previous release documented the
+  meaning of without ever showing the invocation. `--lab-mode` is CLI-only:
+  unlike `--state-file` and `--approval-timeout-secs` it has no `sdc.json`
+  fallback, deliberately.
+- Record that a policy deploy **deletes template-placed configuration** that no
+  imported policy references, confirmed by a committed apply (#33). Template
+  origin confers no protection, so the co-management boundary in #23 stands and
+  templates are not a remedy for it.
+- Record that **a deploy can commit more than its preview disclosed** (#66). In
+  the observed case the preview named one object and the commit removed two,
+  with the omitted object absent from the digest-bound artifact entirely. The
+  change-set binding behaved correctly; what it bound did not describe the whole
+  change. Treat a preview as a lower bound until the conditions are understood.
+- Record the undocumented custom-template upload schema, and an edge WAF that
+  rejects a template body containing `http://` plus an RFC1918 address.
+- Record that `DEVICE_GROUP` is not a supported deploy target — the pinned spec
+  marks it "not supported, future support" — correcting a claim in #34 (#61).
+
 ## `v0.1.0-lab.5` — 2026-08-12
 
 ### Added since `v0.1.0-lab.4`
