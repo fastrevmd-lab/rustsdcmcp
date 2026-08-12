@@ -45,20 +45,26 @@ write tool, so each must be named explicitly when a token is minted.
 
 Live validation against SDC has gone well beyond read-only. On 2026-08-07 a
 full `prepare → approve → apply` policy deploy ran against the lab tenant and
-reached a managed vSRX, which is how the destructive co-management behaviour in
-#23 was discovered — an SDC policy deploy removes device configuration SDC does
-not model. `JobStatus` and `DeviceStatusEntry` are validated against live
-preview and deploy responses.
+reached a managed vSRX, which is how the co-management behaviour in #23 was
+discovered: within hierarchies SDC owns, objects **not reachable from a policy
+SDC imported** are deleted on deploy. Interfaces, routing, `system`, and the
+management instance were untouched. The full boundary and the observed diff are
+in [`docs/operations.md`](docs/operations.md). `JobStatus` and
+`DeviceStatusEntry` are validated against live preview and deploy responses.
 
 On 2026-08-12 the certificate and licence readers, `BulkSyncDevices`, and the
 template endpoints were exercised live. Device sync **imports** into SDC rather
 than pushing to the device, but reconciles inventory only and does not clear
 `device_config_state: OUT_OF_BAND_CHANGED`.
 
-Read-path security properties verified live: credential-based startup tenant
-validation, a scoped grant exposing exactly its permitted tools and no write
-tools, `401` for missing and invalid bearers, and audit records carrying
-HMAC-redacted targets with no cleartext tenant identifier.
+Read-path security properties were verified live on 2026-08-07 against commit
+`ea81805d2b4b97df9bdd3f70423e047524896a3d` with `mecmcp` `v0.5.0`, and have not
+been re-run end to end since: credential-based startup tenant validation, a
+scoped grant exposing exactly its permitted tools and no write tools, `401` for
+missing and invalid bearers, and audit records carrying HMAC-redacted targets
+with no cleartext tenant identifier. Treat these as results for that build. The
+transport and scope preflight were replaced afterwards in `e28d0cc` and
+`369f9bb`, so current `main` has not had the same audit.
 
 Observed response shapes and the remaining endpoint questions are tracked in
 [`docs/sdc-api/README.md`](docs/sdc-api/README.md#still-unverified).
