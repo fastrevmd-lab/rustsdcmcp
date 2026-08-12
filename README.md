@@ -203,8 +203,9 @@ published here; each operator supplies their own.
 
 1. First-class Docker image and Compose support with secret injection, health
    checks, and release documentation.
-2. Replace all 59 temporary compatibility declarations when their tracked
-   mecmcp APIs ship together in one coherent release.
+2. Adopt the shared change-set CLI standard — `--lab-mode`, `--state-file`,
+   `--approval-timeout-secs`, and `parse_for` so `--version` answers instead of
+   erroring (#54).
 3. Add remote audit-journal forwarding for non-lab operation.
 4. Expand bounded live validation across the remaining read endpoints, then
    exercise write workflows only through approved change control.
@@ -214,12 +215,24 @@ published here; each operator supplies their own.
 
 [`mecmcp`](https://github.com/fastrevmd-lab/mecmcp) is the vendor-neutral Rust
 foundation shared by the mechub MCP server family. This repository consumes it,
-rather than forking it. Current source pins all five shared crates to `v0.5.0`.
-The published `v0.1.0-lab.4` prerelease predates that adoption and pins
-`changeset-v0.3.7`; the older `v0.1.0-lab.1` pins `changeset-v0.3.6`.
-The 59 temporary compatibility declarations remain tracked in the
-[`mecmcp compatibility ledger`](docs/mecmcp-compatibility.md); public `v0.1.0`
-remains blocked until all 59 are replaced by one coherent upstream release.
+rather than forking it. Current source pins all six shared crates —
+`mecmcp-audit`, `mecmcp-auth`, `mecmcp-changeset`, `mecmcp-runtime`,
+`mecmcp-server`, and `mecmcp-transport` — to `v0.8.0`.
+
+Published prereleases predate that adoption: `v0.1.0-lab.4` pins
+`changeset-v0.3.7`, and `v0.1.0-lab.1` pins `changeset-v0.3.6`.
+
+**The compatibility blocker is cleared.** Earlier revisions of this section
+said public `v0.1.0` was blocked until 59 temporary compatibility declarations
+were replaced by one coherent upstream release. That happened: the local
+`compat/` layer was deleted in #36 on the move to mecmcp 0.7.2, and the
+compatibility ledger itself was removed in `369f9bb` on the move to 0.8.0.
+There are no temporary compatibility symbols left, and no ledger to track.
+
+What still gates a public `v0.1.0` is operational rather than upstream, and is
+listed under [Roadmap](#roadmap): container image support, remote audit-journal
+forwarding, and broader live validation. The tool surface is also still
+incomplete — the open issues track roughly 180 unimplemented API operations.
 
 ## API provenance
 

@@ -20,11 +20,17 @@ Current source pins all five shared `mecmcp` crates to `v0.5.0`. The published
 `v0.1.0-lab.4` prerelease predates that adoption and pins `changeset-v0.3.7`;
 the older `v0.1.0-lab.1` pins `changeset-v0.3.6`. The immutable acceptance
 record for the original lab deployment is
-[`lab-deployment-606.md`](lab-deployment-606.md). This repository still has 59
-temporary compatibility symbols, each tracked in
-[`mecmcp-compatibility.tsv`](mecmcp-compatibility.tsv). There is no public
-`v0.1.0` release: do not publish, tag, or promote a lab archive until one
-coherent upstream `mecmcp` release replaces every ledger entry.
+[`lab-deployment-606.md`](lab-deployment-606.md).
+
+The temporary compatibility symbols this section used to warn about are gone.
+The `compat/` layer was deleted in #36 on the move to mecmcp 0.7.2, and the
+ledger that tracked it was removed in `369f9bb` on the move to 0.8.0.
+
+There is still no public `v0.1.0` release, but the reason is now operational
+rather than upstream: container image support, remote audit-journal forwarding,
+and broader live validation are outstanding, and the tool surface covers a
+minority of the SDC API. Continue to treat `v0.1.0-lab.N` archives as private
+lab prereleases — do not publish or promote one as a general release.
 
 ## Installed layout and configuration
 

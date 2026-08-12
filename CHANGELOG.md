@@ -1,16 +1,70 @@
 # Changelog
 
-All entries remain unreleased publicly: `v0.1.0` is blocked until one coherent
-upstream `mecmcp` release replaces all 59 compatibility ledger entries. The
-`v0.1.0-lab.N` tags are private lab prereleases, not public releases.
+All entries remain unreleased publicly. The `v0.1.0-lab.N` tags are private lab
+prereleases, not public releases.
+
+The upstream blocker that previously appeared here — 59 compatibility ledger
+entries awaiting one coherent `mecmcp` release — **is cleared**. The `compat/`
+layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
+`369f9bb` on the move to 0.8.0. What still gates a public `v0.1.0` is
+operational: container image support, remote audit-journal forwarding, broader
+live validation, and a tool surface that covers a minority of the SDC API.
 
 ## Unreleased
 
-### Fixed since `v0.1.0-lab.2`
+### Added since `v0.1.0-lab.4`
+
+- Certificate and licence tools: six read operations and eight write operations
+  under change control (#32).
+- IPsec profile and tunnel read tools (#28).
+- Firewall and NAT policy rule read tools (#25), NAT pool read tools (#30), and
+  NAT policy authoring under change control (#27).
+- Firewall policy write tools under change control (#24, partial).
+- Object authoring for address, application, service, and scheduler objects
+  under change control (#29).
+- `get_sdc_change_set_details`, which recovers a preview digest that is
+  otherwise returned only once by prepare and cannot be recomputed (#22).
+- An allowlist projection over the certificate and licence read tools, applied
+  at the MCP boundary so change-control drift detection keeps full-fidelity
+  state (#50).
+
+### Changed since `v0.1.0-lab.4`
+
+- Adopt mecmcp 0.8.0 and its generic scope preflight; adopt 0.7.2 and delete the
+  local compatibility transport copies (#36). This removed the last temporary
+  compatibility symbols and the ledger tracking them.
+
+### Fixed since `v0.1.0-lab.4`
+
+- Attribute an `expected_preview_digest` mismatch to that argument by name. The
+  error previously blamed the wrong input, sending an operator to inspect a
+  value that was correct.
+
+### Documentation since `v0.1.0-lab.4`
+
+- Record live-observed SDC API behaviour verified against a real tenant: the
+  certificate and licence field sets and their date-format and sentinel traps,
+  device sync direction, and what a template is and can express. Device sync
+  **imports** rather than pushes, but reconciles inventory only and does not
+  clear `OUT_OF_BAND_CHANGED` (#21, #33, #50).
+- Document SDC co-management and destructive deploy behaviour: a policy deploy
+  removes device configuration SDC does not model (#23).
+- Document response-shape mismatches observed live (#26).
+
+## `v0.1.0-lab.4` — 2026-08-05
 
 - Generate the package README instead of copying the repository one. Every
   archive previously shipped download instructions for the *previous* release,
-  because a release is built from a commit predating the docs describing it.
+  because a release is built from a commit predating the docs describing it
+  (#15).
+- Point the release documentation at `v0.1.0-lab.3` (#14).
+
+## `v0.1.0-lab.3` — 2026-08-05
+
+Released the work recorded below under "Fixed since `v0.1.0-lab.2`" and
+"Added".
+
+### Fixed since `v0.1.0-lab.2`
 
 - Refuse `--tokens-file` together with `--allow-no-auth`. The pair previously
   fell through to a catch-all arm that dropped the token store, producing an
