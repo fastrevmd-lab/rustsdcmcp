@@ -16,9 +16,11 @@ test "${#archives[@]}" -eq 1
 (cd "$artifact_dir" && sha256sum -c "$(basename "${archives[0]}").sha256")
 ```
 
-Current source pins all five shared `mecmcp` crates to `v0.5.0`. The published
-`v0.1.0-lab.4` prerelease predates that adoption and pins `changeset-v0.3.7`;
-the older `v0.1.0-lab.1` pins `changeset-v0.3.6`. The immutable acceptance
+Current source pins all six shared `mecmcp` crates — `mecmcp-audit`,
+`mecmcp-auth`, `mecmcp-changeset`, `mecmcp-runtime`, `mecmcp-server`, and
+`mecmcp-transport` — to `v0.8.0`. The published `v0.1.0-lab.4` prerelease
+predates that adoption and pins `changeset-v0.3.7`; the older `v0.1.0-lab.1`
+pins `changeset-v0.3.6`. The immutable acceptance
 record for the original lab deployment is
 [`lab-deployment-606.md`](lab-deployment-606.md).
 
