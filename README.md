@@ -235,6 +235,11 @@ than editing the shipped unit, so an upgrade does not silently drop it:
 sudo systemctl edit rustsdcmcp
 ```
 
+Replacing `ExecStart` means restating it in full, so **copy the shipped
+command and append the flag** rather than writing a shorter one. Dropping the
+`--audit-*` arguments would turn off HMAC target redaction and structured
+journald auditing as a side effect of enabling lab mode:
+
 ```ini
 [Service]
 # Clear the shipped ExecStart before replacing it; systemd appends otherwise.
@@ -245,21 +250,33 @@ ExecStart=/usr/local/bin/rustsdcmcp \
     --host 127.0.0.1 \
     --port 30032 \
     --tokens-file /etc/rustsdcmcp/tokens.json \
+    --audit-format json \
+    --audit-journald \
+    --audit-redact devices=hmac \
+    --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key \
     --lab-mode
 ```
+
+Check it against `packaging/systemd/rustsdcmcp.service` before applying it — the
+shipped arguments are the authority, and this snippet is a copy that can age.
 
 ```console
 sudo systemctl daemon-reload && sudo systemctl restart rustsdcmcp
 ```
 
-Confirm it took effect — the server says so at startup, and silence means it is
-off:
+Confirm it took effect. The two startup records use different spellings —
+`--lab-mode` in the warning and `lab_mode` in the resolved-configuration line —
+so match both, and read the journal with enough privilege to see a system unit:
 
 ```console
-journalctl -u rustsdcmcp | grep lab_mode
+sudo journalctl -u rustsdcmcp -b | grep -E 'lab.mode'
 {"level":"WARN","fields":{"message":"--lab-mode: two-person control is DISABLED. …"}}
 {"level":"INFO","fields":{"message":"change-control configuration resolved","lab_mode":true,…}}
 ```
+
+Silence means it is off. An unprivileged `journalctl` can also print nothing
+here for lack of access rather than because the flag is unset, which is why the
+command uses `sudo`.
 
 A waived change set then reports `"state": "approved"` with `"approver": null`
 and `"approval_waiver": "lab-mode"` straight out of `prepare_sdc_policy_deploy`,
