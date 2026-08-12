@@ -248,7 +248,7 @@ live preview *and* deploy responses, including `preview_id`/`deploy_id` being
 mutually exclusive with the unused one `null`. The shared-model choice there is
 validated.
 
-### 5. Device sync direction is unconfirmed (2026-08-08)
+### 5. Device sync direction — confirmed 2026-08-12 (was open 2026-08-08)
 
 `POST /api/v1/devices/sync` (`BulkSyncDevices`) can operate in one of two
 directions:
@@ -265,9 +265,50 @@ already experienced one such incident: #23 documented a policy deploy that
 deleted `security dynamic-address` config off a real vSRX because SDC's policy
 model does not represent dynamic-address feeds.
 
-Until the sync direction is confirmed, `BulkSyncDevices` and `GetSyncStatus`
-remain unimplemented. An operator with a disposable test tenant can close this
-by running one sync and observing whether unmodeled device config survives.
+#### Answered 2026-08-12: it imports, and it syncs *inventory*, not config
+
+Executed against `vsrx-ci` on the live tenant, snapshot-gated, scoped to the
+single device. `POST /api/v1/devices/sync` with `{"uuids":["a0f049c4-…"]}`
+returned `200` and `{"sync_id":"3d5e881b-…"}`.
+
+**Direction: import. Option 1.** The device's commit log was unchanged across
+the sync — the newest entry before and after was the same operator commit, and
+SDC created no commit of its own. Nothing was pushed and nothing was deleted.
+This is the opposite of the deploy path's behaviour in #23.
+
+**But it does not do what #21 wanted.** The per-device message is `"Successful
+sync inventory for device: source-device"`, and the state it moves is the
+inventory pair only:
+
+| Field | Before | After |
+|---|---|---|
+| `device_sync_status` | `OUT_OF_SYNC` | `IN_SYNC` |
+| `inventory_sync_info.overall_sync_status` | `OUT_OF_SYNC` | `IN_SYNC` |
+| `device_config_state` | `OUT_OF_BAND_CHANGED` | **`OUT_OF_BAND_CHANGED`** |
+
+`device_config_state` is untouched. `BulkSyncDevices` reconciles *inventory*,
+not configuration, so it is **not** the remedy for a device that has drifted
+via out-of-band CLI edits — which was the motivating problem in #21. Whatever
+clears `OUT_OF_BAND_CHANGED` is a different operation, still unidentified.
+
+**`GetSyncStatus` does not share the deploy job shape.** Two differences that
+matter to anyone planning to reuse the polling code:
+
+```json
+{"status":"SUCCESS",
+ "device_sync_status":[{"uuid":"…","name":"source-device",
+                        "status":"SUCCESS","message":"…"}]}
+```
+
+1. The status vocabulary is `SUCCESS`/`FAILURE`, not the deploy path's
+   `PENDING` / `IN_PROGRESS` / `COMPLETED` / `PARTIAL_SUCCESS` / `FAILED`.
+2. The per-device array is `device_sync_status`, not the deploy path's
+   structure, and its `name` carries the device's *hostname*
+   (`source-device`), not the SDC device name (`srx17861259151621`).
+
+The job also reported `SUCCESS` on the first poll, within seconds — no
+intermediate state was observable, so the non-terminal vocabulary is still
+unseen.
 
 ### 6. Firewall and NAT policy `{scope}` parameter values (2026-08-08)
 
@@ -284,6 +325,129 @@ Also confirmed: the spec misspells the firewall hierarchy path segment as
 /api/v1/policies/firewall/{policy_uuid}/{scope}/heirarchy    (misspelled)
 /api/v1/policies/nat/{policy_id}/hierarchy                   (correct)
 ```
+
+### 7. Certificate and licence reads carry no key material (2026-08-12)
+
+Captured from the live tenant against `vsrx-ci`
+(`a0f049c4-903a-471e-93c2-f8d19d30cebc`). All six read endpoints returned
+`200`. This answers the structural concern in #50, which was explicit that key
+material had been *neither observed nor ruled out*.
+
+**Observed: no private key, PEM body, CSR, or passphrase field appears in any
+response.** Certificate reads return metadata only.
+
+`ListCaCertificates` / `ListDeviceCaCertificates`:
+
+```
+uuid, name, device_uuid*, common_name, distinguished_name,
+organization_name, public_key_algorithm, key_size, serial_number,
+expiry_date, signature_algorithm, finger_print_content,
+issuer_common_name, issuer_organization_name
+```
+
+`ListLocalCertificates` / `ListDeviceLocalCertificates`:
+
+```
+uuid, name, device_uuid*, distinguished_name, public_key_algorithm,
+serial_number, validity_not_before, validity_not_after, key_size,
+signature_algorithm, finger_print_content, auto_re_enrollment_status,
+auto_re_enrollment_trigger_time, email, subject_alternate_domain_name,
+ipv4_address, ipv6_address
+```
+
+`ListLicenses` / `GetLicense`:
+
+```
+uuid, name, version, state, validity_type, start_date, end_date
+```
+
+`*` — `device_uuid` is present only on the tenant-wide list, absent from the
+per-device variant. The same list-versus-scoped asymmetry already documented for
+devices.
+
+`GetLicense` returns exactly the `ListLicenses` item field set. Unlike devices,
+the single-object read adds nothing.
+
+Four traps in the observed data:
+
+1. **`validity_not_before` and `validity_not_after` use different date formats
+   in the same object.** Observed: `'08- 7-2026 17:47 UTC'` against
+   `'2027-09-06 18:47 UTC'` — note the day padded with a space, and the
+   day-month order reversed. Do not parse these with one format.
+2. `ipv4_address` and `ipv6_address` return the sentinel strings
+   `'ipv4 empty'` and `'ipv6 empty'`, not `null` or `""`.
+3. `key_size` and `public_key_algorithm` are *public* key metadata
+   (`'2048'`, `'rsaEncryption'`). A redaction rule keyed on the substring `key`
+   will match them; they are not secrets.
+4. `version` and `key_size` are strings, while the envelope `count` is an
+   integer here — consistent with §1.
+
+The licence `name` (e.g. `E20210617001`) is a licence identifier, not a licence
+key blob.
+
+**This does not make a projection unnecessary.** What is verified is today's
+payload, not a contract. #50's reasoning stands: with `Value` passthrough there
+is no failure mode in which a field added upstream is noticed.
+
+### 8. What a template is, and what it can express (2026-08-12)
+
+`GET /api/v1/templates` on the live tenant returns 17 built-in templates,
+`count: 17`, every one `format: "CLI"`. A template object is:
+
+```
+uuid, name, description, format, template, variablesdef
+```
+
+**`template` is a Jinja2 template that emits raw Junos `set`/`delete` lines.**
+From the built-in `DNS` template:
+
+```jinja
+{%- for nameserver in nameservers_config.nameservers %}
+set system name-server {{nameserver.DNS_IP_Address}}
+  {%- if nameserver.routing_instance %} routing-instance {{nameserver.routing_instance}}{%- endif -%}
+{% endfor %}
+```
+
+Templates render against both the new values and a `pre_config` object holding
+the previous ones, which is how they replace rather than accumulate — the
+built-ins emit `delete` lines for `pre_config` entries before `set` lines for
+the new ones.
+
+`variablesdef` is a **JSON-encoded string nested inside the JSON response**, not
+a nested object. It must be parsed twice. Each entry carries `name`,
+`description`, `type` (`ipv4`, `string`, …), `required`, `mode`, and an optional
+`path` for entity-scoped collections.
+
+#### Bearing on #23's co-management boundary
+
+The 17 built-ins are system-level: `DNS`, `NTP`, `SNMP`, `SYSLOG`, `SSH`,
+`NETCONF`, `HOSTNAME`, `DOMAIN_NAME`, `BANNER`, `LOCAL_USER`, `LLDP`, `DHCP`,
+`AE_DEVICE_COUNT`, `PROXY_SERVER_SECURITY`, `ROUTING_INSTANCE`, and two MNHA
+templates.
+
+- **No general interface template.** `AE_DEVICE_COUNT` sets an aggregated
+  ethernet device-count and nothing else. Interface addressing is not covered.
+- **No general routing template.** `ROUTING_INSTANCE` is scoped by its own
+  description to PKI, Security Intelligence, and AAMW, and its body only emits
+  `security pki ca-profile … routing-instance`, `services
+  security-intelligence routing-instance`, and `services
+  advanced-anti-malware connection routing-instance`.
+- **No `security dynamic-address` template**, which is #23's concrete case.
+
+So the *built-in* set does not express the config a policy deploy removes.
+
+But `POST /api/v1/templates/workflow_definitions` (`UploadTemplateDefinition`)
+accepts custom definitions, and since a template body is arbitrary Junos CLI, a
+custom template **can** emit `set security dynamic-address …` or interface and
+routing configuration. The mechanism is not restricted to the built-in
+categories.
+
+**Do not read that as a fix for #23.** Whether config placed by a template
+survives a subsequent *policy* deploy is a different question about a different
+pipeline, and it is unverified. The observed #23 behaviour was a policy deploy
+deleting unreferenced `dynamic-address` config; nothing tested here shows that a
+template origin changes that outcome. Answering it needs a custom template
+deployed and then a policy deploy run over the same device.
 
 ## Still unverified
 

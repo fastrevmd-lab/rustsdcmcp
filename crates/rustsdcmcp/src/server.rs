@@ -18,7 +18,8 @@ use rmcp::{
 };
 use rustsdcmcp_core::{
     ChangeManager, ListRequest, NatWriteOperation, ObjectWriteAction, PolicyOperation,
-    ResourceKind, SdcClient, SdcError,
+    ResourceKind, SdcClient, SdcError, project_ca_certificates, project_license, project_licenses,
+    project_local_certificates,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -1230,7 +1231,11 @@ impl SdcHandler {
         let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
             .map_err(SdcError::from);
         let result = match result {
-            Ok(page) => self.client.list_ca_certificates(page, &cancellation).await,
+            Ok(page) => self
+                .client
+                .list_ca_certificates(page, &cancellation)
+                .await
+                .and_then(project_ca_certificates),
             Err(error) => Err(error),
         };
         Ok(finish(audit, result))
@@ -1260,11 +1265,11 @@ impl SdcHandler {
         let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
             .map_err(SdcError::from);
         let result = match result {
-            Ok(page) => {
-                self.client
-                    .list_local_certificates(page, &cancellation)
-                    .await
-            }
+            Ok(page) => self
+                .client
+                .list_local_certificates(page, &cancellation)
+                .await
+                .and_then(project_local_certificates),
             Err(error) => Err(error),
         };
         Ok(finish(audit, result))
@@ -1295,11 +1300,11 @@ impl SdcHandler {
         let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
             .map_err(SdcError::from);
         let result = match result {
-            Ok(page) => {
-                self.client
-                    .list_device_ca_certificates(&args.device_uuid, page, &cancellation)
-                    .await
-            }
+            Ok(page) => self
+                .client
+                .list_device_ca_certificates(&args.device_uuid, page, &cancellation)
+                .await
+                .and_then(project_ca_certificates),
             Err(error) => Err(error),
         };
         Ok(finish(audit, result))
@@ -1331,11 +1336,11 @@ impl SdcHandler {
         let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
             .map_err(SdcError::from);
         let result = match result {
-            Ok(page) => {
-                self.client
-                    .list_device_local_certificates(&args.device_uuid, page, &cancellation)
-                    .await
-            }
+            Ok(page) => self
+                .client
+                .list_device_local_certificates(&args.device_uuid, page, &cancellation)
+                .await
+                .and_then(project_local_certificates),
             Err(error) => Err(error),
         };
         Ok(finish(audit, result))
@@ -1365,11 +1370,11 @@ impl SdcHandler {
         let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
             .map_err(SdcError::from);
         let result = match result {
-            Ok(page) => {
-                self.client
-                    .list_licenses(&args.device_uuid, page, &cancellation)
-                    .await
-            }
+            Ok(page) => self
+                .client
+                .list_licenses(&args.device_uuid, page, &cancellation)
+                .await
+                .and_then(project_licenses),
             Err(error) => Err(error),
         };
         Ok(finish(audit, result))
@@ -1395,7 +1400,8 @@ impl SdcHandler {
             audit,
             self.client
                 .get_license(&args.device_uuid, &args.license_uuid, &cancellation)
-                .await,
+                .await
+                .and_then(project_license),
         ))
     }
 
