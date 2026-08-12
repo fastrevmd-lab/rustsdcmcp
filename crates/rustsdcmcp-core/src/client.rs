@@ -289,18 +289,23 @@ impl SdcClient {
             .await
     }
 
-    /// List device groups with bounded pagination.
+    /// List device groups with bounded pagination and an optional projection.
     ///
-    /// `TargetType::DeviceGroup` is an accepted policy-deploy target, so a
-    /// group is a blast radius an approver has to be able to see. Without
-    /// these reads a deploy can be approved and applied against a group whose
-    /// membership is invisible through this server.
+    /// A group embeds its membership, so `size` alone does not bound the
+    /// response: one large group can exceed `max_response_bytes` and refuse
+    /// the read. Pass `fields` to project the response down to group metadata
+    /// and use [`Self::get_device_group`] when membership is actually wanted.
+    ///
+    /// The field names are the API's, not this crate's, and no default
+    /// projection is applied: guessing them would silently drop data. The lab
+    /// tenant has no groups, so none has been observed to hard-code.
     pub async fn list_device_groups(
         &self,
         page: ListRequest,
+        fields: Option<&str>,
         cancellation: &CancellationToken,
     ) -> Result<Value, SdcError> {
-        self.list(&["api", "v1", "device_groups"], page, cancellation)
+        self.list_projected(&["api", "v1", "device_groups"], page, fields, cancellation)
             .await
     }
 
@@ -1427,11 +1432,34 @@ impl SdcClient {
         page: ListRequest,
         cancellation: &CancellationToken,
     ) -> Result<Value, SdcError> {
+        self.list_projected(segments, page, None, cancellation)
+            .await
+    }
+
+    /// `list`, with the API's server-side `fields` projection.
+    ///
+    /// `size` bounds how many objects come back, not how large each one is. A
+    /// collection whose members embed arrays -- device groups embed their
+    /// membership -- can therefore exceed `max_response_bytes` even at
+    /// `size=1`, which refuses the read rather than truncating it. `fields`
+    /// is the API's own remedy (see docs/sdc-api/README.md, "Pagination,
+    /// filtering, and result shaping").
+    async fn list_projected(
+        &self,
+        segments: &[&str],
+        page: ListRequest,
+        fields: Option<&str>,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
         let page = ListRequest::new(page.from, page.size, self.max_page_size)?;
-        let query = [
+        let mut query = vec![
             ("from", page.from.to_string()),
             ("size", page.size.to_string()),
         ];
+        if let Some(fields) = fields {
+            validate_atom("fields", fields)?;
+            query.push(("fields", fields.to_owned()));
+        }
         let borrowed = query
             .iter()
             .map(|(key, value)| (*key, value.as_str()))
@@ -2248,6 +2276,7 @@ mod tests {
         let result = client(base_url, 4096)
             .list_device_groups(
                 ListRequest::new(0, 10, 100).expect("test page"),
+                None,
                 &CancellationToken::new(),
             )
             .await
@@ -2282,6 +2311,41 @@ mod tests {
              sees the blast radius of a deploy aimed at the group"
         );
 
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_device_group_list_can_project_fields_and_omits_the_param_otherwise() {
+        let app = Router::new().route(
+            "/api/v1/device_groups",
+            get(|Query(query): Query<HashMap<String, String>>| async move {
+                Json(serde_json::json!({"fields": query.get("fields").cloned()}))
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        let sdc = client(base_url, 4096);
+
+        let projected = sdc
+            .list_device_groups(
+                ListRequest::new(0, 10, 100).expect("test page"),
+                Some("uuid,name"),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("list succeeds");
+        assert_eq!(projected["fields"], "uuid,name");
+
+        // Absent by default: a projection invented here would silently drop
+        // fields, and no live group has been observed to derive one from.
+        let unprojected = sdc
+            .list_device_groups(
+                ListRequest::new(0, 10, 100).expect("test page"),
+                None,
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("list succeeds");
+        assert!(unprojected["fields"].is_null());
         server.abort();
     }
 

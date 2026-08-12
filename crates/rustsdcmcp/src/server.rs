@@ -224,6 +224,24 @@ pub struct DeviceGroupArgs {
     pub group_uuid: String,
 }
 
+/// Arguments for a device group list, with an optional server-side projection.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceGroupListArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Zero-based start index.
+    pub from: u64,
+    /// Explicit positive page size.
+    pub size: u32,
+    /// Optional comma-separated `fields` projection applied by the API.
+    ///
+    /// `size` bounds the number of groups, not the size of each one, and a
+    /// group embeds its membership. Projecting keeps an estate-scale list
+    /// readable.
+    pub fields: Option<String>,
+}
+
 /// Arguments for planning one firewall policy write.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -1197,11 +1215,11 @@ impl SdcHandler {
 
     #[tool(
         name = "list_sdc_device_groups",
-        description = "List SDC device groups with bounded pagination. A device group is an accepted policy-deploy target, so this is how a reviewer sees which groups exist before approving a deploy aimed at one."
+        description = "List SDC device groups with bounded pagination. Optional `fields` applies the API's server-side projection; a group embeds its membership, so an unprojected list of large groups can exceed the response limit."
     )]
     async fn list_sdc_device_groups(
         &self,
-        Parameters(args): Parameters<ListArgs>,
+        Parameters(args): Parameters<DeviceGroupListArgs>,
         extensions: Extensions,
         cancellation: CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
@@ -1219,7 +1237,11 @@ impl SdcHandler {
         let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
             .map_err(SdcError::from);
         let result = match result {
-            Ok(page) => self.client.list_device_groups(page, &cancellation).await,
+            Ok(page) => {
+                self.client
+                    .list_device_groups(page, args.fields.as_deref(), &cancellation)
+                    .await
+            }
             Err(error) => Err(error),
         };
         Ok(finish(audit, result))
@@ -1227,7 +1249,7 @@ impl SdcHandler {
 
     #[tool(
         name = "get_sdc_device_group",
-        description = "Get one SDC device group by UUID, including its member devices. Use this to establish the blast radius of a deploy targeting that group before approving it."
+        description = "Get one SDC device group by UUID, including its member devices. Note that SDC does not currently support deploying policy to a device group: the pinned API marks the DEVICE_GROUP target type as not supported, future support."
     )]
     async fn get_sdc_device_group(
         &self,
