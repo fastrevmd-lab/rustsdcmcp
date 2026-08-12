@@ -5,8 +5,10 @@ use std::collections::BTreeSet;
 
 #[test]
 fn tool_registry_has_expected_unique_surface() {
-    // 37 reads / 11 writes: #32 added 6 license/certificate reads (PR #49) and 2 license/certificate writes.
-    assert_eq!(KNOWN_TOOLS.len(), 48);
+    // 39 reads / 11 writes. #32 added 6 license/certificate reads (PR #49) and
+    // 2 license/certificate writes; #34 added device-group list and get, so a
+    // deploy target is inspectable before it is approved.
+    assert_eq!(KNOWN_TOOLS.len(), 50);
     assert_eq!(
         KNOWN_TOOLS.iter().copied().collect::<BTreeSet<_>>().len(),
         KNOWN_TOOLS.len()

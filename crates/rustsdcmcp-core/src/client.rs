@@ -289,6 +289,36 @@ impl SdcClient {
             .await
     }
 
+    /// List device groups with bounded pagination.
+    ///
+    /// `TargetType::DeviceGroup` is an accepted policy-deploy target, so a
+    /// group is a blast radius an approver has to be able to see. Without
+    /// these reads a deploy can be approved and applied against a group whose
+    /// membership is invisible through this server.
+    pub async fn list_device_groups(
+        &self,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        self.list(&["api", "v1", "device_groups"], page, cancellation)
+            .await
+    }
+
+    /// Fetch one device group by UUID, including its membership.
+    pub async fn get_device_group(
+        &self,
+        group_uuid: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("group_uuid", group_uuid)?;
+        self.get(
+            &["api", "v1", "device_groups", group_uuid],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
     /// Fetch one NAT pool by ID.
     ///
     /// NAT resources use a numeric-string `id`, not the UUID the firewall side
@@ -2191,6 +2221,110 @@ mod tests {
             .await
             .expect("list succeeds");
         assert_eq!(result["count"], 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn list_device_groups_sends_exact_auth_path_and_page() {
+        let app = Router::new().route(
+            "/api/v1/device_groups",
+            get(
+                |headers: HeaderMap, Query(query): Query<HashMap<String, String>>| async move {
+                    assert_eq!(
+                        headers
+                            .get("x-api-key")
+                            .and_then(|value| value.to_str().ok()),
+                        Some("test-secret")
+                    );
+                    assert_eq!(query.get("from").map(String::as_str), Some("0"));
+                    assert_eq!(query.get("size").map(String::as_str), Some("10"));
+                    // An empty tenant returns a bare `{}` — see docs/sdc-api §3.
+                    // Observed live on 2026-08-12 against this endpoint.
+                    Json(serde_json::json!({}))
+                },
+            ),
+        );
+        let (base_url, server) = serve(app).await;
+        let result = client(base_url, 4096)
+            .list_device_groups(
+                ListRequest::new(0, 10, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("list succeeds");
+        assert_eq!(result, serde_json::json!({}));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn get_device_group_returns_member_devices() {
+        let app = Router::new().route(
+            "/api/v1/device_groups/{group_uuid}",
+            get(|| async {
+                Json(serde_json::json!({
+                    "uuid": "group-1",
+                    "name": "branches",
+                    "devices": [{"uuid": "device-1"}, {"uuid": "device-2"}],
+                }))
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        let sdc = client(base_url, 4096);
+
+        let group = sdc
+            .get_device_group("group-1", &CancellationToken::new())
+            .await
+            .expect("get succeeds");
+        assert_eq!(
+            group["devices"].as_array().map(Vec::len),
+            Some(2),
+            "membership is the whole point of this read: it is how an approver \
+             sees the blast radius of a deploy aimed at the group"
+        );
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_device_group_uuid_cannot_escape_its_collection() {
+        // `validate_atom` permits `/` and `.`, so the guarantee lives in the
+        // URL builder: it refuses a literal `.`/`..` segment, and `push`
+        // percent-encodes everything else into exactly one segment. Asserted
+        // against the path the server actually receives rather than inferred.
+        let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorder = seen.clone();
+        let app = Router::new().fallback(move |uri: axum::http::Uri| {
+            let recorder = recorder.clone();
+            async move {
+                recorder
+                    .lock()
+                    .expect("record path")
+                    .push(uri.path().to_owned());
+                Json(serde_json::json!({}))
+            }
+        });
+        let (base_url, server) = serve(app).await;
+        let sdc = client(base_url, 4096);
+
+        sdc.get_device_group("../devices", &CancellationToken::new())
+            .await
+            .expect("the request is built, not refused");
+        let path = seen.lock().expect("read path")[0].clone();
+        assert!(
+            path.starts_with("/api/v1/device_groups/"),
+            "a traversal attempt must stay inside the collection; got {path}"
+        );
+        assert!(
+            !path.contains("/devices"),
+            "the separator must be encoded rather than opening a new segment; got {path}"
+        );
+
+        // A literal traversal segment is refused outright.
+        assert!(
+            sdc.get_device_group("..", &CancellationToken::new())
+                .await
+                .is_err()
+        );
         server.abort();
     }
 

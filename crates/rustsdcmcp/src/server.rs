@@ -51,6 +51,8 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "get_sdc_nat_hierarchy",
     "list_sdc_nat_pools",
     "get_sdc_nat_pool",
+    "list_sdc_device_groups",
+    "get_sdc_device_group",
     "list_sdc_resources",
     "get_sdc_resource",
     "list_sdc_ipsec_profiles",
@@ -210,6 +212,16 @@ pub struct NatPoolArgs {
     pub tenant: String,
     /// NAT pool ID.
     pub pool_id: String,
+}
+
+/// Arguments for one device group.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceGroupArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Device group UUID.
+    pub group_uuid: String,
 }
 
 /// Arguments for planning one firewall policy write.
@@ -1181,6 +1193,65 @@ impl SdcHandler {
             Err(error) => Err(error),
         };
         Ok(finish(audit, result))
+    }
+
+    #[tool(
+        name = "list_sdc_device_groups",
+        description = "List SDC device groups with bounded pagination. A device group is an accepted policy-deploy target, so this is how a reviewer sees which groups exist before approving a deploy aimed at one."
+    )]
+    async fn list_sdc_device_groups(
+        &self,
+        Parameters(args): Parameters<ListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_sdc_device_groups",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "list_sdc_device_groups", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
+            .map_err(SdcError::from);
+        let result = match result {
+            Ok(page) => self.client.list_device_groups(page, &cancellation).await,
+            Err(error) => Err(error),
+        };
+        Ok(finish(audit, result))
+    }
+
+    #[tool(
+        name = "get_sdc_device_group",
+        description = "Get one SDC device group by UUID, including its member devices. Use this to establish the blast radius of a deploy targeting that group before approving it."
+    )]
+    async fn get_sdc_device_group(
+        &self,
+        Parameters(args): Parameters<DeviceGroupArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "get_sdc_device_group",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "get_sdc_device_group", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish(
+            audit,
+            self.client
+                .get_device_group(&args.group_uuid, &cancellation)
+                .await,
+        ))
     }
 
     #[tool(name = "get_sdc_nat_pool", description = "Get one SDC NAT pool by ID.")]
