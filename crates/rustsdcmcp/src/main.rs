@@ -45,10 +45,20 @@ struct ServerCli {
     #[arg(long)]
     state_file: Option<PathBuf>,
 
-    /// How long an approval stays valid, in seconds.
+    /// How long an approval stays valid, in seconds. Must be greater than zero.
     ///
     /// Falls back to `approval_ttl_secs` in the product configuration.
-    #[arg(long, default_value_t = DEFAULT_APPROVAL_TIMEOUT_SECS)]
+    ///
+    /// `SdcConfig` refuses a zero TTL, but an explicit flag bypasses that
+    /// validation, and zero expires every change set at the instant it is
+    /// created — approval fails, and lab mode's waiver reports the window
+    /// already closed. Constrained here so the whole write surface cannot be
+    /// disabled by one plausible-looking argument.
+    #[arg(
+        long,
+        default_value_t = DEFAULT_APPROVAL_TIMEOUT_SECS,
+        value_parser = clap::value_parser!(u64).range(1..),
+    )]
     approval_timeout_secs: u64,
 }
 
@@ -478,6 +488,28 @@ mod tests {
                 configured
             ),
             Some(PathBuf::from("/tmp/other.json"))
+        );
+    }
+
+    #[test]
+    fn a_zero_approval_timeout_is_refused() {
+        // Zero expires every change set at creation, so approval fails and
+        // lab mode's waiver reports the window already closed. SdcConfig
+        // rejects it, but an explicit flag bypasses that validation.
+        let error = mecmcp_runtime::cli::try_parse_from::<ServerCli, _, _>(
+            "rustsdcmcp",
+            "0.0.0-test",
+            ["rustsdcmcp", "--approval-timeout-secs", "0"],
+        )
+        .expect_err("a zero approval timeout must be refused");
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+
+        // One second is unhelpful but coherent, so it is the operator's call.
+        assert_eq!(
+            parse(&["rustsdcmcp", "--approval-timeout-secs", "1"])
+                .cli
+                .approval_timeout_secs,
+            1
         );
     }
 
