@@ -12,6 +12,51 @@ live validation, and a tool surface that covers a minority of the SDC API.
 
 ## Unreleased
 
+## `v0.1.0-lab.7` — 2026-08-13
+
+Phase A of the completion plan: the four change-control defects.
+
+### Changed
+
+- **Previews are now requested as XML, and this changes what a reviewer
+  reads.** `GET /api/v1/policies/preview/{id}/devices/{id}` accepts a `format`
+  parameter — `CLI` (the default) or `XML` — and this client never passed it.
+  The CLI rendering omits parent objects that XML names: the same preview
+  rendered 273 bytes naming one deletion in CLI and 570 bytes naming two in
+  XML, the second being a `<feed-server operation="delete">`. Since the preview
+  digest is computed over that artifact, an approver could be shown less than
+  the change (#66).
+
+  SDC was never concealing anything — its XML answer was always complete. This
+  client digested the lossy rendering of it. Verified live: the parent object
+  now appears in the digest-bound artifact.
+
+### Added
+
+- `discard_sdc_operation`, which clears a terminal-but-unreconciled operation
+  (#63). A failed deploy previously refused **every later apply on the tenant**,
+  and the only remedy was editing `changeset-state.json` on a running
+  deployment. Owner-only, fingerprint-bound, and in `WRITE_TOOLS` so a wildcard
+  token scope cannot reach it. The failed operation stays visible: this
+  unblocks applies, it does not erase the failure.
+
+  Exposing the upstream call alone would not have worked, and would have made
+  things worse. It invokes `transaction.rollback`, which returned an error that
+  the caller converts to `Indeterminate` — a state that can never be discarded.
+  `SdcTransaction::rollback` now reports truthfully first, since SDC reverts the
+  device itself on a failed deploy.
+
+  **The tool surface is now 51.** A token minted against the previous 50 will
+  not see this tool until re-minted; tool scopes are explicit allowlists.
+
+### Fixed
+
+- Refuse a `DEVICE_GROUP` deploy target locally instead of sending a request
+  SDC rejects (#61). The pinned spec marks the target type "Not supported,
+  future support", so the refusal happens before a preview job is spent and
+  names the limitation. One guard and one call site, deletable when SDC
+  supports it.
+
 ## `v0.1.0-lab.6` — 2026-08-12
 
 ### Added
