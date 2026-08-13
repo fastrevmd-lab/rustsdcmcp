@@ -28,11 +28,18 @@ Phase B therefore does the refactor first and the coverage second.
 
 Measured from the vendored OpenAPI document, not estimated:
 
-- **32** tag groups have the five-operation shape with both a collection and
-  an item endpoint. All are `/api/v1`; none are `/api/v2`.
-- **27** of those are uniform: `/api/v1/<collection>`, `uuid` item
-  parameter, `from`/`size`/`fields` on the collection.
-- **4** of the 27 are already implemented, leaving **23** new.
+- **29 structurally uniform families** meet the collection shape:
+  `/api/v1/<collection>` with GET (supporting `from`, `size`, `fields`) and
+  POST, plus item `/api/v1/<collection>/{uuid}` with GET, PUT, DELETE.
+- **1** of those (`device_groups`) is excluded because it has bespoke tools,
+  leaving **28** in the catalog.
+- **4** of the 28 are already implemented, leaving **24** new.
+
+**Corrected count:** The original measurement (32 tag groups / 27 uniform / 23
+new) was derived from grouping operations by OpenAPI tag, which undercounts
+when a tag carries extra unrelated operations. The corrected figure comes from
+a structural extraction independent of tags: every endpoint pair matching the
+exact five-operation shape, by path structure and parameter support.
 
 The five excluded groups are excluded for stated reasons, not by preference:
 
@@ -53,7 +60,7 @@ later. None is blocked by this work.
 `crates/rustsdcmcp-core/src/catalog.rs` gains a second enum:
 
 ```rust
-pub enum ResourceKind { /* 27 readable families */ }
+pub enum ResourceKind { /* 28 readable families */ }
 
 pub enum WritableResource { Addresses, Applications, Services, Schedulers }
 
@@ -109,7 +116,7 @@ The release notes say this explicitly. A scoped token minted against an
 earlier surface silently cannot see new tools, and readers have learned to
 expect that consequence from recent releases.
 
-## The 23 new families
+## The 24 new families
 
 All `/api/v1/<collection>`, all `uuid`-keyed, all supporting
 `from`/`size`/`fields`. Paths are taken from the vendored spec.
@@ -127,6 +134,7 @@ All `/api/v1/<collection>`, all `uuid`-keyed, all supporting
 | `IcapServers` | `/api/v1/icap_servers` |
 | `IdentityObjects` | `/api/v1/identity_objects` |
 | `IpsProfiles` | `/api/v1/ips_profiles` |
+| `IpsSignatures` | `/api/v1/ips_signatures` |
 | `ProxyServers` | `/api/v1/proxy_servers` |
 | `RedirectProfiles` | `/api/v1/redirect_profiles` |
 | `RuleOptions` | `/api/v1/rule_options` |
@@ -157,7 +165,7 @@ must read as the family a client is looking for.
 ## Discovery
 
 The generic tools' descriptions currently enumerate the four families
-("address, application, service, or scheduler"). At 27 that becomes prose:
+("address, application, service, or scheduler"). At 28 that becomes prose:
 the tool lists an allowlisted SDC resource collection, and the `kind`
 parameter's enum in the JSON schema is the list.
 
@@ -193,7 +201,7 @@ closed rather than truncating.
 - **Write-catalog invariant.** For every `WritableResource`, the converted
   `ResourceKind` resolves to the same collection path. Exhaustive over the
   enum, so a new write family with no read counterpart fails the suite.
-- **Name/path invariant.** For all 27 `ResourceKind` variants, the serde name
+- **Name/path invariant.** For all 28 `ResourceKind` variants, the serde name
   equals the last element of `collection_segments()`, and the first two
   elements are `["api", "v1"]`. A transposed path fails the suite instead of
   404-ing against a live tenant.
@@ -230,7 +238,7 @@ belongs on the "Still unverified" list in `docs/sdc-api/README.md`.
 
 ## Explicitly out of scope
 
-- Writes for any of the 23 new families. The write catalog stays at four.
+- Writes for any of the 24 new families. The write catalog stays at four.
 - The two nested IPS rule families, NAT pools, device groups, and
   `DeviceGlobalSettings`.
 - #55, #21's rollback write, #33's template tools, #34's remainder.

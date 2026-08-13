@@ -51,6 +51,8 @@ pub enum ResourceKind {
     IdentityObjects,
     /// IPS profiles.
     IpsProfiles,
+    /// IPS signatures.
+    IpsSignatures,
     /// Proxy servers.
     ProxyServers,
     /// Redirect profiles.
@@ -95,6 +97,7 @@ impl ResourceKind {
         Self::IcapServers,
         Self::IdentityObjects,
         Self::IpsProfiles,
+        Self::IpsSignatures,
         Self::ProxyServers,
         Self::RedirectProfiles,
         Self::RuleOptions,
@@ -130,6 +133,7 @@ impl ResourceKind {
             Self::IcapServers => &["api", "v1", "icap_servers"],
             Self::IdentityObjects => &["api", "v1", "identity_objects"],
             Self::IpsProfiles => &["api", "v1", "ips_profiles"],
+            Self::IpsSignatures => &["api", "v1", "ips_signatures"],
             Self::ProxyServers => &["api", "v1", "proxy_servers"],
             Self::RedirectProfiles => &["api", "v1", "redirect_profiles"],
             Self::RuleOptions => &["api", "v1", "rule_options"],
@@ -322,9 +326,9 @@ mod tests {
         assert_eq!(schema_names(&write), listed);
     }
 
-    /// The read catalog covers the 27 uniform five-operation families.
+    /// The read catalog covers the 28 uniform five-operation families.
     #[test]
-    fn the_read_catalog_covers_twenty_seven_families() {
-        assert_eq!(ResourceKind::ALL.len(), 27);
+    fn the_read_catalog_covers_twenty_eight_families() {
+        assert_eq!(ResourceKind::ALL.len(), 28);
     }
 }

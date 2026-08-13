@@ -14,14 +14,14 @@ live validation, and a tool surface that covers a minority of the SDC API.
 
 ### Added
 
-- 23 read-only resource families on the generic `list_sdc_resources` /
+- 24 read-only resource families on the generic `list_sdc_resources` /
   `get_sdc_resource` pair, covering every uniform five-operation collection in
   the pinned spec that was not already exposed: AAMW, anti-spam, anti-virus,
   content-filtering, content-security, enhanced content-filtering, flow-based
-  antivirus, ICAP profiles and servers, identity objects, IPS profiles, proxy
-  servers, redirect profiles, rule options, SecIntel profiles and groups, SSL
-  initiations, SSL proxy profiles, SWP profiles, URL category lists, URL
-  patterns, variable zones, and web-filtering profiles.
+  antivirus, ICAP profiles and servers, identity objects, IPS profiles, IPS
+  signatures, proxy servers, redirect profiles, rule options, SecIntel profiles
+  and groups, SSL initiations, SSL proxy profiles, SWP profiles, URL category
+  lists, URL patterns, variable zones, and web-filtering profiles.
 - A `fields` projection on `list_sdc_resources`, matching `list_device_groups`.
   Profile families embed rule and pattern lists, so `size` alone does not bound
   the response.
