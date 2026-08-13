@@ -591,10 +591,47 @@ true in general. Treat a preview as a lower bound on what a deploy will change,
 not a complete statement of it, until the conditions under which it
 under-reports are understood.
 
-Filed as an issue. Unknown so far: whether the omission is specific to a
-feed-server orphaned by the removal of its consumer, whether the XML preview
-form discloses more than the CLI one, and whether other object families behave
-the same way.
+#### Answered 2026-08-12: the CLI rendering is lossy, and we request it
+
+`GET /api/v1/policies/preview/{preview_id}/devices/{device_id}` takes a
+`format` query parameter — `CLI` (the default) or `XML` — described as
+"Output format for config_diff". This server never passes it, so it receives
+the default.
+
+The **same preview**, fetched twice:
+
+| | `format=CLI` | `format=XML` |
+|---|---|---|
+| bytes | 273 | 570 |
+| feed-server named | **no** | **yes** |
+| address-name named | yes | yes |
+| delete markers | 1 | 4 |
+
+```xml
+<configuration><security><dynamic-address>
+  <feed-server operation="delete"><name>probefeeder</name></feed-server>
+  <address-name operation="delete"><name>probe-unreferenced</name></address-name>
+</dynamic-address></security></configuration>
+```
+
+against the CLI form's single line:
+
+```
+delete security dynamic-address address-name probe-unreferenced
+```
+
+**So SDC was never concealing the change.** Its XML rendering states both
+deletions plainly. The CLI rendering omits the parent, and this server binds
+its digest to that lossy rendering. The deploy that prompted §11 did exactly
+what its XML preview said it would.
+
+That narrows the defect considerably: it is not a gap in what SDC will tell us,
+it is the format this client asks for. The remedy is to request `XML` for the
+artifact the digest covers, keeping CLI only where a human wants to read it.
+
+Still unverified: whether the CLI form omits parents generally, or only a
+parent orphaned by the removal of its last consumer. The remedy does not depend
+on the answer, since XML disclosed both here.
 
 #### On the first run's failures
 
