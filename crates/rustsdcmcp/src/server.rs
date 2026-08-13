@@ -37,6 +37,7 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "get_sdc_tenant_scope",
     "list_sdc_devices",
     "get_sdc_device",
+    "list_sdc_config_versions",
     "list_sdc_firewall_policies",
     "get_sdc_firewall_policy",
     "list_sdc_firewall_rules",
@@ -819,6 +820,35 @@ impl SdcHandler {
             audit,
             self.client
                 .get_device(&args.device_uuid, &cancellation)
+                .await,
+        ))
+    }
+
+    #[tool(
+        name = "list_sdc_config_versions",
+        description = "List archived configuration versions for one device. Returns unbounded results; a device with a long archive may exceed max_response_bytes and fail."
+    )]
+    async fn list_sdc_config_versions(
+        &self,
+        Parameters(args): Parameters<DeviceArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_sdc_config_versions",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "list_sdc_config_versions", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish(
+            audit,
+            self.client
+                .list_config_versions(&args.device_uuid, &cancellation)
                 .await,
         ))
     }
