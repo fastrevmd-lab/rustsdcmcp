@@ -18,8 +18,8 @@ use rmcp::{
 };
 use rustsdcmcp_core::{
     ChangeManager, ListRequest, NatWriteOperation, ObjectWriteAction, PolicyOperation,
-    ResourceKind, SdcClient, SdcError, project_ca_certificates, project_license, project_licenses,
-    project_local_certificates,
+    ResourceKind, SdcClient, SdcError, WritableResource, project_ca_certificates, project_license,
+    project_licenses, project_local_certificates,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -668,8 +668,11 @@ pub struct PrepareObjectArgs {
     pub tenant: String,
     /// Which mutation to plan.
     pub action: ObjectWriteAction,
-    /// Allowlisted object family.
-    pub resource: ResourceKind,
+    /// Allowlisted **writable** resource family.
+    ///
+    /// Narrower than the read catalog: most readable families have no
+    /// validated write path.
+    pub resource: WritableResource,
     /// Target object UUID. Required for update and delete, absent for create.
     #[serde(default)]
     pub uuid: Option<String>,

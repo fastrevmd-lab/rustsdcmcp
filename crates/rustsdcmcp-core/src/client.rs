@@ -6,6 +6,7 @@
 use crate::{
     DeployRequest, DeploymentStatus, JobStatus, ListRequest, ListRequestError, PolicyOperation,
     PreviewRequest, ResourceKind, SdcConfig, SdcPreparedChange, SdcPreparedTarget, TenantScope,
+    WritableResource,
     models::{DeployResponse, PreviewResponse},
 };
 use futures::StreamExt as _;
@@ -622,13 +623,16 @@ impl SdcClient {
 
     /// Create one object in an allowlisted generic resource family.
     ///
+    /// Takes [`WritableResource`], not [`ResourceKind`]: adding a family to the
+    /// read catalog must not make it writable.
+    ///
     /// # Errors
     ///
     /// Returns an error when the body is not a bounded JSON object, or when
     /// the SDC request fails.
     pub async fn create_resource(
         &self,
-        kind: ResourceKind,
+        kind: WritableResource,
         body: &Value,
         cancellation: &CancellationToken,
     ) -> Result<Value, SdcError> {
@@ -644,13 +648,16 @@ impl SdcClient {
 
     /// Replace one object in an allowlisted generic resource family.
     ///
+    /// Takes [`WritableResource`], not [`ResourceKind`]: adding a family to the
+    /// read catalog must not make it writable.
+    ///
     /// # Errors
     ///
     /// Returns an error when the UUID or body is invalid, or when the SDC
     /// request fails.
     pub async fn update_resource(
         &self,
-        kind: ResourceKind,
+        kind: WritableResource,
         uuid: &str,
         body: &Value,
         cancellation: &CancellationToken,
@@ -665,13 +672,16 @@ impl SdcClient {
 
     /// Delete one object from an allowlisted generic resource family.
     ///
+    /// Takes [`WritableResource`], not [`ResourceKind`]: adding a family to the
+    /// read catalog must not make it writable.
+    ///
     /// # Errors
     ///
     /// Returns an error when the UUID is invalid or when the SDC request
     /// fails. SDC rejects deleting an object that a policy still references.
     pub async fn delete_resource(
         &self,
-        kind: ResourceKind,
+        kind: WritableResource,
         uuid: &str,
         cancellation: &CancellationToken,
     ) -> Result<Value, SdcError> {
@@ -2141,7 +2151,7 @@ mod tests {
         let (base_url, server) = serve(app).await;
         let created = client(base_url, 65536)
             .create_resource(
-                ResourceKind::Addresses,
+                WritableResource::Addresses,
                 &serde_json::json!({"name": "lab-net"}),
                 &CancellationToken::new(),
             )
@@ -2163,7 +2173,7 @@ mod tests {
         let (base_url, server) = serve(app).await;
         let updated = client(base_url, 65536)
             .update_resource(
-                ResourceKind::Services,
+                WritableResource::Services,
                 "svc-1",
                 &serde_json::json!({"name": "telnet-alt"}),
                 &CancellationToken::new(),
@@ -2182,7 +2192,11 @@ mod tests {
         );
         let (base_url, server) = serve(app).await;
         let deleted = client(base_url, 65536)
-            .delete_resource(ResourceKind::Schedulers, "sch-1", &CancellationToken::new())
+            .delete_resource(
+                WritableResource::Schedulers,
+                "sch-1",
+                &CancellationToken::new(),
+            )
             .await
             .expect("an empty delete response must not be an error");
         assert_eq!(deleted, Value::Null);
@@ -2201,7 +2215,7 @@ mod tests {
         for identifier in ["", ".", "..", "with space", "tab\there", "nul\0byte"] {
             let error = sdc
                 .update_resource(
-                    ResourceKind::Addresses,
+                    WritableResource::Addresses,
                     identifier,
                     &serde_json::json!({"name": "x"}),
                     &CancellationToken::new(),
@@ -2235,7 +2249,11 @@ mod tests {
             serde_json::json!({}),
         ] {
             let error = sdc
-                .create_resource(ResourceKind::Addresses, &body, &CancellationToken::new())
+                .create_resource(
+                    WritableResource::Addresses,
+                    &body,
+                    &CancellationToken::new(),
+                )
                 .await
                 .expect_err("invalid body must be refused before transport");
             assert!(

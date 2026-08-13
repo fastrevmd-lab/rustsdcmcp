@@ -5,7 +5,7 @@
 //! observed state beforehand. Apply refuses if that state has since moved,
 //! which is the object-write analogue of binding a deploy to its preview.
 
-use crate::{ResourceKind, SdcClient, SdcError, prepared::canonical_digest};
+use crate::{SdcClient, SdcError, WritableResource, prepared::canonical_digest};
 use async_trait::async_trait;
 use mecmcp_audit::Attribution;
 use mecmcp_changeset::{
@@ -54,7 +54,7 @@ impl ObjectWriteAction {
 pub struct SdcPreparedObjectWrite {
     operation: String,
     action: ObjectWriteAction,
-    resource: ResourceKind,
+    resource: WritableResource,
     uuid: Option<String>,
     request: Value,
     before: Value,
@@ -72,7 +72,7 @@ impl SdcPreparedObjectWrite {
     /// Refuses shapes that do not match the action, and oversized envelopes.
     pub fn new(
         action: ObjectWriteAction,
-        resource: ResourceKind,
+        resource: WritableResource,
         uuid: Option<String>,
         request: Value,
         before: Value,
@@ -106,7 +106,7 @@ impl SdcPreparedObjectWrite {
 
     /// Which object family this write targets.
     #[must_use]
-    pub const fn resource(&self) -> ResourceKind {
+    pub const fn resource(&self) -> WritableResource {
         self.resource
     }
 
@@ -221,7 +221,7 @@ impl SdcPreparedObjectWrite {
 
 fn plan_artifact(
     action: ObjectWriteAction,
-    resource: ResourceKind,
+    resource: WritableResource,
     uuid: Option<&str>,
     request: &Value,
     before: &Value,
@@ -292,7 +292,7 @@ impl SdcObjectTransaction {
         };
         let current = self
             .client
-            .get_resource(staged.resource(), uuid, &self.cancellation)
+            .get_resource(staged.resource().into(), uuid, &self.cancellation)
             .await?;
         let digest = |value: &Value| {
             canonical_digest(value).map_err(|error| SdcError::PreparedChange(error.to_string()))
