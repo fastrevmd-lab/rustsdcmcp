@@ -2353,7 +2353,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_discarded_operation_stops_blocking_later_applies() {
+    async fn discarding_an_unknown_operation_is_refused() {
+        // End-to-end unblocking needs a genuinely wedged operation, which this
+        // harness cannot produce. This test verifies only the fingerprint guard.
         let calls = Arc::new(Calls::default());
         let app = Router::new()
             .route("/api/v1/policies/preview", post(preview))

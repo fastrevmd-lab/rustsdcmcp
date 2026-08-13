@@ -2284,7 +2284,7 @@ impl SdcHandler {
         let mut audit = audit_scope(
             caller,
             "discard_sdc_operation",
-            "write",
+            "discard",
             vec![args.tenant.clone()],
         );
         if let Err(error) = self.authorize(caller, "discard_sdc_operation", &args.tenant) {
