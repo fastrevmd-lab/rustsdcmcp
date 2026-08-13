@@ -414,6 +414,13 @@ pub struct ResourceListArgs {
     pub from: u64,
     /// Explicit positive page size.
     pub size: u32,
+    /// Optional `fields` projection applied by the API, one entry per field.
+    ///
+    /// `size` bounds the number of objects, not the size of each one, and
+    /// profile families embed rule and pattern lists. Projecting keeps an
+    /// estate-scale list readable.
+    #[serde(default)]
+    pub fields: Vec<String>,
 }
 
 /// Arguments for firewall policy rules list.
@@ -1753,7 +1760,7 @@ impl SdcHandler {
         let result = match result {
             Ok(page) => {
                 self.client
-                    .list_resource(args.resource, page, &cancellation)
+                    .list_resource(args.resource, page, &args.fields, &cancellation)
                     .await
             }
             Err(error) => Err(error),

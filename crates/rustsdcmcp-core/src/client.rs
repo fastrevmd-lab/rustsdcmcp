@@ -598,13 +598,21 @@ impl SdcClient {
     }
 
     /// List one allowlisted generic resource family.
+    /// List one allowlisted generic resource family.
+    ///
+    /// `size` bounds how many objects come back, not how large each one is,
+    /// and profile families embed rule and pattern lists. Pass `fields` to
+    /// apply the API's server-side projection; pass an empty slice to omit the
+    /// parameter entirely. No default projection is invented — field names
+    /// belong to the API, and guessing them silently drops data.
     pub async fn list_resource(
         &self,
         kind: ResourceKind,
         page: ListRequest,
+        fields: &[String],
         cancellation: &CancellationToken,
     ) -> Result<Value, SdcError> {
-        self.list(kind.collection_segments(), page, cancellation)
+        self.list_projected(kind.collection_segments(), page, fields, cancellation)
             .await
     }
 
@@ -2403,6 +2411,65 @@ mod tests {
         server.abort();
     }
 
+    /// The generic reader projects with an exploded `fields` array, and omits
+    /// the parameter entirely when no projection is asked for.
+    ///
+    /// The spec declares `fields` as `style: form, explode: true`, so
+    /// `fields=uuid&fields=name` is the request and one comma-joined value
+    /// would read as a single unknown field name. Omitting it when empty
+    /// matters just as much: no default projection is invented for any
+    /// family, because field names belong to the API and guessing them
+    /// silently drops data.
+    #[tokio::test]
+    async fn a_resource_list_can_project_fields_and_omits_the_param_otherwise() {
+        let app = Router::new().route(
+            "/api/v1/ips_profiles",
+            get(|uri: axum::http::Uri| async move {
+                // Collect every `fields` pair: the spec explodes the array, so
+                // a single comma-joined value would be the wrong request.
+                let fields: Vec<String> = uri
+                    .query()
+                    .unwrap_or_default()
+                    .split('&')
+                    .filter_map(|pair| pair.strip_prefix("fields="))
+                    .map(str::to_owned)
+                    .collect();
+                Json(serde_json::json!({"fields": fields}))
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        let sdc = client(base_url, 4096);
+
+        let projected = sdc
+            .list_resource(
+                ResourceKind::IpsProfiles,
+                ListRequest::new(0, 10, 200).expect("page"),
+                &["uuid".to_owned(), "name".to_owned()],
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("projected list succeeds");
+        assert_eq!(
+            projected["fields"],
+            serde_json::json!(["uuid", "name"]),
+            "each field must be its own query item per the spec's exploded array"
+        );
+
+        // Absent by default: a projection invented here would silently drop
+        // fields, and no live resource has been observed to derive one from.
+        let unprojected = sdc
+            .list_resource(
+                ResourceKind::IpsProfiles,
+                ListRequest::new(0, 10, 200).expect("page"),
+                &[],
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("unprojected list succeeds");
+        assert_eq!(unprojected["fields"], serde_json::json!([]));
+        server.abort();
+    }
+
     /// A new family's list reaches its own collection path.
     ///
     /// The catalog's self-consistency tests prove the table agrees with itself.
@@ -2420,6 +2487,7 @@ mod tests {
             .list_resource(
                 ResourceKind::RuleOptions,
                 ListRequest::new(0, 10, 200).expect("page"),
+                &[],
                 &CancellationToken::new(),
             )
             .await
