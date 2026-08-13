@@ -6,6 +6,7 @@
 use crate::{
     DeployRequest, DeploymentStatus, JobStatus, ListRequest, ListRequestError, PolicyOperation,
     PreviewRequest, ResourceKind, SdcConfig, SdcPreparedChange, SdcPreparedTarget, TenantScope,
+    WritableResource,
     models::{DeployResponse, PreviewResponse},
 };
 use futures::StreamExt as _;
@@ -597,13 +598,20 @@ impl SdcClient {
     }
 
     /// List one allowlisted generic resource family.
+    ///
+    /// `size` bounds how many objects come back, not how large each one is,
+    /// and profile families embed rule and pattern lists. Pass `fields` to
+    /// apply the API's server-side projection; pass an empty slice to omit the
+    /// parameter entirely. No default projection is invented — field names
+    /// belong to the API, and guessing them silently drops data.
     pub async fn list_resource(
         &self,
         kind: ResourceKind,
         page: ListRequest,
+        fields: &[String],
         cancellation: &CancellationToken,
     ) -> Result<Value, SdcError> {
-        self.list(kind.collection_segments(), page, cancellation)
+        self.list_projected(kind.collection_segments(), page, fields, cancellation)
             .await
     }
 
@@ -622,13 +630,16 @@ impl SdcClient {
 
     /// Create one object in an allowlisted generic resource family.
     ///
+    /// Takes [`WritableResource`], not [`ResourceKind`]: adding a family to the
+    /// read catalog must not make it writable.
+    ///
     /// # Errors
     ///
     /// Returns an error when the body is not a bounded JSON object, or when
     /// the SDC request fails.
     pub async fn create_resource(
         &self,
-        kind: ResourceKind,
+        kind: WritableResource,
         body: &Value,
         cancellation: &CancellationToken,
     ) -> Result<Value, SdcError> {
@@ -644,13 +655,16 @@ impl SdcClient {
 
     /// Replace one object in an allowlisted generic resource family.
     ///
+    /// Takes [`WritableResource`], not [`ResourceKind`]: adding a family to the
+    /// read catalog must not make it writable.
+    ///
     /// # Errors
     ///
     /// Returns an error when the UUID or body is invalid, or when the SDC
     /// request fails.
     pub async fn update_resource(
         &self,
-        kind: ResourceKind,
+        kind: WritableResource,
         uuid: &str,
         body: &Value,
         cancellation: &CancellationToken,
@@ -665,13 +679,16 @@ impl SdcClient {
 
     /// Delete one object from an allowlisted generic resource family.
     ///
+    /// Takes [`WritableResource`], not [`ResourceKind`]: adding a family to the
+    /// read catalog must not make it writable.
+    ///
     /// # Errors
     ///
     /// Returns an error when the UUID is invalid or when the SDC request
     /// fails. SDC rejects deleting an object that a policy still references.
     pub async fn delete_resource(
         &self,
-        kind: ResourceKind,
+        kind: WritableResource,
         uuid: &str,
         cancellation: &CancellationToken,
     ) -> Result<Value, SdcError> {
@@ -2141,7 +2158,7 @@ mod tests {
         let (base_url, server) = serve(app).await;
         let created = client(base_url, 65536)
             .create_resource(
-                ResourceKind::Addresses,
+                WritableResource::Addresses,
                 &serde_json::json!({"name": "lab-net"}),
                 &CancellationToken::new(),
             )
@@ -2163,7 +2180,7 @@ mod tests {
         let (base_url, server) = serve(app).await;
         let updated = client(base_url, 65536)
             .update_resource(
-                ResourceKind::Services,
+                WritableResource::Services,
                 "svc-1",
                 &serde_json::json!({"name": "telnet-alt"}),
                 &CancellationToken::new(),
@@ -2182,7 +2199,11 @@ mod tests {
         );
         let (base_url, server) = serve(app).await;
         let deleted = client(base_url, 65536)
-            .delete_resource(ResourceKind::Schedulers, "sch-1", &CancellationToken::new())
+            .delete_resource(
+                WritableResource::Schedulers,
+                "sch-1",
+                &CancellationToken::new(),
+            )
             .await
             .expect("an empty delete response must not be an error");
         assert_eq!(deleted, Value::Null);
@@ -2201,7 +2222,7 @@ mod tests {
         for identifier in ["", ".", "..", "with space", "tab\there", "nul\0byte"] {
             let error = sdc
                 .update_resource(
-                    ResourceKind::Addresses,
+                    WritableResource::Addresses,
                     identifier,
                     &serde_json::json!({"name": "x"}),
                     &CancellationToken::new(),
@@ -2235,7 +2256,11 @@ mod tests {
             serde_json::json!({}),
         ] {
             let error = sdc
-                .create_resource(ResourceKind::Addresses, &body, &CancellationToken::new())
+                .create_resource(
+                    WritableResource::Addresses,
+                    &body,
+                    &CancellationToken::new(),
+                )
                 .await
                 .expect_err("invalid body must be refused before transport");
             assert!(
@@ -2382,6 +2407,92 @@ mod tests {
             .await
             .expect("list succeeds");
         assert_eq!(unprojected["fields"], serde_json::json!([]));
+        server.abort();
+    }
+
+    /// The generic reader projects with an exploded `fields` array, and omits
+    /// the parameter entirely when no projection is asked for.
+    ///
+    /// The spec declares `fields` as `style: form, explode: true`, so
+    /// `fields=uuid&fields=name` is the request and one comma-joined value
+    /// would read as a single unknown field name. Omitting it when empty
+    /// matters just as much: no default projection is invented for any
+    /// family, because field names belong to the API and guessing them
+    /// silently drops data.
+    #[tokio::test]
+    async fn a_resource_list_can_project_fields_and_omits_the_param_otherwise() {
+        let app = Router::new().route(
+            "/api/v1/ips_profiles",
+            get(|uri: axum::http::Uri| async move {
+                // Collect every `fields` pair: the spec explodes the array, so
+                // a single comma-joined value would be the wrong request.
+                let fields: Vec<String> = uri
+                    .query()
+                    .unwrap_or_default()
+                    .split('&')
+                    .filter_map(|pair| pair.strip_prefix("fields="))
+                    .map(str::to_owned)
+                    .collect();
+                Json(serde_json::json!({"fields": fields}))
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        let sdc = client(base_url, 4096);
+
+        let projected = sdc
+            .list_resource(
+                ResourceKind::IpsProfiles,
+                ListRequest::new(0, 10, 200).expect("page"),
+                &["uuid".to_owned(), "name".to_owned()],
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("projected list succeeds");
+        assert_eq!(
+            projected["fields"],
+            serde_json::json!(["uuid", "name"]),
+            "each field must be its own query item per the spec's exploded array"
+        );
+
+        // Absent by default: a projection invented here would silently drop
+        // fields, and no live resource has been observed to derive one from.
+        let unprojected = sdc
+            .list_resource(
+                ResourceKind::IpsProfiles,
+                ListRequest::new(0, 10, 200).expect("page"),
+                &[],
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("unprojected list succeeds");
+        assert_eq!(unprojected["fields"], serde_json::json!([]));
+        server.abort();
+    }
+
+    /// A new family's list reaches its own collection path.
+    ///
+    /// The catalog's self-consistency tests prove the table agrees with itself.
+    /// This proves the table is what the client actually requests.
+    #[tokio::test]
+    async fn a_new_family_lists_from_its_own_collection() {
+        let app = Router::new().route(
+            "/api/v1/rule_options",
+            get(|| async { Json(serde_json::json!({"items": []})) }),
+        );
+        let (base_url, server) = serve(app).await;
+        let sdc = client(base_url, 4096);
+
+        let listed = sdc
+            .list_resource(
+                ResourceKind::RuleOptions,
+                ListRequest::new(0, 10, 200).expect("page"),
+                &[],
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("list succeeds");
+
+        assert_eq!(listed["items"], serde_json::json!([]));
         server.abort();
     }
 

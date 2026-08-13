@@ -18,8 +18,8 @@ use rmcp::{
 };
 use rustsdcmcp_core::{
     ChangeManager, ListRequest, NatWriteOperation, ObjectWriteAction, PolicyOperation,
-    ResourceKind, SdcClient, SdcError, project_ca_certificates, project_license, project_licenses,
-    project_local_certificates,
+    ResourceKind, SdcClient, SdcError, WritableResource, project_ca_certificates, project_license,
+    project_licenses, project_local_certificates,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -414,6 +414,13 @@ pub struct ResourceListArgs {
     pub from: u64,
     /// Explicit positive page size.
     pub size: u32,
+    /// Optional `fields` projection applied by the API, one entry per field.
+    ///
+    /// `size` bounds the number of objects, not the size of each one, and
+    /// profile families embed rule and pattern lists. Projecting keeps an
+    /// estate-scale list readable.
+    #[serde(default)]
+    pub fields: Vec<String>,
 }
 
 /// Arguments for firewall policy rules list.
@@ -668,8 +675,11 @@ pub struct PrepareObjectArgs {
     pub tenant: String,
     /// Which mutation to plan.
     pub action: ObjectWriteAction,
-    /// Allowlisted object family.
-    pub resource: ResourceKind,
+    /// Allowlisted **writable** resource family.
+    ///
+    /// Narrower than the read catalog: most readable families have no
+    /// validated write path.
+    pub resource: WritableResource,
     /// Target object UUID. Required for update and delete, absent for create.
     #[serde(default)]
     pub uuid: Option<String>,
@@ -1726,7 +1736,7 @@ impl SdcHandler {
 
     #[tool(
         name = "list_sdc_resources",
-        description = "List an allowlisted SDC address, application, service, or scheduler collection."
+        description = "List one allowlisted SDC resource collection. The `resource` enum in this schema is the catalog of available families."
     )]
     async fn list_sdc_resources(
         &self,
@@ -1750,7 +1760,7 @@ impl SdcHandler {
         let result = match result {
             Ok(page) => {
                 self.client
-                    .list_resource(args.resource, page, &cancellation)
+                    .list_resource(args.resource, page, &args.fields, &cancellation)
                     .await
             }
             Err(error) => Err(error),
@@ -1760,7 +1770,7 @@ impl SdcHandler {
 
     #[tool(
         name = "get_sdc_resource",
-        description = "Get one allowlisted SDC address, application, service, or scheduler object."
+        description = "Get one object from an allowlisted SDC resource collection by UUID. The `resource` enum in this schema is the catalog of available families."
     )]
     async fn get_sdc_resource(
         &self,

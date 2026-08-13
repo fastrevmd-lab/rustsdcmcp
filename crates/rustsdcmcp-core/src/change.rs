@@ -2,8 +2,9 @@
 
 use crate::{
     DeployRequest, JobStatus, NatValidationReport, NatWriteOperation, ObjectValidationReport,
-    ObjectWriteAction, PolicyOperation, ResourceKind, SdcClient, SdcError, SdcNatTransaction,
+    ObjectWriteAction, PolicyOperation, SdcClient, SdcError, SdcNatTransaction,
     SdcObjectTransaction, SdcPreparedChange, SdcPreparedNatWrite, SdcPreparedObjectWrite,
+    WritableResource,
 };
 use async_trait::async_trait;
 use mecmcp_audit::Attribution;
@@ -337,7 +338,7 @@ impl ChangeManager {
         &self,
         owner: String,
         action: ObjectWriteAction,
-        resource: ResourceKind,
+        resource: WritableResource,
         uuid: Option<String>,
         request: Value,
         cancellation: &CancellationToken,
@@ -346,7 +347,7 @@ impl ChangeManager {
             (ObjectWriteAction::Create, _) => Value::Null,
             (_, Some(identifier)) => {
                 self.client
-                    .get_resource(resource, identifier, cancellation)
+                    .get_resource(resource.into(), identifier, cancellation)
                     .await?
             }
             (ObjectWriteAction::Update | ObjectWriteAction::Delete, None) => {
@@ -1830,7 +1831,7 @@ mod tests {
     fn object_fixture(before: Value) -> SdcPreparedObjectWrite {
         SdcPreparedObjectWrite::new(
             ObjectWriteAction::Update,
-            ResourceKind::Addresses,
+            WritableResource::Addresses,
             Some("addr-1".to_owned()),
             json!({"name": "lab-net", "address_type": "IPV4"}),
             before,
@@ -1845,7 +1846,7 @@ mod tests {
         assert!(
             SdcPreparedObjectWrite::new(
                 ObjectWriteAction::Create,
-                ResourceKind::Addresses,
+                WritableResource::Addresses,
                 Some("addr-1".to_owned()),
                 json!({"name": "x"}),
                 Value::Null,
@@ -1856,7 +1857,7 @@ mod tests {
         assert!(
             SdcPreparedObjectWrite::new(
                 ObjectWriteAction::Delete,
-                ResourceKind::Addresses,
+                WritableResource::Addresses,
                 Some("addr-1".to_owned()),
                 json!({"name": "x"}),
                 json!({"uuid": "addr-1"}),
@@ -1867,7 +1868,7 @@ mod tests {
         assert!(
             SdcPreparedObjectWrite::new(
                 ObjectWriteAction::Update,
-                ResourceKind::Addresses,
+                WritableResource::Addresses,
                 None,
                 json!({"name": "x"}),
                 json!({"uuid": "addr-1"}),
@@ -1892,7 +1893,7 @@ mod tests {
             assert!(
                 SdcPreparedObjectWrite::new(
                     action,
-                    ResourceKind::Addresses,
+                    WritableResource::Addresses,
                     uuid,
                     json!({}),
                     before,

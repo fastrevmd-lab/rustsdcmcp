@@ -15,7 +15,7 @@ mod object_write;
 mod prepared;
 mod projection;
 
-pub use catalog::ResourceKind;
+pub use catalog::{ResourceKind, WritableResource};
 pub use change::{
     ApplyResult, ChangeManager, NatApplyResult, NatPrepareResult, ObjectApplyResult,
     ObjectPrepareResult, PrepareResult, SdcTransaction, ValidationReport,

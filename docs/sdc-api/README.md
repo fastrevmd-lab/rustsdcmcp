@@ -740,3 +740,10 @@ Not answered by the spec; do not write code that assumes an answer:
   other tenants land on a different host is unconfirmed.
 - Real payload examples. Spec examples are placeholder `"string"` values, so
   field semantics for policy/rule bodies need a live tenant to confirm.
+- **Response payload shape for the 24 generic read families** added in Phase B
+  (security profiles, URL objects, proxy and ICAP servers, IPS signatures,
+  identity objects, rule options, variable zones). Their collection paths,
+  `uuid` keying, and `from`/`size`/`fields` support are read from the spec;
+  their *responses* have not been observed, because the lab tenant holds no
+  objects in any of them. Auth and dispatch are confirmed live; payload shape
+  is not.
