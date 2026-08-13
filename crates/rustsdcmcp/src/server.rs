@@ -75,6 +75,7 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "apply_sdc_change_set",
     "get_sdc_change_set",
     "get_sdc_change_set_details",
+    "discard_sdc_operation",
     "prepare_sdc_object_write",
     "apply_sdc_object_write",
     "prepare_sdc_nat_write",
@@ -99,6 +100,7 @@ pub const WRITE_TOOLS: &[&str] = &[
     "apply_sdc_firewall_write",
     "prepare_sdc_license_write",
     "apply_sdc_license_write",
+    "discard_sdc_operation",
 ];
 
 /// Security Director Cloud MCP handler.
@@ -642,6 +644,19 @@ pub struct ApplyArgs {
     /// Optional external ticket or change reference.
     #[serde(default)]
     pub change_ref: Option<String>,
+}
+
+/// Arguments for discarding one terminal-but-unreconciled operation.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DiscardOperationArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Operation identifier reported by the change-set state.
+    pub operation_id: String,
+    /// The operation's expected fingerprint, so a stale caller cannot clear an
+    /// operation it has not read.
+    pub expected_fingerprint: String,
 }
 
 /// Arguments for planning one object write.
@@ -2253,6 +2268,40 @@ impl SdcHandler {
             return Ok(tool_error(error));
         }
         Ok(finish(audit, self.changes.status(args.change_set_id).await))
+    }
+
+    #[tool(
+        name = "discard_sdc_operation",
+        description = "Discard one terminal-but-unreconciled SDC operation so applies are unblocked. A failed deploy otherwise refuses every later apply on the tenant. Requires the operation's expected fingerprint, and only its owner may discard it. The operation remains visible in change-set state."
+    )]
+    async fn discard_sdc_operation(
+        &self,
+        Parameters(args): Parameters<DiscardOperationArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "discard_sdc_operation",
+            "write",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "discard_sdc_operation", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish(
+            audit,
+            self.changes
+                .discard(
+                    args.operation_id,
+                    owner(caller),
+                    args.expected_fingerprint,
+                    &cancellation,
+                )
+                .await,
+        ))
     }
 
     #[tool(

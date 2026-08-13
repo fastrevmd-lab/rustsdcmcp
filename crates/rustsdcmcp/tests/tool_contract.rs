@@ -5,10 +5,11 @@ use std::collections::BTreeSet;
 
 #[test]
 fn tool_registry_has_expected_unique_surface() {
-    // 39 reads / 11 writes. #32 added 6 license/certificate reads (PR #49) and
-    // 2 license/certificate writes; #34 added device-group list and get, so a
-    // deploy target is inspectable before it is approved.
-    assert_eq!(KNOWN_TOOLS.len(), 50);
+    // 39 reads / 12 writes. #32 added 6 license/certificate reads (PR #49) and
+    // 2 license/certificate writes; #34 added device-group list and get; #63
+    // added discard_sdc_operation, which must be a write tool so a wildcard
+    // scope cannot reach it.
+    assert_eq!(KNOWN_TOOLS.len(), 51);
     assert_eq!(
         KNOWN_TOOLS.iter().copied().collect::<BTreeSet<_>>().len(),
         KNOWN_TOOLS.len()
@@ -22,6 +23,7 @@ fn tool_registry_has_expected_unique_surface() {
             "apply_sdc_nat_write",
             "apply_sdc_object_write",
             "approve_sdc_change_set",
+            "discard_sdc_operation",
             "prepare_sdc_firewall_write",
             "prepare_sdc_license_write",
             "prepare_sdc_nat_write",
@@ -57,8 +59,12 @@ fn write_tools_are_all_registered_and_named_for_their_lifecycle() {
         assert!(
             tool.starts_with("prepare_")
                 || tool.starts_with("approve_")
-                || tool.starts_with("apply_"),
-            "{tool} mutates but is not named for a change-control phase"
+                || tool.starts_with("apply_")
+                // discard is a lifecycle operation rather than a phase: it clears
+                // a wedged operation so applies are unblocked, not a change-control
+                // phase like prepare/approve/apply.
+                || tool.starts_with("discard_"),
+            "{tool} mutates but is not named for a change-control phase or lifecycle operation"
         );
     }
 }

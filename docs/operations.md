@@ -487,6 +487,15 @@ process did not observe a terminal state. Reconcile it using
 `get_sdc_deploy_status`, the per-device result tool, and the SDC portal before
 planning another deployment.
 
+### Recovering from a failed deploy
+
+A failed deploy leaves an operation that refuses every later apply on the tenant
+with "the device already has an active or unreconciled operation". Clear it with
+`discard_sdc_operation`, supplying the operation id and its expected
+fingerprint from the change-set state. Only the operation's owner may discard
+it, and the record remains visible afterwards — a discard clears the block, it
+does not erase the fact that a deploy failed.
+
 The SDC API does not expose a candidate rollback primitive for this workflow.
 Rollback is therefore reported as unsupported rather than guessed.
 

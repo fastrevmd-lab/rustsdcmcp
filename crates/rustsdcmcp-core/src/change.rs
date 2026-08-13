@@ -1312,6 +1312,49 @@ impl ChangeManager {
             .map_err(|error| SdcError::ChangeControl(error.to_string()))
     }
 
+    /// Discard a terminal-but-unreconciled operation so applies are unblocked.
+    ///
+    /// A failed deploy leaves an operation that refuses every later apply on the
+    /// tenant with "the device already has an active or unreconciled operation".
+    /// Without this, the only remedy is editing the change-set state file on a
+    /// running deployment, which is the file the whole design exists to keep
+    /// hands out of.
+    ///
+    /// The caller must supply the operation's expected fingerprint, so a stale
+    /// client cannot clear an operation it has not read. Upstream additionally
+    /// refuses any operation that is `Validating`, `Committing`, `Committed`,
+    /// `Discarded`, or `Indeterminate`, and refuses a caller who does not own it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SdcError::ChangeControl`] when the operation is unknown, not
+    /// owned by `owner`, in a state that cannot be discarded, or when the
+    /// fingerprint does not match.
+    pub async fn discard(
+        &self,
+        operation_id: String,
+        owner: String,
+        expected_fingerprint: String,
+        cancellation: &CancellationToken,
+    ) -> Result<String, SdcError> {
+        let transaction = SdcTransaction::new(
+            self.client.clone(),
+            expected_fingerprint.clone(),
+            cancellation.clone(),
+        );
+        self.coordinator
+            .discard_operation(
+                &operation_id,
+                &self.tenant,
+                &owner,
+                &expected_fingerprint,
+                &transaction,
+                cancellation,
+            )
+            .await
+            .map_err(|error| SdcError::ChangeControl(error.to_string()))
+    }
+
     /// Return current shared change-set state.
     pub async fn status(&self, change_set_id: String) -> Result<ChangeSetOutput, SdcError> {
         self.coordinator
@@ -2307,5 +2350,66 @@ mod tests {
             .rollback(RollbackRef::Archive(1))
             .await
             .expect_err("SDC has no rollback archive to load");
+    }
+
+    #[tokio::test]
+    async fn a_discarded_operation_stops_blocking_later_applies() {
+        let calls = Arc::new(Calls::default());
+        let app = Router::new()
+            .route("/api/v1/policies/preview", post(preview))
+            .route(
+                "/api/v1/policies/preview/{id}",
+                get(|| async {
+                    Json(json!({
+                        "preview_id": "preview-1",
+                        "status": "COMPLETED",
+                        "device_deployment_status": [],
+                        "message": ""
+                    }))
+                }),
+            )
+            .with_state(calls.clone());
+        let (base_url, server) = serve(app).await;
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client =
+            SdcClient::from_test_parts(base_url.clone(), "test-secret".to_owned(), 64 * 1024, 100);
+        let manager = ChangeManager::load(
+            client,
+            "tenant-a",
+            base_url.to_string(),
+            None,
+            Duration::from_secs(60),
+            true,
+        )
+        .expect("change manager");
+        let cancellation = CancellationToken::new();
+
+        let prepared = manager
+            .prepare(
+                "alice".to_owned(),
+                vec![PolicyOperation {
+                    policy_id: "policy-1".to_owned(),
+                    policy_type: PolicyType::Firewall,
+                    deploy_targets: vec![Target::device("device-1")],
+                    undeploy_targets: Vec::new(),
+                }],
+                &cancellation,
+            )
+            .await
+            .expect("prepare");
+
+        // A wrong fingerprint must be refused: a stale client must not be able to
+        // clear an operation it has not actually read.
+        let refused = manager
+            .discard(
+                "operation-that-does-not-exist".to_owned(),
+                "alice".to_owned(),
+                prepared.prepared_change.preview_digest().to_owned(),
+                &cancellation,
+            )
+            .await;
+        assert!(refused.is_err(), "an unknown operation id must be refused");
+
+        server.abort();
     }
 }
