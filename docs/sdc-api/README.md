@@ -633,6 +633,18 @@ Still unverified: whether the CLI form omits parents generally, or only a
 parent orphaned by the removal of its last consumer. The remedy does not depend
 on the answer, since XML disclosed both here.
 
+#### Remedied 2026-08-12: preview_device_result now requests XML
+
+The client now passes `format=XML` when fetching per-device preview results, so
+the preview digest is computed over the complete change disclosure. This
+addresses issue #66.
+
+The change necessarily alters every preview digest — the artifact bytes change
+when switching from CLI to XML format — but no test, fixture, or golden digest
+depended on the CLI form. The one fixture digest in
+`tests/fixtures/mecmcp-0.3.6-state.json` is a placeholder unrelated to actual
+preview content.
+
 #### On the first run's failures
 
 Both applies in the first run failed for reasons now understood. The tenant

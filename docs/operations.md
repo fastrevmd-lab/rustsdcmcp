@@ -343,12 +343,14 @@ There is no directly callable deploy tool.
    `PARTIAL_SUCCESS`/`FAILED` are reconciled failures. Cancellation or deadline
    after submission is persisted as indeterminate.
 
-**A preview is a lower bound.** On 2026-08-12 a deploy previewed a single
-deletion and committed two; the omitted object did not appear anywhere in the
-digest-bound artifact. The change-set binding behaved correctly — what it bound
-did not describe the whole change. Until #66 is settled, confirm a deploy's
-actual effect on the device with `show configuration | compare rollback 1`
-rather than assuming the preview was complete.
+**A preview is a lower bound.** Before fix #66 (2026-08-12), this server
+requested preview results in CLI format, which SDC renders lossily: a parent
+object orphaned by a deletion can be omitted from the CLI rendering while still
+appearing in the committed change. An observed case previewed one deletion and
+committed two; the omitted object did not appear anywhere in the digest-bound
+artifact. The server now requests XML format for preview results, which SDC
+renders completely. The change-set binding behaved correctly throughout — what
+it bound simply did not describe the whole change under the CLI rendering.
 
 Write tools require an authenticated bearer token and exact tool grants.
 Wildcard tool scope deliberately excludes them. Stdio and `--allow-no-auth`
