@@ -343,6 +343,13 @@ There is no directly callable deploy tool.
    `PARTIAL_SUCCESS`/`FAILED` are reconciled failures. Cancellation or deadline
    after submission is persisted as indeterminate.
 
+**A preview is a lower bound.** On 2026-08-12 a deploy previewed a single
+deletion and committed two; the omitted object did not appear anywhere in the
+digest-bound artifact. The change-set binding behaved correctly — what it bound
+did not describe the whole change. Until #66 is settled, confirm a deploy's
+actual effect on the device with `show configuration | compare rollback 1`
+rather than assuming the preview was complete.
+
 Write tools require an authenticated bearer token and exact tool grants.
 Wildcard tool scope deliberately excludes them. Stdio and `--allow-no-auth`
 are read-only.

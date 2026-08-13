@@ -2008,7 +2008,7 @@ impl SdcHandler {
 
     #[tool(
         name = "prepare_sdc_policy_deploy",
-        description = "Preview SDC policy target changes and create a digest-bound change set. This does not deploy."
+        description = "Preview SDC policy target changes and create a digest-bound change set. This does not deploy. A deploy has been observed committing a deletion its preview did not disclose (#66), so treat the preview as a lower bound on what will change, not a complete statement of it."
     )]
     async fn prepare_sdc_policy_deploy(
         &self,
