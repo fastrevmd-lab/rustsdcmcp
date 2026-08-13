@@ -99,7 +99,7 @@ impl Target {
 ///
 /// # Errors
 ///
-/// Returns [`SdcError::InvalidInput`] when any target is a device group.
+/// Returns [`crate::SdcError::InvalidInput`] when any target is a device group.
 pub fn validate_deploy_targets(targets: &[Target]) -> Result<(), crate::SdcError> {
     if targets
         .iter()
