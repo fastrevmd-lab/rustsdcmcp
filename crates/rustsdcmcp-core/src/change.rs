@@ -1206,6 +1206,10 @@ impl ChangeManager {
         policies: Vec<PolicyOperation>,
         cancellation: &CancellationToken,
     ) -> Result<PrepareResult, SdcError> {
+        for operation in &policies {
+            crate::models::validate_deploy_targets(&operation.deploy_targets)?;
+            crate::models::validate_deploy_targets(&operation.undeploy_targets)?;
+        }
         let prepared = self
             .client
             .prepare_policy_deploy(policies, cancellation)
@@ -1410,7 +1414,7 @@ impl ChangeManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PolicyType, Target};
+    use crate::{PolicyType, Target, TargetType};
     use axum::{
         Json, Router,
         extract::State,
@@ -2198,6 +2202,52 @@ mod tests {
             "unexpected error: {error:?}"
         );
 
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_device_group_target_is_refused_before_any_sdc_request() {
+        let calls = Arc::new(Calls::default());
+        let app = Router::new()
+            .route("/api/v1/policies/preview", post(preview))
+            .with_state(calls.clone());
+        let (base_url, server) = serve(app).await;
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client =
+            SdcClient::from_test_parts(base_url.clone(), "test-secret".to_owned(), 64 * 1024, 100);
+        let manager = ChangeManager::load(
+            client,
+            "tenant-a",
+            base_url.to_string(),
+            None,
+            Duration::from_secs(60),
+            false,
+        )
+        .expect("change manager");
+
+        let error = manager
+            .prepare(
+                "alice".to_owned(),
+                vec![PolicyOperation {
+                    policy_id: "policy-1".to_owned(),
+                    policy_type: PolicyType::Firewall,
+                    deploy_targets: vec![Target {
+                        target_id: "group-1".to_owned(),
+                        target_type: TargetType::DeviceGroup,
+                    }],
+                    undeploy_targets: Vec::new(),
+                }],
+                &CancellationToken::new(),
+            )
+            .await
+            .expect_err("a device-group target must be refused");
+
+        assert!(error.to_string().contains("DEVICE_GROUP"));
+        assert_eq!(
+            calls.previews.load(Ordering::SeqCst),
+            0,
+            "refusal must happen before a preview job is spent on the management plane"
+        );
         server.abort();
     }
 }
