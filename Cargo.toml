@@ -44,14 +44,15 @@ tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
+uuid = { version = "1", features = ["v4"] }
 zeroize = "1"
 
-mecmcp-audit = { version = "0.8.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.0" }
-mecmcp-auth = { version = "0.8.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.0" }
-mecmcp-changeset = { version = "0.8.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.0" }
-mecmcp-runtime = { version = "0.8.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.0" }
-mecmcp-server = { version = "0.8.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.0" }
-mecmcp-transport = { version = "0.8.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.0" }
+mecmcp-audit = { version = "0.9.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.9.0" }
+mecmcp-auth = { version = "0.9.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.9.0" }
+mecmcp-changeset = { version = "0.9.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.9.0" }
+mecmcp-runtime = { version = "0.9.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.9.0" }
+mecmcp-server = { version = "0.9.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.9.0" }
+mecmcp-transport = { version = "0.9.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.9.0" }
 
 [profile.release]
 lto = "thin"
