@@ -12,6 +12,36 @@ live validation, and a tool surface that covers a minority of the SDC API.
 
 ## Unreleased
 
+### Added
+
+- 23 read-only resource families on the generic `list_sdc_resources` /
+  `get_sdc_resource` pair, covering every uniform five-operation collection in
+  the pinned spec that was not already exposed: AAMW, anti-spam, anti-virus,
+  content-filtering, content-security, enhanced content-filtering, flow-based
+  antivirus, ICAP profiles and servers, identity objects, IPS profiles, proxy
+  servers, redirect profiles, rule options, SecIntel profiles and groups, SSL
+  initiations, SSL proxy profiles, SWP profiles, URL category lists, URL
+  patterns, variable zones, and web-filtering profiles.
+- A `fields` projection on `list_sdc_resources`, matching `list_device_groups`.
+  Profile families embed rule and pattern lists, so `size` alone does not bound
+  the response.
+
+### Changed
+
+- The resource catalog is split by capability. `ResourceKind` is the read
+  catalog; the new `WritableResource` is the write catalog and still holds
+  exactly four families. The conversion goes one way only, and the gate sits on
+  `SdcClient`, so adding a readable family cannot compile into a writable one.
+
+### Notes
+
+- **No token re-mint is required.** No tool was added, removed, or renamed, so
+  an existing scoped token still matches the surface. This is unlike the last
+  three releases, where new tools were invisible to tokens minted earlier.
+- The new families are verified for **authentication and dispatch only**. The
+  lab tenant holds no security-profile objects, so no live response payload has
+  been observed for any of the 23. Payload shape stays unverified.
+
 ## `v0.1.0-lab.7` — 2026-08-13
 
 Phase A of the completion plan: the four change-control defects.
