@@ -31,10 +31,11 @@ mecmcp-server.workspace = true
 mecmcp-transport.workspace = true
 
 [dev-dependencies]
+reqwest.workspace = true
 tempfile = "3"
 syn = { version = "2", features = ["full"] }
 toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
-tower.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true

@@ -74,11 +74,11 @@ source_has_single_exact_key() {
 assert_build_info_key_contract() {
     local fixture
     fixture=$(mktemp)
-    printf '%s\n' 'mecmcp_ref=v0.8.0' >"$fixture"
-    has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.8.0' "$fixture" \
+    printf '%s\n' 'mecmcp_ref=v0.9.1' >"$fixture"
+    has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.9.1' "$fixture" \
         || fail 'singular expected BUILD-INFO mecmcp key was rejected'
     printf '%s\n' 'mecmcp_ref=v0.7.3' >>"$fixture"
-    if has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.8.0' "$fixture"; then
+    if has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.9.1' "$fixture"; then
         fail 'conflicting BUILD-INFO mecmcp key was accepted'
     fi
     rm -f -- "$fixture"
@@ -140,13 +140,13 @@ assert_exact_mecmcp_sbom_set() {
         metadata: {component: {name: "rustsdcmcp"}},
         components: [
             {name: "serde", version: "1.0.0"},
-            {name: "mecmcp-audit", version: "0.8.0"},
-            {name: "mecmcp-auth", version: "0.8.0"},
-            {name: "mecmcp-changeset", version: "0.8.0"},
-            {name: "mecmcp-runtime", version: "0.8.0"},
-            {name: "mecmcp-secret", version: "0.8.0"},
-            {name: "mecmcp-server", version: "0.8.0"},
-            {name: "mecmcp-transport", version: "0.8.0"}
+            {name: "mecmcp-audit", version: "0.9.1"},
+            {name: "mecmcp-auth", version: "0.9.1"},
+            {name: "mecmcp-changeset", version: "0.9.1"},
+            {name: "mecmcp-runtime", version: "0.9.1"},
+            {name: "mecmcp-secret", version: "0.9.1"},
+            {name: "mecmcp-server", version: "0.9.1"},
+            {name: "mecmcp-transport", version: "0.9.1"}
         ]
     }')
     jq -e "$filter" <<<"$valid" >/dev/null \
@@ -166,8 +166,11 @@ for script in scripts/build-lab-package.sh scripts/verify-packaging.sh \
     bash -n "$script"
 done
 
-if rg -n 'Command::new|std::process|tokio::process' crates --glob '*.rs' \
-    -g '!tests/**' -g '!**/tests/**' -g '!**/*_test.rs'; then
+# grep, not rg: ripgrep is not installed on the CI runner, so this check
+# exited non-zero and the `if` never fired — it has been failing OPEN. A gate
+# that cannot run is not a gate (mecmcp#273's lesson, applied here).
+if grep -rn -E 'Command::new|std::process|tokio::process' crates --include='*.rs' \
+    | grep -vE '(^|/)tests/|_test\.rs:'; then
     fail 'production Rust must not spawn processes'
 fi
 
@@ -301,7 +304,8 @@ require_logical_line \
     "command -v jq >/dev/null || die 'jq is required to validate package JSON'" \
     "$installer"
 require_contains 'systemctl daemon-reload' "$installer"
-if rg -n 'systemctl (enable|start|restart|try-restart)' "$installer"; then
+# grep, not rg — same fail-open bug as above.
+if grep -nE 'systemctl (enable|start|restart|try-restart)' "$installer"; then
     fail 'installer must not enable or start the nonbootable service'
 fi
 
@@ -316,16 +320,16 @@ fi
 # a source-text match would pass while the manifest said something else, and it
 # would forbid single-sourcing the ref into the generated package README.
 mapfile -t builder_mecmcp_refs < <(grep -oP 'tag = "\K[^"]+' Cargo.toml | sort -u)
-[[ ${#builder_mecmcp_refs[@]} -eq 1 && ${builder_mecmcp_refs[0]} == 'v0.8.0' ]] \
+[[ ${#builder_mecmcp_refs[@]} -eq 1 && ${builder_mecmcp_refs[0]} == 'v0.9.1' ]] \
     || fail "Cargo.toml must pin exactly one approved mecmcp tag, found: ${builder_mecmcp_refs[*]-none}"
 # shellcheck disable=SC2016  # literal source fragment, not an expansion
 grep -Fq 'mecmcp_ref=$mecmcp_ref' scripts/build-lab-package.sh \
     || fail 'builder must emit the derived mecmcp BUILD-INFO key'
 require_logical_line \
-    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.8.0' \"\$build_info\" || die 'BUILD-INFO mecmcp ref is invalid'" \
+    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.9.1' \"\$build_info\" || die 'BUILD-INFO mecmcp ref is invalid'" \
     "$installer"
 require_logical_line \
-    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.8.0' \"\$build_info\" || {" \
+    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.9.1' \"\$build_info\" || {" \
     packaging/tests/package-smoke.sh
 for build_info_consumer in "$installer" packaging/tests/package-smoke.sh; do
     # shellcheck disable=SC2016
@@ -337,7 +341,7 @@ for build_info_consumer in "$installer" packaging/tests/package-smoke.sh; do
         "$build_info_consumer"
 done
 require_logical_line \
-    "printf '%s\n' \"\$build_info\" | awk -F= -v expected='mecmcp_ref=v0.8.0' '\$1 == \"mecmcp_ref\" { count += 1; matches += (\$0 == expected) } END { exit !(count == 1 && matches == 1) }'" \
+    "printf '%s\n' \"\$build_info\" | awk -F= -v expected='mecmcp_ref=v0.9.1' '\$1 == \"mecmcp_ref\" { count += 1; matches += (\$0 == expected) } END { exit !(count == 1 && matches == 1) }'" \
     "$ci"
 sbom_validators=(
     scripts/build-lab-package.sh
@@ -346,13 +350,13 @@ sbom_validators=(
     "$ci"
 )
 required_mecmcp_pairs=(
-    '["mecmcp-audit", "0.8.0"],'
-    '["mecmcp-auth", "0.8.0"],'
-    '["mecmcp-changeset", "0.8.0"],'
-    '["mecmcp-runtime", "0.8.0"],'
-    '["mecmcp-secret", "0.8.0"],'
-    '["mecmcp-server", "0.8.0"],'
-    '["mecmcp-transport", "0.8.0"]'
+    '["mecmcp-audit", "0.9.1"],'
+    '["mecmcp-auth", "0.9.1"],'
+    '["mecmcp-changeset", "0.9.1"],'
+    '["mecmcp-runtime", "0.9.1"],'
+    '["mecmcp-secret", "0.9.1"],'
+    '["mecmcp-server", "0.9.1"],'
+    '["mecmcp-transport", "0.9.1"]'
 )
 for validator in "${sbom_validators[@]}"; do
     require_logical_line \
@@ -365,7 +369,7 @@ for validator in "${sbom_validators[@]}"; do
         require_logical_line "$pair" "$validator"
     done
     require_logical_line \
-        'and (tostring | contains("v0.7.3") | not)' \
+        'and (tostring | contains("v0.8.0") | not)' \
         "$validator"
     require_logical_line \
         'and (tostring | contains("70ac3d8fb5f27db3257d11aef28bd09587f085e1") | not)' \

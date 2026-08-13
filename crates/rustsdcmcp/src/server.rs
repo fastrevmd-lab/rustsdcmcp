@@ -2432,6 +2432,7 @@ mod tests {
     fn caller(targets: ScopeSet, tools: ScopeSet) -> CallerCtx<NoGrant> {
         CallerCtx {
             token_name: "alice".to_owned(),
+            client_name: None,
             devices: targets,
             tools,
             grant: None,
@@ -2439,6 +2440,7 @@ mod tests {
             provider_tier: None,
             on_behalf_of: None,
             actor_type: ActorType::Human,
+            request_id: uuid::Uuid::new_v4(),
         }
     }
 
