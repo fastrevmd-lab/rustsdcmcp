@@ -19,8 +19,8 @@ The obstacle is that `ResourceKind` gates writes as well as reads.
 `prepare_sdc_object_write` takes `resource: ResourceKind`
 (`server.rs:411`, `:538`, `:672`), so adding a family to make it *readable*
 makes it *writable* in the same commit. Extending the catalog naively would
-expose create, update, and delete for 23 families never validated against a
-live tenant, on a management plane. That is the #61 defect at 23× scale.
+expose create, update, and delete for 24 families never validated against a
+live tenant, on a management plane. That is the #61 defect at 24× scale.
 
 Phase B therefore does the refactor first and the coverage second.
 
@@ -45,7 +45,7 @@ The five excluded groups are excluded for stated reasons, not by preference:
 
 | Group | Why excluded |
 |---|---|
-| `IPSRule`, `IPSExemptRule` | Nested under `/api/v1/ips_profiles/{profile_uuid}/…`. The collection path itself takes a parameter, which `collection_segments() -> &'static [&'static str]` cannot express. Including them would change the catalog's shape for all 27 to serve 2. |
+| `IPSRule`, `IPSExemptRule` | Nested under `/api/v1/ips_profiles/{profile_uuid}/…`. The collection path itself takes a parameter, which `collection_segments() -> &'static [&'static str]` cannot express. Including them would change the catalog's shape for all 28 to serve 2. |
 | `NAT Pools` | Item parameter is `pool_id`, not `uuid`; already has bespoke tools. |
 | `Device Groups` | Already has bespoke tools, including the `fields` projection this phase generalises. |
 | `DeviceGlobalSettings` | No `from` and no `fields` — an unbounded collection, like `ListConfigVersions`. |
@@ -70,7 +70,7 @@ impl From<WritableResource> for ResourceKind { … }
 The conversion goes one way only. There is no `TryFrom<ResourceKind>`, and
 no runtime `writable()` predicate — a missed call to such a predicate
 reintroduces exactly the bug this phase exists to prevent, and there would
-be 23 opportunities to miss it. The compiler enforces it instead.
+be 24 opportunities to miss it. The compiler enforces it instead.
 
 `ResourceKind` keeps its name because it keeps its meaning: the catalog of
 resources this server may read. `WritableResource` is the narrow type, and
