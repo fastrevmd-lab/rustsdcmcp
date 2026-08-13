@@ -111,16 +111,16 @@ validate_sbom() {
                 | [.name, .version]
             ] | sort)
             == [
-                ["mecmcp-audit", "0.8.0"],
-                ["mecmcp-auth", "0.8.0"],
-                ["mecmcp-changeset", "0.8.0"],
-                ["mecmcp-runtime", "0.8.0"],
-                ["mecmcp-secret", "0.8.0"],
-            ["mecmcp-server", "0.8.0"],
-                ["mecmcp-transport", "0.8.0"]
+                ["mecmcp-audit", "0.9.1"],
+                ["mecmcp-auth", "0.9.1"],
+                ["mecmcp-changeset", "0.9.1"],
+                ["mecmcp-runtime", "0.9.1"],
+                ["mecmcp-secret", "0.9.1"],
+            ["mecmcp-server", "0.9.1"],
+                ["mecmcp-transport", "0.9.1"]
             ]
         )
-        and (tostring | contains("v0.7.3") | not)
+        and (tostring | contains("v0.8.0") | not)
         and (tostring | contains("70ac3d8fb5f27db3257d11aef28bd09587f085e1") | not)
     ' "$sbom" >/dev/null || die 'SBOM lacks required CycloneDX metadata or components'
     ! grep -Eq '"/(home|workspace|workspaces)/' "$sbom" \

@@ -140,13 +140,13 @@ assert_exact_mecmcp_sbom_set() {
         metadata: {component: {name: "rustsdcmcp"}},
         components: [
             {name: "serde", version: "1.0.0"},
-            {name: "mecmcp-audit", version: "0.8.0"},
-            {name: "mecmcp-auth", version: "0.8.0"},
-            {name: "mecmcp-changeset", version: "0.8.0"},
-            {name: "mecmcp-runtime", version: "0.8.0"},
-            {name: "mecmcp-secret", version: "0.8.0"},
-            {name: "mecmcp-server", version: "0.8.0"},
-            {name: "mecmcp-transport", version: "0.8.0"}
+            {name: "mecmcp-audit", version: "0.9.1"},
+            {name: "mecmcp-auth", version: "0.9.1"},
+            {name: "mecmcp-changeset", version: "0.9.1"},
+            {name: "mecmcp-runtime", version: "0.9.1"},
+            {name: "mecmcp-secret", version: "0.9.1"},
+            {name: "mecmcp-server", version: "0.9.1"},
+            {name: "mecmcp-transport", version: "0.9.1"}
         ]
     }')
     jq -e "$filter" <<<"$valid" >/dev/null \
@@ -350,13 +350,13 @@ sbom_validators=(
     "$ci"
 )
 required_mecmcp_pairs=(
-    '["mecmcp-audit", "0.8.0"],'
-    '["mecmcp-auth", "0.8.0"],'
-    '["mecmcp-changeset", "0.8.0"],'
-    '["mecmcp-runtime", "0.8.0"],'
-    '["mecmcp-secret", "0.8.0"],'
-    '["mecmcp-server", "0.8.0"],'
-    '["mecmcp-transport", "0.8.0"]'
+    '["mecmcp-audit", "0.9.1"],'
+    '["mecmcp-auth", "0.9.1"],'
+    '["mecmcp-changeset", "0.9.1"],'
+    '["mecmcp-runtime", "0.9.1"],'
+    '["mecmcp-secret", "0.9.1"],'
+    '["mecmcp-server", "0.9.1"],'
+    '["mecmcp-transport", "0.9.1"]'
 )
 for validator in "${sbom_validators[@]}"; do
     require_logical_line \
@@ -369,7 +369,7 @@ for validator in "${sbom_validators[@]}"; do
         require_logical_line "$pair" "$validator"
     done
     require_logical_line \
-        'and (tostring | contains("v0.7.3") | not)' \
+        'and (tostring | contains("v0.8.0") | not)' \
         "$validator"
     require_logical_line \
         'and (tostring | contains("70ac3d8fb5f27db3257d11aef28bd09587f085e1") | not)' \
