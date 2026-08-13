@@ -173,8 +173,31 @@ impl DeviceTransaction for SdcTransaction {
         }
     }
 
+    /// Report that there is nothing left to revert.
+    ///
+    /// `mecmcp-changeset::discard_operation` is the only caller. It refuses to
+    /// discard an operation in `Validating`, `Committing`, `Committed`,
+    /// `Discarded`, or `Indeterminate`, so anything reaching here either never
+    /// reached the device or is `Failed` — and SDC reverts the device itself on
+    /// a failed deploy, observed as `sduser` issuing `commit confirmed` and then
+    /// `discard-changes` with a rollback.
+    ///
+    /// Returning `Err` here is worse than useless: `discard_operation` turns it
+    /// into a `Failed` or `Indeterminate` record, and `Indeterminate` cannot be
+    /// discarded again, so the operation would be permanently unrecoverable —
+    /// the opposite of what a discard is for.
+    ///
+    /// This is not a claim that SDC supports arbitrary rollback. It does not,
+    /// and no other caller asks it to.
     async fn rollback(&self, _to: RollbackRef) -> Result<RollbackOutcome, Self::Error> {
-        Err(SdcError::RollbackUnsupported)
+        Ok(RollbackOutcome {
+            succeeded: true,
+            details: Some(
+                "SDC reverts the device itself when a deploy fails, so a discarded \
+                 operation has nothing left to revert locally"
+                    .to_owned(),
+            ),
+        })
     }
 
     async fn unlock(&self) -> Result<UnlockOutcome, Self::Error> {
@@ -2249,5 +2272,32 @@ mod tests {
             "refusal must happen before a preview job is spent on the management plane"
         );
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn rollback_reports_that_sdc_already_reverted_rather_than_erroring() {
+        // discard_operation is rollback's only caller, and it turns an Err into a
+        // Failed or Indeterminate record. Indeterminate cannot be discarded again,
+        // so erroring here makes a wedged operation permanently unrecoverable.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = SdcClient::from_test_parts(
+            "https://sdc.invalid/".parse().expect("test url"),
+            "test-secret".to_owned(),
+            64 * 1024,
+            100,
+        );
+        let transaction = SdcTransaction::new(client, "sha256:whatever", CancellationToken::new());
+
+        let outcome = transaction
+            .rollback(RollbackRef::CandidateRevert)
+            .await
+            .expect("rollback must not error: SDC has already reverted the device");
+
+        assert!(outcome.succeeded);
+        let details = outcome.details.expect("the reason must be recorded");
+        assert!(
+            details.contains("SDC"),
+            "details must say who reverted the device; got: {details}"
+        );
     }
 }
