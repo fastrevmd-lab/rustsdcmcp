@@ -18,3 +18,4 @@ tokens.json
 # Local cargo output captured while debugging; never a build input.
 test.log
 *.log
+.gstack/
