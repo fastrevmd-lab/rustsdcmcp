@@ -173,8 +173,34 @@ impl DeviceTransaction for SdcTransaction {
         }
     }
 
-    async fn rollback(&self, _to: RollbackRef) -> Result<RollbackOutcome, Self::Error> {
-        Err(SdcError::RollbackUnsupported)
+    /// Report that there is nothing left to revert.
+    ///
+    /// `mecmcp-changeset::discard_operation` is the only caller. It refuses to
+    /// discard an operation in `Validating`, `Committing`, `Committed`,
+    /// `Discarded`, or `Indeterminate`, so anything reaching here either never
+    /// reached the device or is `Failed` — and SDC reverts the device itself on
+    /// a failed deploy, observed as `sduser` issuing `commit confirmed` and then
+    /// `discard-changes` with a rollback.
+    ///
+    /// Returning `Err` here is worse than useless: `discard_operation` turns it
+    /// into a `Failed` or `Indeterminate` record, and `Indeterminate` cannot be
+    /// discarded again, so the operation would be permanently unrecoverable —
+    /// the opposite of what a discard is for.
+    ///
+    /// This is not a claim that SDC supports arbitrary rollback. Archive and
+    /// Custom variants are refused as the sibling transactions refuse them.
+    async fn rollback(&self, to: RollbackRef) -> Result<RollbackOutcome, Self::Error> {
+        match to {
+            RollbackRef::CandidateRevert => Ok(RollbackOutcome {
+                succeeded: true,
+                details: Some(
+                    "SDC reverts the device itself when a deploy fails, so a discarded \
+                     operation has nothing left to revert locally"
+                        .to_owned(),
+                ),
+            }),
+            RollbackRef::Archive(_) | RollbackRef::Custom(_) => Err(SdcError::RollbackUnsupported),
+        }
     }
 
     async fn unlock(&self) -> Result<UnlockOutcome, Self::Error> {
@@ -1206,6 +1232,10 @@ impl ChangeManager {
         policies: Vec<PolicyOperation>,
         cancellation: &CancellationToken,
     ) -> Result<PrepareResult, SdcError> {
+        for operation in &policies {
+            crate::models::validate_deploy_targets(&operation.deploy_targets)?;
+            crate::models::validate_deploy_targets(&operation.undeploy_targets)?;
+        }
         let prepared = self
             .client
             .prepare_policy_deploy(policies, cancellation)
@@ -1277,6 +1307,49 @@ impl ChangeManager {
                 self.tenant.clone(),
                 approver,
                 expected_digest,
+            )
+            .await
+            .map_err(|error| SdcError::ChangeControl(error.to_string()))
+    }
+
+    /// Discard a terminal-but-unreconciled operation so applies are unblocked.
+    ///
+    /// A failed deploy leaves an operation that refuses every later apply on the
+    /// tenant with "the device already has an active or unreconciled operation".
+    /// Without this, the only remedy is editing the change-set state file on a
+    /// running deployment, which is the file the whole design exists to keep
+    /// hands out of.
+    ///
+    /// The caller must supply the operation's expected fingerprint, so a stale
+    /// client cannot clear an operation it has not read. Upstream additionally
+    /// refuses any operation that is `Validating`, `Committing`, `Committed`,
+    /// `Discarded`, or `Indeterminate`, and refuses a caller who does not own it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SdcError::ChangeControl`] when the operation is unknown, not
+    /// owned by `owner`, in a state that cannot be discarded, or when the
+    /// fingerprint does not match.
+    pub async fn discard(
+        &self,
+        operation_id: String,
+        owner: String,
+        expected_fingerprint: String,
+        cancellation: &CancellationToken,
+    ) -> Result<String, SdcError> {
+        let transaction = SdcTransaction::new(
+            self.client.clone(),
+            expected_fingerprint.clone(),
+            cancellation.clone(),
+        );
+        self.coordinator
+            .discard_operation(
+                &operation_id,
+                &self.tenant,
+                &owner,
+                &expected_fingerprint,
+                &transaction,
+                cancellation,
             )
             .await
             .map_err(|error| SdcError::ChangeControl(error.to_string()))
@@ -1410,7 +1483,7 @@ impl ChangeManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PolicyType, Target};
+    use crate::{PolicyType, Target, TargetType};
     use axum::{
         Json, Router,
         extract::State,
@@ -2197,6 +2270,147 @@ mod tests {
             matches!(&error, SdcError::TargetDrifted),
             "unexpected error: {error:?}"
         );
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_device_group_target_is_refused_before_any_sdc_request() {
+        let calls = Arc::new(Calls::default());
+        let app = Router::new()
+            .route("/api/v1/policies/preview", post(preview))
+            .with_state(calls.clone());
+        let (base_url, server) = serve(app).await;
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client =
+            SdcClient::from_test_parts(base_url.clone(), "test-secret".to_owned(), 64 * 1024, 100);
+        let manager = ChangeManager::load(
+            client,
+            "tenant-a",
+            base_url.to_string(),
+            None,
+            Duration::from_secs(60),
+            false,
+        )
+        .expect("change manager");
+
+        let error = manager
+            .prepare(
+                "alice".to_owned(),
+                vec![PolicyOperation {
+                    policy_id: "policy-1".to_owned(),
+                    policy_type: PolicyType::Firewall,
+                    deploy_targets: vec![Target {
+                        target_id: "group-1".to_owned(),
+                        target_type: TargetType::DeviceGroup,
+                    }],
+                    undeploy_targets: Vec::new(),
+                }],
+                &CancellationToken::new(),
+            )
+            .await
+            .expect_err("a device-group target must be refused");
+
+        assert!(error.to_string().contains("DEVICE_GROUP"));
+        assert_eq!(
+            calls.previews.load(Ordering::SeqCst),
+            0,
+            "refusal must happen before a preview job is spent on the management plane"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn rollback_reports_that_sdc_already_reverted_rather_than_erroring() {
+        // discard_operation is rollback's only caller, and it turns an Err into a
+        // Failed or Indeterminate record. Indeterminate cannot be discarded again,
+        // so erroring here makes a wedged operation permanently unrecoverable.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = SdcClient::from_test_parts(
+            "https://sdc.invalid/".parse().expect("test url"),
+            "test-secret".to_owned(),
+            64 * 1024,
+            100,
+        );
+        let transaction = SdcTransaction::new(client, "sha256:whatever", CancellationToken::new());
+
+        let outcome = transaction
+            .rollback(RollbackRef::CandidateRevert)
+            .await
+            .expect("rollback must not error: SDC has already reverted the device");
+
+        assert!(outcome.succeeded);
+        let details = outcome.details.expect("the reason must be recorded");
+        assert!(
+            details.contains("SDC"),
+            "details must say who reverted the device; got: {details}"
+        );
+
+        transaction
+            .rollback(RollbackRef::Archive(1))
+            .await
+            .expect_err("SDC has no rollback archive to load");
+    }
+
+    #[tokio::test]
+    async fn discarding_an_unknown_operation_is_refused() {
+        // End-to-end unblocking needs a genuinely wedged operation, which this
+        // harness cannot produce. This test verifies only the fingerprint guard.
+        let calls = Arc::new(Calls::default());
+        let app = Router::new()
+            .route("/api/v1/policies/preview", post(preview))
+            .route(
+                "/api/v1/policies/preview/{id}",
+                get(|| async {
+                    Json(json!({
+                        "preview_id": "preview-1",
+                        "status": "COMPLETED",
+                        "device_deployment_status": [],
+                        "message": ""
+                    }))
+                }),
+            )
+            .with_state(calls.clone());
+        let (base_url, server) = serve(app).await;
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client =
+            SdcClient::from_test_parts(base_url.clone(), "test-secret".to_owned(), 64 * 1024, 100);
+        let manager = ChangeManager::load(
+            client,
+            "tenant-a",
+            base_url.to_string(),
+            None,
+            Duration::from_secs(60),
+            true,
+        )
+        .expect("change manager");
+        let cancellation = CancellationToken::new();
+
+        let prepared = manager
+            .prepare(
+                "alice".to_owned(),
+                vec![PolicyOperation {
+                    policy_id: "policy-1".to_owned(),
+                    policy_type: PolicyType::Firewall,
+                    deploy_targets: vec![Target::device("device-1")],
+                    undeploy_targets: Vec::new(),
+                }],
+                &cancellation,
+            )
+            .await
+            .expect("prepare");
+
+        // A wrong fingerprint must be refused: a stale client must not be able to
+        // clear an operation it has not actually read.
+        let refused = manager
+            .discard(
+                "operation-that-does-not-exist".to_owned(),
+                "alice".to_owned(),
+                prepared.prepared_change.preview_digest().to_owned(),
+                &cancellation,
+            )
+            .await;
+        assert!(refused.is_err(), "an unknown operation id must be refused");
 
         server.abort();
     }

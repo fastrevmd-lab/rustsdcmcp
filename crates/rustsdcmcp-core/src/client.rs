@@ -1275,7 +1275,7 @@ impl SdcClient {
         .await
     }
 
-    /// Fetch one per-device preview result in CLI format.
+    /// Fetch one per-device preview result in XML format.
     pub async fn preview_device_result(
         &self,
         preview_id: &str,
@@ -1288,7 +1288,7 @@ impl SdcClient {
             &[
                 "api", "v1", "policies", "preview", preview_id, "devices", device_id,
             ],
-            &[("format", "CLI")],
+            &[("format", "XML")],
             cancellation,
         )
         .await
@@ -2614,5 +2614,36 @@ mod tests {
                 field: "license_uuid"
             }
         ));
+    }
+
+    #[tokio::test]
+    async fn preview_device_result_requests_xml_format() {
+        let app = Router::new().route(
+            "/api/v1/policies/preview/{preview_id}/devices/{device_id}",
+            get(
+                |axum::extract::Path((preview_id, device_id)): axum::extract::Path<(
+                    String,
+                    String,
+                )>,
+                 Query(query): Query<HashMap<String, String>>| async move {
+                    assert_eq!(preview_id, "preview-123");
+                    assert_eq!(device_id, "device-456");
+                    assert_eq!(
+                        query.get("format").map(String::as_str),
+                        Some("XML"),
+                        "preview_device_result must request XML format, not CLI"
+                    );
+                    Json(serde_json::json!({
+                        "config_diff": "<configuration></configuration>"
+                    }))
+                },
+            ),
+        );
+        let (base_url, server) = serve(app).await;
+        let _result = client(base_url, 4096)
+            .preview_device_result("preview-123", "device-456", &CancellationToken::new())
+            .await
+            .expect("preview_device_result succeeds");
+        server.abort();
     }
 }

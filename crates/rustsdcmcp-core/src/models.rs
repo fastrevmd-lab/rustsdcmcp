@@ -85,6 +85,34 @@ impl Target {
     }
 }
 
+/// Refuse deploy targets the pinned API documents as unsupported.
+///
+/// `apiTargetType` in the vendored spec reads
+/// `DEVICE_GROUP: Group of devices (Not supported, future support)`, and
+/// `Target1.type` adds `DEVICE_GROUP will be supported later`. The variant is
+/// modelled because the API declares it, so a request naming a group is built
+/// and sent today and SDC rejects it — costing a preview job and returning a
+/// generic error that names nothing.
+///
+/// Refusing locally is trivially reversible: when SDC supports it, delete this
+/// guard and its test.
+///
+/// # Errors
+///
+/// Returns [`crate::SdcError::InvalidInput`] when any target is a device group.
+pub fn validate_deploy_targets(targets: &[Target]) -> Result<(), crate::SdcError> {
+    if targets
+        .iter()
+        .any(|target| target.target_type == TargetType::DeviceGroup)
+    {
+        return Err(crate::SdcError::InvalidInput(
+            "DEVICE_GROUP is not supported as a deploy target: the pinned SDC API \
+             marks it \"Not supported, future support\". Target devices individually.",
+        ));
+    }
+    Ok(())
+}
+
 /// Exact `PolicyOperationEntry` from the pinned OpenAPI document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -362,4 +390,43 @@ pub enum NatWriteOperation {
     CreateRuleGroup,
     /// Update NAT rule group.
     UpdateRuleGroup,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_device_group_deploy_target_is_refused_with_a_reason() {
+        let targets = vec![Target {
+            target_id: "group-1".to_owned(),
+            target_type: TargetType::DeviceGroup,
+        }];
+
+        let error = validate_deploy_targets(&targets)
+            .expect_err("DEVICE_GROUP is documented as unsupported and must be refused here");
+
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("DEVICE_GROUP"),
+            "the message must name the target type so an operator can act on it; got: {rendered}"
+        );
+        assert!(
+            rendered.contains("not supported"),
+            "the message must quote the pinned spec's wording; got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn a_device_target_is_accepted() {
+        let targets = vec![Target::device("a0f049c4-903a-471e-93c2-f8d19d30cebc")];
+        assert!(validate_deploy_targets(&targets).is_ok());
+    }
+
+    #[test]
+    fn an_empty_target_list_is_not_this_functions_concern() {
+        // Emptiness is validated elsewhere; this guard is only about target type,
+        // and silently rejecting here would move an unrelated error message.
+        assert!(validate_deploy_targets(&[]).is_ok());
+    }
 }

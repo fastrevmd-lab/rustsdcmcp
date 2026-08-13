@@ -343,6 +343,15 @@ There is no directly callable deploy tool.
    `PARTIAL_SUCCESS`/`FAILED` are reconciled failures. Cancellation or deadline
    after submission is persisted as indeterminate.
 
+**A preview is a lower bound.** Before fix #66 (2026-08-12), this server
+requested preview results in CLI format, which SDC renders lossily: a parent
+object orphaned by a deletion can be omitted from the CLI rendering while still
+appearing in the committed change. An observed case previewed one deletion and
+committed two; the omitted object did not appear anywhere in the digest-bound
+artifact. The server now requests XML format for preview results, which SDC
+renders completely. The change-set binding behaved correctly throughout — what
+it bound simply did not describe the whole change under the CLI rendering.
+
 Write tools require an authenticated bearer token and exact tool grants.
 Wildcard tool scope deliberately excludes them. Stdio and `--allow-no-auth`
 are read-only.
@@ -486,6 +495,15 @@ An indeterminate deployment means the request may have reached SDC but this
 process did not observe a terminal state. Reconcile it using
 `get_sdc_deploy_status`, the per-device result tool, and the SDC portal before
 planning another deployment.
+
+### Recovering from a failed deploy
+
+A failed deploy leaves an operation that refuses every later apply on the tenant
+with "the device already has an active or unreconciled operation". Clear it with
+`discard_sdc_operation`, supplying the operation id and its expected
+fingerprint from the change-set state. Only the operation's owner may discard
+it, and the record remains visible afterwards — a discard clears the block, it
+does not erase the fact that a deploy failed.
 
 The SDC API does not expose a candidate rollback primitive for this workflow.
 Rollback is therefore reported as unsupported rather than guessed.
