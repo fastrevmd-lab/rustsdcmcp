@@ -2403,6 +2403,32 @@ mod tests {
         server.abort();
     }
 
+    /// A new family's list reaches its own collection path.
+    ///
+    /// The catalog's self-consistency tests prove the table agrees with itself.
+    /// This proves the table is what the client actually requests.
+    #[tokio::test]
+    async fn a_new_family_lists_from_its_own_collection() {
+        let app = Router::new().route(
+            "/api/v1/rule_options",
+            get(|| async { Json(serde_json::json!({"items": []})) }),
+        );
+        let (base_url, server) = serve(app).await;
+        let sdc = client(base_url, 4096);
+
+        let listed = sdc
+            .list_resource(
+                ResourceKind::RuleOptions,
+                ListRequest::new(0, 10, 200).expect("page"),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("list succeeds");
+
+        assert_eq!(listed["items"], serde_json::json!([]));
+        server.abort();
+    }
+
     #[tokio::test]
     async fn a_device_group_uuid_cannot_escape_its_collection() {
         // `validate_atom` permits `/` and `.`, so the guarantee lives in the
