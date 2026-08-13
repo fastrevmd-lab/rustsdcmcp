@@ -598,7 +598,6 @@ impl SdcClient {
     }
 
     /// List one allowlisted generic resource family.
-    /// List one allowlisted generic resource family.
     ///
     /// `size` bounds how many objects come back, not how large each one is,
     /// and profile families embed rule and pattern lists. Pass `fields` to
