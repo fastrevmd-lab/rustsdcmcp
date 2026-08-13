@@ -661,6 +661,69 @@ active or unreconciled operation"*. `mecmcp-changeset` has
 `discard_operation`, but this server exposes no tool for it, so there is no
 supported way to clear it.
 
+### 12. Out-of-band resolution exists, but not on this API (2026-08-13)
+
+`device_config_state: OUT_OF_BAND_CHANGED` is returned live by
+`GET /api/v1/devices`, and the string appears **zero times** in the vendored
+spec. Re-fetching the upstream export produced a **byte-identical** file, so
+that is a real omission rather than a stale snapshot. The field itself is
+documented — `Device.device_config_state`, a bare `string` with no enum,
+described as *"DeviceConfigState describes whether the device contains out of
+band changes"* — so the API names the concept, reports it, and offers no
+operation to act on it.
+
+The portal clears it. Captured live from the Devices page, the action is three
+calls on the **web UI's own backend**, not this API:
+
+| Purpose | Method and path | Body |
+|---|---|---|
+| SDC-side intended changes (left column) | `POST /configmgmt/view-ui-changes` | `{"device_uuid":"…"}` |
+| Device-side out-of-band delta (right column) | `POST /configmgmt/view-device-changes` | `{"device_uuid":"…"}` |
+| Both buttons | `POST /configmgmt/resolve-oob` | `{"device_uuid":"…","accept_device_change":<bool>}` |
+
+`accept_device_change` is the entire difference between the two buttons:
+
+- **`true` — accept.** Import the device's change into SDC so SDC matches the
+  device. The device is untouched.
+- **`false` — reject.** **Delete the out-of-band change from the device** so the
+  device matches SDC. The UI's own wording: *"Only the configurations updated
+  from the device will be deleted."*
+
+Note what `false` means. "Reject" does not discard SDC's opinion; it edits the
+device. Anything that ever exposes this must not let those two be confused.
+
+#### Why this server cannot use it
+
+**Different host path, different authentication.** These are `/configmgmt/*` on
+`sdcloud.juniperclouds.net`, not `/api/v1/*` on `api.sdcloud.juniperclouds.net`
+— which is why searching the spec found nothing. They are outside the spec's
+surface, not missing from it.
+
+They are authenticated by the logged-in browser session. Probed with this
+server's credential:
+
+| Request | Result |
+|---|---|
+| `POST /configmgmt/view-device-changes` with `x-api-key` | `403` |
+| the same with **no auth at all** | `403` — identical |
+| `POST /api/v1/configmgmt/view-device-changes` with `x-api-key` | `404` |
+
+The key and no key produce the same response, so the key buys nothing there.
+The `404` under `/api/v1` is the useful contrast: that prefix is routed and has
+no such path, while `/configmgmt/*` is a surface this credential cannot reach.
+
+#### Consequence
+
+Clearing out-of-band drift is **a portal action with no API equivalent**, and
+that is a property of the product, not a gap in this repository. Implementing
+it would mean holding a user's web session and calling undocumented BFF
+endpoints that can change without notice — the wrong trade for a management
+plane.
+
+Recorded here so the next person does not repeat the search. If Juniper later
+exposes an equivalent under `/api/v1` or `/api/v2`, the semantics above are the
+ground truth for what the buttons do.
+
 ## Still unverified
 
 Not answered by the spec; do not write code that assumes an answer:

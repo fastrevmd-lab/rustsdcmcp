@@ -421,6 +421,26 @@ The effective values are logged at startup.
 
 ## Co-managing an SRX with SDC
 
+### Out-of-band drift is cleared in the portal, not here
+
+When a device is edited outside SDC it reports
+`device_config_state: OUT_OF_BAND_CHANGED`. **No tool in this server clears
+that, and none can** — the portal's "Resolve" action runs against the web UI's
+own backend, authenticated by a browser session, and this server's API
+credential is refused there. Full evidence in
+[`docs/sdc-api/README.md`](sdc-api/README.md) section 12.
+
+`prepare_sdc_policy_deploy` is not a substitute: it pushes policy and does not
+reconcile the device's own edits. Device sync is not one either — it reconciles
+inventory and leaves `device_config_state` untouched.
+
+In the portal, Resolve offers two choices, and the second one edits the device:
+
+- **Accept** imports the device's change into SDC. The device is untouched.
+- **Reject** *deletes* the out-of-band change from the device so it matches SDC.
+
+
+
 SDC deploys its own complete model of the hierarchies it owns. Device-local
 config inside those hierarchies that SDC does not model is **deleted**, not
 preserved. This was observed in production on 2026-08-07.
