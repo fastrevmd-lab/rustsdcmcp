@@ -349,6 +349,26 @@ impl SdcClient {
             .await
     }
 
+    /// List configuration versions for one device.
+    ///
+    /// Returns the standard `{"items": [...], "count": N}` envelope with archived
+    /// configuration metadata. The endpoint declares no pagination parameters, so
+    /// the response is bounded only by `max_response_bytes`. A device with a long
+    /// archive may exceed that limit and fail the read.
+    pub async fn list_config_versions(
+        &self,
+        device_uuid: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("device_uuid", device_uuid)?;
+        self.get(
+            &["api", "v1", "devices", device_uuid, "config", "versions"],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
     /// List firewall policies with bounded pagination.
     pub async fn list_firewall_policies(
         &self,
@@ -2522,6 +2542,61 @@ mod tests {
             .await
             .expect("list succeeds");
         assert_eq!(result["count"], 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn list_config_versions_sends_device_uuid_in_path_without_pagination() {
+        let app = Router::new().route(
+            "/api/v1/devices/{device_uuid}/config/versions",
+            get(
+                |axum::extract::Path(device_uuid): axum::extract::Path<String>,
+                 Query(query): Query<HashMap<String, String>>| async move {
+                    assert_eq!(device_uuid, "dev-789");
+                    // This endpoint has no pagination parameters; adding them later
+                    // would be a silent contract change.
+                    assert!(
+                        query.is_empty(),
+                        "config versions endpoint must have no query parameters, found: {query:?}"
+                    );
+                    Json(serde_json::json!({"items": [], "count": 0}))
+                },
+            ),
+        );
+        let (base_url, server) = serve(app).await;
+        let result = client(base_url, 4096)
+            .list_config_versions("dev-789", &CancellationToken::new())
+            .await
+            .expect("list succeeds");
+        assert_eq!(result["count"], 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_device_uuid_in_config_versions_cannot_escape_its_collection() {
+        let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorder = seen.clone();
+        let app = Router::new().fallback(move |uri: axum::http::Uri| {
+            let recorder = recorder.clone();
+            async move {
+                recorder
+                    .lock()
+                    .expect("record path")
+                    .push(uri.path().to_owned());
+                Json(serde_json::json!({}))
+            }
+        });
+        let (base_url, server) = serve(app).await;
+        let sdc = client(base_url, 4096);
+
+        sdc.list_config_versions("../../api/v1/devices", &CancellationToken::new())
+            .await
+            .expect("the request is built, not refused");
+        let path = seen.lock().expect("read path")[0].clone();
+        assert!(
+            !path.contains("/../"),
+            "path traversal must be percent-encoded, not literal: {path}"
+        );
         server.abort();
     }
 
