@@ -187,17 +187,20 @@ impl DeviceTransaction for SdcTransaction {
     /// discarded again, so the operation would be permanently unrecoverable —
     /// the opposite of what a discard is for.
     ///
-    /// This is not a claim that SDC supports arbitrary rollback. It does not,
-    /// and no other caller asks it to.
-    async fn rollback(&self, _to: RollbackRef) -> Result<RollbackOutcome, Self::Error> {
-        Ok(RollbackOutcome {
-            succeeded: true,
-            details: Some(
-                "SDC reverts the device itself when a deploy fails, so a discarded \
-                 operation has nothing left to revert locally"
-                    .to_owned(),
-            ),
-        })
+    /// This is not a claim that SDC supports arbitrary rollback. Archive and
+    /// Custom variants are refused as the sibling transactions refuse them.
+    async fn rollback(&self, to: RollbackRef) -> Result<RollbackOutcome, Self::Error> {
+        match to {
+            RollbackRef::CandidateRevert => Ok(RollbackOutcome {
+                succeeded: true,
+                details: Some(
+                    "SDC reverts the device itself when a deploy fails, so a discarded \
+                     operation has nothing left to revert locally"
+                        .to_owned(),
+                ),
+            }),
+            RollbackRef::Archive(_) | RollbackRef::Custom(_) => Err(SdcError::RollbackUnsupported),
+        }
     }
 
     async fn unlock(&self) -> Result<UnlockOutcome, Self::Error> {
@@ -2299,5 +2302,10 @@ mod tests {
             details.contains("SDC"),
             "details must say who reverted the device; got: {details}"
         );
+
+        transaction
+            .rollback(RollbackRef::Archive(1))
+            .await
+            .expect_err("SDC has no rollback archive to load");
     }
 }
