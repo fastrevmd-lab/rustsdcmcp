@@ -5,13 +5,15 @@ use anyhow::{Context, Result};
 use mecmcp_auth::{BearerSyntax, CallerCtx, NoGrant, TokenStoreFile};
 use mecmcp_transport::{
     BearerAuthenticator, BearerBoundary, BearerResponseProfile, HostOriginPolicy,
-    HttpTransportConfig, LimitsConfig, MalformedArgumentsPolicy, NoAuthAcknowledgement,
-    TargetField, ToolScopePreflight, TransportIdentity, build_streamable_http_router, serve_router,
+    HttpTransportConfig, InsecureBindAcknowledgement, LimitsConfig, MalformedArgumentsPolicy,
+    NoAuthAcknowledgement, TargetField, ToolScopePreflight, TransportIdentity,
+    build_streamable_http_router, serve_router,
 };
 use std::{net::SocketAddr, sync::Arc};
 use tokio_util::sync::CancellationToken;
 
 /// Build the complete shared HTTP router with SDC-owned identity and scope fields.
+#[allow(clippy::too_many_arguments)]
 pub fn build_http_router(
     handler: SdcHandler,
     token_store: Option<Arc<TokenStoreFile<NoGrant>>>,
@@ -19,6 +21,7 @@ pub fn build_http_router(
     allowed_origins: Vec<String>,
     limits: LimitsConfig,
     enable_metrics: bool,
+    allow_insecure_bind: bool,
     shutdown: CancellationToken,
 ) -> Result<mecmcp_transport::ServePlan> {
     let identity = TransportIdentity::new("sdcmcp", "sdc", "rustsdcmcp", ["tenant"]);
@@ -57,6 +60,17 @@ pub fn build_http_router(
         .with_metrics(enable_metrics)
     };
 
+    // Carry --allow-insecure-bind through to the transport. Parsing the flag and
+    // never converting it is exactly the defect class mecmcp#273 exists to close:
+    // a flag that is present but ignored. Without this, a plaintext off-loopback
+    // listener is refused at startup even though the operator asked for it — the
+    // failure is safe, but the server does not start.
+    let config = if allow_insecure_bind {
+        config.with_insecure_bind(InsecureBindAcknowledgement::operator_allowed_insecure_bind())
+    } else {
+        config
+    };
+
     build_streamable_http_router(move || Ok::<_, std::io::Error>(handler.clone()), config)
         .context("building shared SDC Streamable HTTP router")
 }
@@ -71,6 +85,7 @@ pub async fn serve_http(
     allowed_origins: Vec<String>,
     limits: LimitsConfig,
     enable_metrics: bool,
+    allow_insecure_bind: bool,
     tls: Option<Arc<rustls::ServerConfig>>,
     shutdown: CancellationToken,
     shutdown_timeout: std::time::Duration,
@@ -82,6 +97,7 @@ pub async fn serve_http(
         allowed_origins,
         limits,
         enable_metrics,
+        allow_insecure_bind,
         shutdown,
     )?;
     serve_router(plan, address, tls, shutdown_timeout)
