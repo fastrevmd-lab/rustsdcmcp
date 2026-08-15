@@ -92,7 +92,7 @@ validate_build_info() {
     grep -Eq '^git_commit=[0-9a-f]{40}$' "$build_info" || die 'BUILD-INFO commit is invalid'
     grep -Eq '^source_date_epoch=[0-9]+$' "$build_info" || die 'BUILD-INFO epoch is invalid'
     grep -Fqx 'target=x86_64-unknown-linux-gnu' "$build_info" || die 'BUILD-INFO target is invalid'
-    has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.9.1' "$build_info" || die 'BUILD-INFO mecmcp ref is invalid'
+    has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.10.0' "$build_info" || die 'BUILD-INFO mecmcp ref is invalid'
     grep -Eq '^glibc_floor=[0-9]+(\.[0-9]+)+$' "$build_info" || die 'BUILD-INFO GLIBC floor is invalid'
     grep -Eq '^rustc=rustc ' "$build_info" || die 'BUILD-INFO rustc metadata is invalid'
 }
