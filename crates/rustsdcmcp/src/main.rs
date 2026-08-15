@@ -348,6 +348,7 @@ async fn main() -> Result<()> {
                 args.allowed_origin,
                 mecmcp_transport::LimitsConfig::default(),
                 false,
+                args.allow_insecure_bind,
                 tls,
                 shutdown,
                 Duration::from_secs(10),

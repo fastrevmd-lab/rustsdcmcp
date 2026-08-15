@@ -64,6 +64,7 @@ impl TestServer {
             allowed_origins,
             LimitsConfig::default(),
             false,
+            false,
             shutdown.clone(),
         )
         .expect("build_http_router");
@@ -271,6 +272,7 @@ async fn router_rejects_body_over_limit_before_rmcp_dispatch() {
         Vec::new(),
         limits,
         false,
+        false,
         shutdown.clone(),
     )
     .expect("build_http_router");
@@ -357,4 +359,139 @@ async fn out_of_scope_tenant_is_refused() {
         StatusCode::FORBIDDEN,
         "a token scoped to 'permitted' must not reach a tool call naming 'forbidden'"
     );
+}
+
+/// Verify that `--allow-insecure-bind` is wired through to the transport config.
+///
+/// The flag was parsed but never converted through 0.3.0, so a plaintext
+/// off-loopback listener was refused even when the operator asked for it.
+/// This test confirms the flag reaches the transport by attempting a non-loopback
+/// bind with and without it, and asserting the expected refusal or success.
+#[tokio::test]
+async fn allow_insecure_bind_is_wired() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let token_path = dir.path().join("tokens.json");
+
+    let known_devices = ["test".to_owned()];
+    let known = KnownNames {
+        devices: Some(&known_devices),
+        tools: KNOWN_TOOLS,
+    };
+    let _secret = TokenStoreFile::<NoGrant>::add(
+        &token_path,
+        "test",
+        ScopeSet::Wildcard,
+        ScopeSet::Wildcard,
+        &known,
+    )
+    .expect("token add");
+    let store = Arc::new(TokenStoreFile::<NoGrant>::load(&token_path).expect("load token store"));
+
+    let config: SdcConfig = serde_json::from_value(serde_json::json!({
+        "version": 1,
+        "tenant": "test",
+        "expected_tenant_id": "test",
+        "credential_env": "SDC_TEST_CREDENTIAL",
+        "auth_scheme": "api_key",
+    }))
+    .expect("config");
+    let client = SdcClient::new(&config, "test-credential".to_owned()).expect("client");
+    let changes = Arc::new(
+        ChangeManager::load(
+            client.clone(),
+            "test",
+            config.endpoint.clone(),
+            None,
+            Duration::from_secs(60),
+            false,
+        )
+        .expect("changes"),
+    );
+    let handler = rustsdcmcp::SdcHandler::new(Arc::<str>::from("test"), client, changes);
+
+    // With the flag OFF, building the router with authenticated token store
+    // should succeed, but serving it on 0.0.0.0 without TLS should be refused.
+    let shutdown = CancellationToken::new();
+    let refused_plan = build_http_router(
+        handler.clone(),
+        Some(store.clone()),
+        Vec::new(),
+        Vec::new(),
+        LimitsConfig::default(),
+        false,
+        false,
+        shutdown.clone(),
+    )
+    .expect("build_http_router with flag off");
+
+    let port = TEST_PORT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let non_loopback_addr = format!("0.0.0.0:{port}").parse().expect("address");
+    let result = tokio::time::timeout(
+        Duration::from_millis(100),
+        serve_router(
+            refused_plan,
+            non_loopback_addr,
+            None,
+            Duration::from_millis(50),
+        ),
+    )
+    .await;
+
+    match result {
+        Ok(Ok(_)) => {
+            panic!("serving plaintext on 0.0.0.0 without --allow-insecure-bind must be refused")
+        }
+        Ok(Err(e)) => {
+            let error = format!("{e:?}");
+            assert!(
+                error.contains("InsecureBindNotAcknowledged"),
+                "expected InsecureBindNotAcknowledged refusal, got: {error}"
+            );
+        }
+        Err(_) => panic!("serve_router should fail immediately, not timeout"),
+    }
+
+    // With the flag ON, serving on 0.0.0.0 without TLS should succeed.
+    // Pass allowed host/origin to satisfy those checks (separate from insecure bind).
+    let allowed_plan = build_http_router(
+        handler,
+        Some(store),
+        vec!["0.0.0.0".to_owned()],
+        vec!["http://0.0.0.0".to_owned()],
+        LimitsConfig::default(),
+        false,
+        true,
+        shutdown.clone(),
+    )
+    .expect("build_http_router with flag on");
+
+    let port = TEST_PORT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let allowed_addr = format!("0.0.0.0:{port}").parse().expect("address");
+    let serving = tokio::spawn(serve_router(
+        allowed_plan,
+        allowed_addr,
+        None,
+        Duration::from_millis(50),
+    ));
+
+    // Give it a moment to start or fail
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // If it finished, check if it was an error
+    if serving.is_finished() {
+        match serving.await {
+            Ok(Ok(_)) => {
+                // Server shut down cleanly, which is fine
+            }
+            Ok(Err(e)) => {
+                panic!("serve_router with --allow-insecure-bind on 0.0.0.0 failed: {e:?}");
+            }
+            Err(e) => {
+                panic!("serve_router task panicked: {e:?}");
+            }
+        }
+    }
+
+    shutdown.cancel();
 }
