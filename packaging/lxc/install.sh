@@ -111,13 +111,13 @@ validate_sbom() {
                 | [.name, .version]
             ] | sort)
             == [
-                ["mecmcp-audit", "0.10.0"],
-                ["mecmcp-auth", "0.10.0"],
-                ["mecmcp-changeset", "0.10.0"],
-                ["mecmcp-runtime", "0.10.0"],
-                ["mecmcp-secret", "0.10.0"],
-            ["mecmcp-server", "0.10.0"],
-                ["mecmcp-transport", "0.10.0"]
+                ["mecmcp-audit", "0.11.0"],
+                ["mecmcp-auth", "0.11.0"],
+                ["mecmcp-changeset", "0.11.0"],
+                ["mecmcp-runtime", "0.11.0"],
+                ["mecmcp-secret", "0.11.0"],
+            ["mecmcp-server", "0.11.0"],
+                ["mecmcp-transport", "0.11.0"]
             ]
         )
         and (tostring | contains("v0.8.0") | not)
