@@ -74,11 +74,11 @@ source_has_single_exact_key() {
 assert_build_info_key_contract() {
     local fixture
     fixture=$(mktemp)
-    printf '%s\n' 'mecmcp_ref=v0.10.0' >"$fixture"
-    has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.10.0' "$fixture" \
+    printf '%s\n' 'mecmcp_ref=v0.11.0' >"$fixture"
+    has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.11.0' "$fixture" \
         || fail 'singular expected BUILD-INFO mecmcp key was rejected'
     printf '%s\n' 'mecmcp_ref=v0.7.3' >>"$fixture"
-    if has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.10.0' "$fixture"; then
+    if has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.11.0' "$fixture"; then
         fail 'conflicting BUILD-INFO mecmcp key was accepted'
     fi
     rm -f -- "$fixture"
@@ -320,16 +320,16 @@ fi
 # a source-text match would pass while the manifest said something else, and it
 # would forbid single-sourcing the ref into the generated package README.
 mapfile -t builder_mecmcp_refs < <(grep -oP 'tag = "\K[^"]+' Cargo.toml | sort -u)
-[[ ${#builder_mecmcp_refs[@]} -eq 1 && ${builder_mecmcp_refs[0]} == 'v0.10.0' ]] \
+[[ ${#builder_mecmcp_refs[@]} -eq 1 && ${builder_mecmcp_refs[0]} == 'v0.11.0' ]] \
     || fail "Cargo.toml must pin exactly one approved mecmcp tag, found: ${builder_mecmcp_refs[*]-none}"
 # shellcheck disable=SC2016  # literal source fragment, not an expansion
 grep -Fq 'mecmcp_ref=$mecmcp_ref' scripts/build-lab-package.sh \
     || fail 'builder must emit the derived mecmcp BUILD-INFO key'
 require_logical_line \
-    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.10.0' \"\$build_info\" || die 'BUILD-INFO mecmcp ref is invalid'" \
+    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.11.0' \"\$build_info\" || die 'BUILD-INFO mecmcp ref is invalid'" \
     "$installer"
 require_logical_line \
-    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.10.0' \"\$build_info\" || {" \
+    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.11.0' \"\$build_info\" || {" \
     packaging/tests/package-smoke.sh
 for build_info_consumer in "$installer" packaging/tests/package-smoke.sh; do
     # shellcheck disable=SC2016
@@ -341,7 +341,7 @@ for build_info_consumer in "$installer" packaging/tests/package-smoke.sh; do
         "$build_info_consumer"
 done
 require_logical_line \
-    "printf '%s\n' \"\$build_info\" | awk -F= -v expected='mecmcp_ref=v0.10.0' '\$1 == \"mecmcp_ref\" { count += 1; matches += (\$0 == expected) } END { exit !(count == 1 && matches == 1) }'" \
+    "printf '%s\n' \"\$build_info\" | awk -F= -v expected='mecmcp_ref=v0.11.0' '\$1 == \"mecmcp_ref\" { count += 1; matches += (\$0 == expected) } END { exit !(count == 1 && matches == 1) }'" \
     "$ci"
 sbom_validators=(
     scripts/build-lab-package.sh

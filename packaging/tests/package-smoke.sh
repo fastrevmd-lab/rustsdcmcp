@@ -118,7 +118,7 @@ done <"$members_file"
 
 build_info="$work_dir/BUILD-INFO"
 tar -xOf "$archive" "$package_root/BUILD-INFO" >"$build_info"
-has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.10.0' "$build_info" || {
+has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.11.0' "$build_info" || {
     printf '%s\n' 'archive BUILD-INFO has the wrong mecmcp ref' >&2
     exit 1
 }

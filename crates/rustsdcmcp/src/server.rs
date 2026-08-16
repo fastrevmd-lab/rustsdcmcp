@@ -2433,6 +2433,8 @@ mod tests {
         CallerCtx {
             token_name: "alice".to_owned(),
             client_name: None,
+            model_id: None,
+            session_id: None,
             devices: targets,
             tools,
             grant: None,
