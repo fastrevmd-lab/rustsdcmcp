@@ -2373,7 +2373,35 @@ impl SdcHandler {
     }
 }
 
+/// Wrap a filtered tool list in the result shape a 2026-07-28 client accepts.
+///
+/// `ListToolsResult::with_all_items` leaves `ttl_ms` and `cache_scope` unset and
+/// both are omitted on the wire; a client on that protocol validates the result
+/// and rejects it, which surfaces as "tools fetch failed" against a server that
+/// is healthy and answering in milliseconds. Servers that do not override
+/// `list_tools` get these from rmcp's generated handler — this one filters by
+/// scope, so it supplies them itself.
+///
+/// Gated on the negotiated version exactly as rmcp does: the fields belong to
+/// 2026-07-28 and later, and a strict legacy client rejects what it did not
+/// negotiate.
+///
+/// `private` where rmcp's unfiltered list says `public`, because this list is
+/// per token: a cache keyed only on the URL must not serve one caller's
+/// permitted surface to another.
+fn listed_tools(tools: Vec<rmcp::model::Tool>, cache_hints: bool) -> ListToolsResult {
+    let listed = ListToolsResult::with_all_items(tools);
+    if cache_hints {
+        listed
+            .with_ttl_ms(0)
+            .with_cache_scope(rmcp::model::CacheScope::Private)
+    } else {
+        listed
+    }
+}
+
 #[tool_handler(router = self.tool_router)]
+
 impl ServerHandler for SdcHandler {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
@@ -2390,11 +2418,26 @@ impl ServerHandler for SdcHandler {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, rmcp::ErrorData> {
-        Ok(ListToolsResult::with_all_items(filter_tools_for_scope(
-            self.tool_router.list_all(),
-            caller_from_extensions::<NoGrant>(&context.extensions),
-            WRITE_TOOLS,
-        )))
+        // `with_all_items` leaves `ttl_ms` and `cache_scope` unset, and both
+        // are omitted on the wire. A 2026-07-28 client validates the tools/list
+        // result and rejects one without them — reported as "tools fetch
+        // failed" against a server that is otherwise healthy and fast. Servers
+        // that do not override `list_tools` get these from rmcp's generated
+        // handler; this one filters by scope, so it supplies them itself.
+        //
+        // `private`: the list is per token, so a cache keyed only on the URL
+        // must not serve one caller's surface to another.
+        let cache_hints = context
+            .protocol_version()
+            .is_some_and(|version| version >= rmcp::model::ProtocolVersion::V_2026_07_28);
+        Ok(listed_tools(
+            filter_tools_for_scope(
+                self.tool_router.list_all(),
+                caller_from_extensions::<NoGrant>(&context.extensions),
+                WRITE_TOOLS,
+            ),
+            cache_hints,
+        ))
     }
 }
 
@@ -2676,5 +2719,36 @@ mod tests {
             .is_err(),
             "NAT write with wrong tenant must fail"
         );
+    }
+}
+
+#[cfg(test)]
+mod tools_list_cache_tests {
+    use super::listed_tools;
+
+    /// mecmcp: a 2026-07-28 client rejects a tools/list without these, and the
+    /// failure reads as an unreachable server rather than a malformed reply.
+    #[test]
+    fn a_modern_client_gets_a_private_cache_descriptor() {
+        let listed = listed_tools(Vec::new(), true);
+        assert_eq!(
+            listed.ttl_ms,
+            Some(0),
+            "a 2026-07-28 client rejects a tools/list without ttlMs"
+        );
+        assert_eq!(
+            listed.cache_scope,
+            Some(rmcp::model::CacheScope::Private),
+            "the list is filtered per token, so it must not be shared"
+        );
+    }
+
+    /// The fields are not part of the older result shape, and a strict legacy
+    /// client rejects what it did not negotiate.
+    #[test]
+    fn a_legacy_client_gets_no_cache_descriptor() {
+        let listed = listed_tools(Vec::new(), false);
+        assert_eq!(listed.ttl_ms, None);
+        assert_eq!(listed.cache_scope, None);
     }
 }
