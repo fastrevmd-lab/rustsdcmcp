@@ -273,6 +273,7 @@ pub struct ChangeManager {
     object_signature: String,
     nat_signature: String,
     license_signature: String,
+    device_sync_signature: String,
 }
 
 impl ChangeManager {
@@ -305,6 +306,8 @@ impl ChangeManager {
             mutation_policy_signature(format!("sdc-nat-write-v1:{tenant}:{endpoint}"));
         let license_signature =
             mutation_policy_signature(format!("sdc-license-write-v1:{tenant}:{endpoint}"));
+        let device_sync_signature =
+            mutation_policy_signature(format!("sdc-device-sync-v1:{tenant}:{endpoint}"));
         let coordinator = ChangesetCoordinator::load_with_recovery(
             state_path,
             OperationLimits::default(),
@@ -322,6 +325,7 @@ impl ChangeManager {
             object_signature,
             nat_signature,
             license_signature,
+            device_sync_signature,
         })
     }
 
@@ -963,6 +967,200 @@ impl ChangeManager {
             validation,
             outcome,
         })
+    }
+
+    /// Read each device's current state and create a digest-bound sync plan.
+    ///
+    /// `BulkSyncDevices` **imports** — it reads devices and updates SDC's model,
+    /// never the reverse (`docs/sdc-api/README.md` §5). It is still gated,
+    /// because it changes what SDC believes is current and every later preview
+    /// and deploy is computed against that belief.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a device cannot be read or the plan cannot be built.
+    pub async fn prepare_device_sync(
+        &self,
+        owner: String,
+        device_uuids: Vec<String>,
+        cancellation: &CancellationToken,
+    ) -> Result<crate::DeviceSyncPrepareResult, SdcError> {
+        // Read each device so the digest binds to observed reality. The field
+        // that matters is `device_config_state` — whether SDC thinks the device
+        // has drifted — which is the whole reason to sync it.
+        let mut before = serde_json::Map::new();
+        for uuid in &device_uuids {
+            let device = self.client.get_device(uuid, cancellation).await?;
+            before.insert(uuid.clone(), device);
+        }
+        let prepared = crate::SdcPreparedDeviceSync::new(device_uuids, Value::Object(before))?;
+        let change_set = self
+            .coordinator
+            .create_change_set(
+                self.tenant.clone(),
+                vec![prepared.clone()],
+                owner.clone(),
+                prepared.plan_digest().to_owned(),
+                self.device_sync_signature.clone(),
+            )
+            .await
+            .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        let change_set = self.waive_if_lab_mode(change_set, &owner).await?;
+        Ok(crate::DeviceSyncPrepareResult {
+            change_set,
+            prepared_change: prepared,
+        })
+    }
+
+    /// Run one exact approved device sync.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when approval does not match or the sync fails.
+    pub async fn apply_device_sync(
+        &self,
+        change_set_id: String,
+        owner: String,
+        expected_digest: String,
+        expected_plan_digest: String,
+        attribution: &Attribution,
+        cancellation: &CancellationToken,
+    ) -> Result<crate::DeviceSyncApplyResult, SdcError> {
+        let transaction = crate::SdcDeviceSyncTransaction::new(
+            self.client.clone(),
+            expected_plan_digest.clone(),
+            cancellation.clone(),
+        );
+        let applied = self
+            .coordinator
+            .apply_change_set(
+                change_set_id,
+                self.tenant.clone(),
+                self.endpoint.clone(),
+                owner.clone(),
+                expected_digest,
+                expected_plan_digest.clone(),
+                &transaction,
+                "device_sync",
+                None,
+                None,
+                attribution,
+                cancellation,
+            )
+            .await
+            .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        let operation_id = applied.operation_id;
+        let staged = applied.staged;
+        let plan = self
+            .coordinator
+            .diff_operation(
+                &operation_id,
+                &self.tenant,
+                &owner,
+                &expected_plan_digest,
+                &transaction,
+                &staged,
+                cancellation,
+            )
+            .await
+            .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        let validation = match self
+            .coordinator
+            .validate_operation(
+                &operation_id,
+                &self.tenant,
+                &owner,
+                &expected_plan_digest,
+                &transaction,
+                &staged,
+                cancellation,
+            )
+            .await
+        {
+            Ok(report) => report,
+            Err(error) => {
+                let detail = self
+                    .release_unwritten_device_sync(
+                        &operation_id,
+                        &owner,
+                        &expected_plan_digest,
+                        &transaction,
+                        cancellation,
+                    )
+                    .await;
+                return Err(SdcError::ChangeControl(format!("{error}; {detail}")));
+            }
+        };
+        let outcome = match self
+            .coordinator
+            .commit_operation(
+                &operation_id,
+                &self.tenant,
+                &owner,
+                &expected_plan_digest,
+                &self.device_sync_signature,
+                &transaction,
+                &staged,
+                attribution,
+                &CommitOptions::default(),
+                cancellation,
+            )
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                if !transaction.refused_before_write() {
+                    return Err(SdcError::ChangeControl(error.to_string()));
+                }
+                let detail = self
+                    .release_unwritten_device_sync(
+                        &operation_id,
+                        &owner,
+                        &expected_plan_digest,
+                        &transaction,
+                        cancellation,
+                    )
+                    .await;
+                return Err(SdcError::ChangeControl(format!("{error}; {detail}")));
+            }
+        };
+        Ok(crate::DeviceSyncApplyResult {
+            operation_id,
+            plan,
+            validation,
+            outcome,
+        })
+    }
+
+    /// Discard a planned sync that refused before anything reached SDC.
+    ///
+    /// Same contract as the licence equivalent: the transaction's
+    /// `refused_before_write` flag is the only way the caller can tell "nothing
+    /// was sent" from "the request may have landed", because the coordinator
+    /// flattens the error into a string.
+    async fn release_unwritten_device_sync(
+        &self,
+        operation_id: &str,
+        owner: &str,
+        expected_plan_digest: &str,
+        transaction: &crate::SdcDeviceSyncTransaction,
+        cancellation: &CancellationToken,
+    ) -> String {
+        match self
+            .coordinator
+            .discard_operation(
+                operation_id,
+                &self.tenant,
+                owner,
+                expected_plan_digest,
+                transaction,
+                cancellation,
+            )
+            .await
+        {
+            Ok(_) => "the planned device sync was discarded".to_owned(),
+            Err(error) => format!("the planned device sync could not be discarded: {error}"),
+        }
     }
 
     /// Discard a license write that failed before anything was sent to SDC.

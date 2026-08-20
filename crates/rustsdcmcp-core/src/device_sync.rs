@@ -24,9 +24,19 @@
 //! That is a management-plane state change worth two people, and it is the
 //! argument this module relies on rather than the device-safety one.
 
-use crate::{SdcError, prepared::canonical_digest};
+use crate::{SdcClient, SdcError, prepared::canonical_digest};
+use async_trait::async_trait;
+use mecmcp_audit::Attribution;
+use mecmcp_changeset::{
+    CommitOptions, CommitOutcome, DeviceTransaction, RollbackOutcome, RollbackRef, UnlockOutcome,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use tokio_util::sync::CancellationToken;
 
 /// Cap on the encoded prepared change, matching the other write paths.
 const MAX_ENVELOPE_BYTES: usize = 2 * 1024 * 1024;
@@ -183,6 +193,206 @@ fn plan_artifact(device_uuids: &[String], before: &Value) -> Value {
         "device_uuids": device_uuids,
         "before": before,
     })
+}
+
+/// Outcome of revalidating a device sync immediately before it runs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceSyncValidationReport {
+    /// Whether the envelope is intact and no device drifted.
+    pub valid: bool,
+    /// How many devices the sync covers.
+    pub device_count: usize,
+    /// Whether every device still matched the state observed at plan time.
+    pub targets_unchanged: bool,
+}
+
+/// SDC implementation of the shared transaction contract for device sync.
+#[derive(Clone)]
+pub struct SdcDeviceSyncTransaction {
+    client: SdcClient,
+    expected_plan_digest: String,
+    cancellation: CancellationToken,
+    refused_before_write: Arc<AtomicBool>,
+}
+
+impl SdcDeviceSyncTransaction {
+    /// Bind a transaction to one exact plan digest.
+    #[must_use]
+    pub fn new(
+        client: SdcClient,
+        expected_plan_digest: impl Into<String>,
+        cancellation: CancellationToken,
+    ) -> Self {
+        Self {
+            client,
+            expected_plan_digest: expected_plan_digest.into(),
+            cancellation,
+            refused_before_write: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Whether commit refused before issuing any request to SDC.
+    #[must_use]
+    pub fn refused_before_write(&self) -> bool {
+        self.refused_before_write.load(Ordering::SeqCst)
+    }
+
+    /// Re-read every named device and report whether the plan still holds.
+    ///
+    /// The state that matters is `device_config_state`: it is what says whether
+    /// SDC believes the device has drifted, and therefore what the sync is for.
+    /// If a device that was `OUT_OF_BAND_CHANGED` at plan time now reads
+    /// `IN_SYNC`, someone has already reconciled it and this plan describes work
+    /// that no longer exists — approving one thing and doing another.
+    async fn targets_unchanged(&self, staged: &SdcPreparedDeviceSync) -> Result<bool, SdcError> {
+        for uuid in staged.device_uuids() {
+            let current = self.client.get_device(uuid, &self.cancellation).await?;
+            let now = current.get("device_config_state");
+            let then = staged
+                .before()
+                .get(uuid)
+                .and_then(|entry| entry.get("device_config_state"));
+            if now != then {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+}
+
+#[async_trait]
+impl DeviceTransaction for SdcDeviceSyncTransaction {
+    type Action = SdcPreparedDeviceSync;
+    type Staged = SdcPreparedDeviceSync;
+    type Diff = Value;
+    type Validation = DeviceSyncValidationReport;
+    type Error = SdcError;
+
+    async fn fingerprint(&self) -> Result<String, Self::Error> {
+        Ok(self.expected_plan_digest.clone())
+    }
+
+    async fn stage(&self, actions: &[Self::Action]) -> Result<Self::Staged, Self::Error> {
+        let [prepared] = actions else {
+            return Err(SdcError::InvalidInput(
+                "an SDC device sync requires exactly one prepared change",
+            ));
+        };
+        prepared.validate()?;
+        if prepared.plan_digest() != self.expected_plan_digest {
+            return Err(SdcError::PreparedChange(
+                "prepared action does not match the approved plan digest".to_owned(),
+            ));
+        }
+        Ok(prepared.clone())
+    }
+
+    async fn diff(&self, staged: &Self::Staged) -> Result<Self::Diff, Self::Error> {
+        Ok(staged.plan())
+    }
+
+    async fn validate(&self, staged: &Self::Staged) -> Result<Self::Validation, Self::Error> {
+        let targets_unchanged = self.targets_unchanged(staged).await?;
+        if !targets_unchanged {
+            return Err(SdcError::TargetDrifted);
+        }
+        Ok(DeviceSyncValidationReport {
+            valid: true,
+            device_count: staged.device_uuids().len(),
+            targets_unchanged,
+        })
+    }
+
+    async fn commit(
+        &self,
+        staged: &Self::Staged,
+        _attribution: &Attribution,
+        options: &CommitOptions,
+    ) -> Result<CommitOutcome, Self::Error> {
+        // Every exit from here until the request goes out is a pre-write
+        // refusal: nothing was sent, so the caller may discard the operation
+        // rather than strand a non-terminal record on the tenant.
+        self.refused_before_write.store(true, Ordering::SeqCst);
+        if options.confirm_timeout.is_some() {
+            return Err(SdcError::InvalidInput(
+                "SDC does not support confirmed device syncs",
+            ));
+        }
+        // Re-check drift immediately before running. `validate` already did, but
+        // the coordinator releases its guard in between, and that guard cannot
+        // exclude someone working directly against SDC. This narrows the window
+        // rather than closing it — SDC offers no conditional write.
+        if !self.targets_unchanged(staged).await? {
+            return Err(SdcError::TargetDrifted);
+        }
+        self.refused_before_write.store(false, Ordering::SeqCst);
+        let (sync_id, status) = self
+            .client
+            .sync_devices(staged.device_uuids(), &self.cancellation)
+            .await?;
+        Ok(CommitOutcome::Reconciled {
+            succeeded: status.succeeded(),
+            job_id: Some(sync_id),
+            details: Some(format!(
+                "SDC imported {} device(s) with status {status:?}",
+                staged.device_uuids().len()
+            )),
+        })
+    }
+
+    /// Release a planned-but-unrun sync.
+    ///
+    /// Nothing is staged remotely — SDC has no candidate store — and the
+    /// coordinator only reaches `rollback` from pre-commit states, so reporting
+    /// success is accurate and lets a refused sync reach `Discarded` instead of
+    /// stranding a non-terminal record.
+    async fn rollback(&self, to: RollbackRef) -> Result<RollbackOutcome, Self::Error> {
+        match to {
+            RollbackRef::CandidateRevert => Ok(RollbackOutcome {
+                succeeded: true,
+                details: Some(
+                    "no remote candidate exists; SDC device syncs are not staged".to_owned(),
+                ),
+            }),
+            RollbackRef::Archive(_) | RollbackRef::Custom(_) => Err(SdcError::RollbackUnsupported),
+        }
+    }
+
+    async fn unlock(&self) -> Result<UnlockOutcome, Self::Error> {
+        Ok(UnlockOutcome::Released)
+    }
+
+    async fn confirm_commit(
+        &self,
+        _operation_id: &str,
+        _attribution: &Attribution,
+    ) -> Result<CommitOutcome, Self::Error> {
+        Err(SdcError::InvalidInput(
+            "SDC does not support confirmed device syncs",
+        ))
+    }
+}
+
+/// Result of planning a device sync.
+#[derive(Debug, Clone, Serialize)]
+pub struct DeviceSyncPrepareResult {
+    /// Shared two-person change-set record.
+    pub change_set: mecmcp_changeset::ChangeSetOutput,
+    /// Exact sync bound by the plan digest.
+    pub prepared_change: SdcPreparedDeviceSync,
+}
+
+/// Result of running one approved device sync.
+#[derive(Debug, Clone, Serialize)]
+pub struct DeviceSyncApplyResult {
+    /// Shared operation identifier.
+    pub operation_id: String,
+    /// The plan, including the direction the sync runs in.
+    pub plan: Value,
+    /// Drift and envelope validation result.
+    pub validation: DeviceSyncValidationReport,
+    /// Known, detached, or indeterminate disposition.
+    pub outcome: CommitOutcome,
 }
 
 #[cfg(test)]
