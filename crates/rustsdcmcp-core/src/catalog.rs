@@ -7,12 +7,28 @@
 //! `TryFrom<ResourceKind> for WritableResource`, and no runtime `writable()`
 //! predicate a call site could forget to consult.
 //!
-//! Five families with the same five-operation shape are deliberately absent.
-//! `IPSRule` and `IPSExemptRule` nest under
-//! `/api/v1/ips_profiles/{profile_uuid}/…`, which a `&'static [&'static str]`
-//! cannot express; `NAT Pools` is keyed by `pool_id` and has bespoke tools;
-//! `Device Groups` has bespoke tools; and `DeviceGlobalSettings` supports
-//! neither `from` nor `fields`, so it cannot be bounded like the rest.
+//! Families deliberately absent, and why — so an absence is not rediscovered as
+//! an oversight. Two reasons recur, and everything below is one of them.
+//!
+//! **Not expressible as a flat collection path.** A `&'static [&'static str]`
+//! addresses `/api/v1/<collection>` and nothing deeper.
+//!
+//! - `IPSRule`, `IPSExemptRule` — `/api/v1/ips_profiles/{profile_uuid}/…`
+//! - `EnhancedContentFilteringProfileSet` —
+//!   `/api/v1/enhanced_content_filtering_profiles/{profile_uuid}/rule_sets`,
+//!   and its rules are two levels deeper again
+//!
+//! **Not boundable.** The collection GET accepts neither `from` nor `fields`,
+//! so a response cannot be limited, and bounding is not optional here.
+//!
+//! - `DeviceGlobalSettings` — `/api/v1/firewall_device_global_settings`
+//! - `GlobalProfile` — `/api/v1/firewall_global_profiles`, a singleton `GET`
+//! - `GlobalSettings` — `/api/v1/firewall_global_settings`, a singleton `GET`
+//! - `ContentSecuritySettings` — `/api/v1/content_security_settings`, a
+//!   singleton `GET` rather than a list
+//!
+//! **Bespoke tools instead.** `NAT Pools` is keyed by `pool_id`; `Device
+//! Groups` needs membership, which the generic shape cannot return.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -49,10 +65,16 @@ pub enum ResourceKind {
     IcapServers,
     /// Identity objects.
     IdentityObjects,
+    /// IPS contexts.
+    IpsContexts,
     /// IPS profiles.
     IpsProfiles,
+    /// IPS services.
+    IpsServices,
     /// IPS signatures.
     IpsSignatures,
+    /// IPS vulnerabilities.
+    IpsVulnerabilities,
     /// Proxy servers.
     ProxyServers,
     /// Redirect profiles.
@@ -103,8 +125,11 @@ impl ResourceKind {
         Self::IcapProfiles,
         Self::IcapServers,
         Self::IdentityObjects,
+        Self::IpsContexts,
         Self::IpsProfiles,
+        Self::IpsServices,
         Self::IpsSignatures,
+        Self::IpsVulnerabilities,
         Self::ProxyServers,
         Self::RedirectProfiles,
         Self::RuleOptions,
@@ -140,8 +165,11 @@ impl ResourceKind {
             Self::IcapProfiles => &["api", "v1", "icap_profiles"],
             Self::IcapServers => &["api", "v1", "icap_servers"],
             Self::IdentityObjects => &["api", "v1", "identity_objects"],
+            Self::IpsContexts => &["api", "v1", "ips_contexts"],
             Self::IpsProfiles => &["api", "v1", "ips_profiles"],
+            Self::IpsServices => &["api", "v1", "ips_services"],
             Self::IpsSignatures => &["api", "v1", "ips_signatures"],
+            Self::IpsVulnerabilities => &["api", "v1", "ips_vulnerabilities"],
             Self::ProxyServers => &["api", "v1", "proxy_servers"],
             Self::RedirectProfiles => &["api", "v1", "redirect_profiles"],
             Self::RuleOptions => &["api", "v1", "rule_options"],
@@ -337,8 +365,8 @@ mod tests {
 
     /// The read catalog covers the uniform five-operation families.
     #[test]
-    fn the_read_catalog_covers_twenty_nine_families() {
-        assert_eq!(ResourceKind::ALL.len(), 29);
+    fn the_read_catalog_covers_thirty_two_families() {
+        assert_eq!(ResourceKind::ALL.len(), 32);
     }
 
     /// Templates are readable and **not** writable, and that is structural
