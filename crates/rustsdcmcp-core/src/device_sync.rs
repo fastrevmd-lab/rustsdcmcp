@@ -937,8 +937,6 @@ mod tests {
     /// to compose with `?` into `anyhow::Error` and `Box<dyn Error>`.
     #[test]
     fn the_failure_type_is_a_std_error_with_a_source() {
-        use std::error::Error as _;
-
         let failure = DeviceSyncFailure::AfterSubmit {
             sync_id: Some("abc".to_owned()),
             source: SdcError::JobDeadline,
