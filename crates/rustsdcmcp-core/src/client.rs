@@ -1046,6 +1046,77 @@ impl SdcClient {
         .await
     }
 
+    /// Ask SDC to re-read one or more devices' running configuration.
+    ///
+    /// **Direction: import.** `BulkSyncDevices` reads the device and updates
+    /// SDC's model to match; it does not push SDC's view down. Confirmed
+    /// against `vsrx-ci` on the live tenant (snapshot-gated, single device):
+    /// the device's commit log was unchanged across the sync. The OpenAPI spec
+    /// states no direction, which is why the finding is recorded in
+    /// `docs/sdc-api/README.md` §5 and repeated here — this is the one property
+    /// of this call that decides whether it is safe.
+    ///
+    /// Asynchronous: returns a `sync_id`, which this polls to completion.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an empty or malformed UUID list, a rejected
+    /// request, or a job that does not finish within the poll deadline.
+    pub async fn sync_devices(
+        &self,
+        device_uuids: &[String],
+        cancellation: &CancellationToken,
+    ) -> Result<(String, DeploymentStatus), SdcError> {
+        if device_uuids.is_empty() {
+            return Err(SdcError::InvalidInput(
+                "device sync requires at least one device UUID",
+            ));
+        }
+        for uuid in device_uuids {
+            validate_atom("device_uuid", uuid)?;
+        }
+        let body = serde_json::json!({ "uuids": device_uuids });
+        let response_value = self
+            .send_write(
+                Method::POST,
+                &["api", "v1", "devices", "sync"],
+                Some(&body),
+                cancellation,
+            )
+            .await?;
+        let sync_id = response_value
+            .get("sync_id")
+            .and_then(Value::as_str)
+            .ok_or(SdcError::InvalidInput(
+                "device sync response missing sync_id",
+            ))?
+            .to_owned();
+        validate_atom("sync_id", &sync_id)?;
+        let status = self
+            .poll_job(JobKind::SyncDevices, &sync_id, cancellation)
+            .await?;
+        Ok((sync_id, status.status))
+    }
+
+    /// Read a device-sync job status without polling.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed sync id or an unreadable response.
+    pub async fn sync_devices_status(
+        &self,
+        sync_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<JobStatus, SdcError> {
+        validate_atom("sync_id", sync_id)?;
+        self.get(
+            &["api", "v1", "devices", "sync", sync_id],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
     /// Read an install_ca_certificate job status without polling.
     pub async fn install_ca_certificate_status(
         &self,
@@ -1427,6 +1498,7 @@ impl SdcClient {
             let probe = async {
                 match kind {
                     JobKind::Preview => self.preview_status(job_id, cancellation).await,
+                    JobKind::SyncDevices => self.sync_devices_status(job_id, cancellation).await,
                     JobKind::Deploy => self.deploy_status(job_id, cancellation).await,
                     JobKind::InstallLicense => {
                         self.install_license_status(job_id, cancellation).await
@@ -1690,6 +1762,7 @@ impl SdcClient {
 #[derive(Debug, Clone, Copy)]
 enum JobKind {
     Preview,
+    SyncDevices,
     Deploy,
     InstallLicense,
     InstallCaCertificate,
