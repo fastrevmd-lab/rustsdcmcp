@@ -73,6 +73,13 @@ pub enum ResourceKind {
     UrlCategoryLists,
     /// URL patterns.
     UrlPatterns,
+    /// Configuration templates.
+    ///
+    /// Read-only on purpose. A template applies to every device mapped to it,
+    /// so a write is estate-scale rather than device-scale — the blast radius
+    /// rustsdcmcp#33 raises. It is absent from [`WritableResource`], and the
+    /// one-way conversion means that cannot be undone by omission.
+    Templates,
     /// Variable zones, referenced by `ZoneReference.managed_variable`.
     VariableZones,
     /// Web-filtering profiles.
@@ -108,6 +115,7 @@ impl ResourceKind {
         Self::SwpProfiles,
         Self::UrlCategoryLists,
         Self::UrlPatterns,
+        Self::Templates,
         Self::VariableZones,
         Self::WebFilteringProfiles,
     ];
@@ -144,6 +152,7 @@ impl ResourceKind {
             Self::SwpProfiles => &["api", "v1", "swp_profiles"],
             Self::UrlCategoryLists => &["api", "v1", "url_category_lists"],
             Self::UrlPatterns => &["api", "v1", "url_patterns"],
+            Self::Templates => &["api", "v1", "templates"],
             Self::VariableZones => &["api", "v1", "variable_zones"],
             Self::WebFilteringProfiles => &["api", "v1", "web_filtering_profiles"],
         }
@@ -326,9 +335,32 @@ mod tests {
         assert_eq!(schema_names(&write), listed);
     }
 
-    /// The read catalog covers the 28 uniform five-operation families.
+    /// The read catalog covers the uniform five-operation families.
     #[test]
-    fn the_read_catalog_covers_twenty_eight_families() {
-        assert_eq!(ResourceKind::ALL.len(), 28);
+    fn the_read_catalog_covers_twenty_nine_families() {
+        assert_eq!(ResourceKind::ALL.len(), 29);
+    }
+
+    /// Templates are readable and **not** writable, and that is structural
+    /// rather than a policy anyone can forget.
+    ///
+    /// A template applies across every device mapped to it, so a write is
+    /// estate-scale — the blast radius rustsdcmcp#33 flags. Because
+    /// `WritableResource` converts into `ResourceKind` one way only, a family
+    /// present in the read catalog cannot be written unless someone adds it to
+    /// the write catalog on purpose.
+    #[test]
+    fn templates_are_readable_but_not_writable() {
+        assert!(
+            ResourceKind::ALL.contains(&ResourceKind::Templates),
+            "templates must be readable"
+        );
+        assert!(
+            !WritableResource::ALL
+                .iter()
+                .any(|writable| ResourceKind::from_writable(*writable) == ResourceKind::Templates),
+            "a template write is estate-scale and must not be reachable through \
+             the generic write path"
+        );
     }
 }

@@ -413,6 +413,17 @@ the previous ones, which is how they replace rather than accumulate — the
 built-ins emit `delete` lines for `pre_config` entries before `set` lines for
 the new ones.
 
+**Exposed since #33** as the `templates` family of the generic read catalog:
+`list_sdc_resources` / `get_sdc_resource` with `resource: "templates"`. It
+qualifies because `GET /api/v1/templates` supports both `from` and `fields`, so
+it can be bounded like every other family — that requirement is what kept
+`DeviceGlobalSettings` out.
+
+Read-only, and structurally so: `Templates` is absent from `WritableResource`,
+and the conversion between the two catalogs runs one way only. A template
+applies to every device mapped to it, so a write is estate-scale rather than
+device-scale.
+
 `variablesdef` is a **JSON-encoded string nested inside the JSON response**, not
 a nested object. It must be parsed twice. Each entry carries `name`,
 `description`, `type` (`ipv4`, `string`, …), `required`, `mode`, and an optional
