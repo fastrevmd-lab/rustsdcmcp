@@ -48,6 +48,37 @@ added here:
 - HTTP bearer tokens carry explicit tool **and tenant** scopes. Write tools
   reject unauthenticated stdio/loopback callers.
 
+## What this server is not for
+
+Decided 2026-08-20 (#34). SDC's API spans the whole product; this server covers
+the part of it that manages SRX devices and their policy. The rest is recorded
+here so an absence reads as a decision rather than as work nobody got to.
+
+**Out of scope — do not implement.**
+
+- **IAM** (user and role administration, 9 operations beyond the `GetTokenScope`
+  used for startup tenant validation)
+- **Subscriptions** (tenant entitlement, 3 operations)
+
+These are tenant administration, not network management. An MCP client that can
+create users, alter roles or change entitlements holds a surface with no
+networking value and a large blast radius — the same reasoning that puts Mist's
+portal identity flows in `ExecuteClass::Excluded` over in rustmistmcp. If a
+future need appears, it needs its own decision recorded here, not a quiet
+addition.
+
+**Deferred with SASE**, if this repo ever grows a SASE remit: PAC Manager (2),
+Service Location Management (1).
+
+**In scope, simply unbuilt.** Fair game whenever there is a reason:
+
+- **Device Resources** (7) — interfaces and zones as SDC sees them. The most
+  useful of these, because it is how SDC's view could be reconciled against
+  `rustjunosmcp`'s.
+- **Device Image Definitions** (8) and **RMA** (6) — pair with lifecycle
+  workflows this server does not have yet.
+- **MNHA Clusters** (2) — untested territory; the lab device is standalone.
+
 ## The API surface is pinned — read it, don't re-derive it
 
 **`docs/sdc-api/README.md` is the authority.** It is written entirely from
