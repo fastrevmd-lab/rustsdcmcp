@@ -146,7 +146,7 @@ impl SdcPreparedLicenseWrite {
     /// Returns an error if the captured state cannot be projected.
     pub fn caller_view(&self) -> Result<Value, SdcError> {
         let mut value = serde_json::to_value(self).map_err(|_| SdcError::Serialization)?;
-        let projected = project_before(self.action, &self.before)?;
+        let projected = projected_or_withheld(self.action, &self.before);
         if let Some(object) = value.as_object_mut() {
             object.insert("before".to_owned(), projected);
         }
@@ -205,6 +205,27 @@ impl SdcPreparedLicenseWrite {
         }
         Ok(())
     }
+}
+
+/// [`project_before`], with failure expressed as withheld state rather than as a
+/// failed call.
+///
+/// The projection runs on the way out, after the change set has been persisted
+/// or the write committed. Propagating an error there would fail the tool
+/// *after* the side effect: the caller would never learn the change-set id of a
+/// record that now blocks their later plans, or would read a committed write as
+/// failed. Neither is worth a projection error, and neither is safer than
+/// returning the result with its before-state withheld.
+///
+/// Withholding is also the fail-closed direction: a state that cannot be
+/// projected is exactly the state that must not be passed through raw.
+fn projected_or_withheld(action: LicenseWriteOperation, before: &Value) -> Value {
+    project_before(action, before).unwrap_or_else(|error| {
+        json!({
+            "withheld": "before-state could not be projected onto the read-path allowlist",
+            "reason": error.to_string(),
+        })
+    })
 }
 
 /// Project a captured before-state onto the same allowlists the read tools use.
@@ -600,18 +621,24 @@ impl LicenseApplyResult {
     ///
     /// Returns an error if the plan is malformed or cannot be projected.
     pub fn caller_view(&self) -> Result<Value, SdcError> {
-        let action: LicenseWriteOperation = self
+        let action: Option<LicenseWriteOperation> = self
             .plan
             .get("action")
             .cloned()
-            .and_then(|value| serde_json::from_value(value).ok())
-            .ok_or_else(|| {
-                SdcError::PreparedChange("plan does not name a license write action".to_owned())
-            })?;
+            .and_then(|value| serde_json::from_value(value).ok());
 
         let mut value = serde_json::to_value(self).map_err(|_| SdcError::Serialization)?;
         let before = self.plan.get("before").cloned().unwrap_or(Value::Null);
-        let projected = project_before(action, &before)?;
+        // The write has already committed by the time this runs. A plan that
+        // does not name its action is unprojectable, so its before-state is
+        // withheld — the outcome of the write is still reported.
+        let projected = match action {
+            Some(action) => projected_or_withheld(action, &before),
+            None => json!({
+                "withheld": "before-state could not be projected onto the read-path allowlist",
+                "reason": "plan does not name a license write action",
+            }),
+        };
         if let Some(plan) = value.get_mut("plan").and_then(Value::as_object_mut) {
             plan.insert("before".to_owned(), projected);
         }
@@ -679,6 +706,38 @@ mod tests {
         assert!(
             rendered.contains("ca-1") && rendered.contains("local-1"),
             "{rendered}"
+        );
+    }
+
+    /// The projection runs after the change set is persisted and after the
+    /// write commits. A shape it cannot project must not turn a completed
+    /// operation into a failed call — the caller would lose the change-set id
+    /// of a record that now blocks their later plans, or read a committed write
+    /// as failed. The state is withheld instead, which is also the fail-closed
+    /// direction.
+    #[test]
+    fn an_unprojectable_before_state_is_withheld_not_fatal() {
+        // `items` as an object is valid JSON and not a collection response.
+        let prepared = license_fixture(json!({"items": {"lic-1": "unexpected"}, "count": 1}));
+
+        let view = prepared
+            .caller_view()
+            .expect("an unprojectable before-state must not fail the call");
+
+        assert_eq!(
+            view["before"]["withheld"],
+            "before-state could not be projected onto the read-path allowlist",
+            "{view}"
+        );
+        assert!(
+            !serde_json::to_string(&view)
+                .expect("serialize")
+                .contains("unexpected"),
+            "withholding must not leak the state it could not project: {view}"
+        );
+        assert!(
+            !view["plan_digest"].as_str().unwrap_or_default().is_empty(),
+            "the rest of the result must still reach the caller: {view}"
         );
     }
 
