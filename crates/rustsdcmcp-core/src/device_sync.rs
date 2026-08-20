@@ -1,28 +1,39 @@
-//! Device configuration sync: re-read a device into SDC's model.
+//! Device **inventory** sync: re-read a device's inventory into SDC's model.
 //!
-//! # Direction
+//! # What this is, and what it is not
 //!
-//! `BulkSyncDevices` **imports**. It reads the device's running configuration
-//! and updates SDC's model to match; it does not push SDC's view down onto the
-//! device. The OpenAPI spec states no direction at all — description, request
-//! body (`{"uuids": […]}`) and response (`{"sync_id": …}`) are all silent — so
-//! this was settled by experiment against `vsrx-ci` on the live tenant,
-//! snapshot-gated and scoped to one device: the device's commit log was
-//! unchanged across the sync. Recorded in `docs/sdc-api/README.md` §5.
+//! `BulkSyncDevices` **imports**, and it reconciles **inventory only**. Verified
+//! against `vsrx-ci` on the live tenant (`docs/sdc-api/README.md` §5): the
+//! device's commit log was unchanged across the sync, and the state it moved was
+//! the inventory pair alone —
 //!
-//! That is the property this whole module depends on. If a future SDC release
-//! changes it, everything here becomes a device write and the reasoning below
-//! about blast radius stops holding.
+//! | field | before | after |
+//! |---|---|---|
+//! | `device_sync_status` | `OUT_OF_SYNC` | `IN_SYNC` |
+//! | `inventory_sync_info.overall_sync_status` | `OUT_OF_SYNC` | `IN_SYNC` |
+//! | `device_config_state` | `OUT_OF_BAND_CHANGED` | **unchanged** |
 //!
-//! # Why it is still gated
+//! So this is **not** the remedy for a device that drifted through out-of-band
+//! CLI edits, which was the motivating problem in rustsdcmcp#21. Whatever clears
+//! `OUT_OF_BAND_CHANGED` is a different operation and is still unidentified.
+//! Every name and description here says "inventory" for that reason: calling it
+//! a configuration sync would tell an operator reconciliation happened when it
+//! did not.
 //!
-//! An import changes no device, so the usual argument — "a mutation can break a
-//! network" — does not apply. It is gated anyway, for a different reason: it
-//! changes what SDC believes is current, and every later preview and deploy is
-//! computed against that belief. A sync that silently absorbs an out-of-band
-//! change decides what a subsequent deploy will *not* flag as a difference.
-//! That is a management-plane state change worth two people, and it is the
-//! argument this module relies on rather than the device-safety one.
+//! # Why it is gated
+//!
+//! It writes no device, so "a mutation can break a network" does not apply. It
+//! is gated because it changes what SDC believes about a device, and later
+//! previews and deploys are computed against SDC's beliefs.
+//!
+//! # The job shape differs from every other SDC job
+//!
+//! `GetSyncStatus` answers `SUCCESS`/`FAILURE`, not the deploy path's
+//! `PENDING`/`IN_PROGRESS`/`COMPLETED`/`PARTIAL_SUCCESS`/`FAILED`, so
+//! [`DeviceSyncStatus`] exists rather than reusing `DeploymentStatus`. Polling
+//! through the deploy vocabulary would never observe a terminal state: every
+//! apply would burn its deadline and report a timeout on a sync that had already
+//! succeeded.
 
 use crate::{SdcClient, SdcError, prepared::canonical_digest};
 use async_trait::async_trait;
@@ -71,7 +82,30 @@ impl SdcPreparedDeviceSync {
     ///
     /// Refuses an empty or oversized device list, a malformed UUID, duplicates,
     /// or an oversized envelope.
-    pub fn new(mut device_uuids: Vec<String>, before: Value) -> Result<Self, SdcError> {
+    pub fn new(device_uuids: Vec<String>, before: Value) -> Result<Self, SdcError> {
+        let device_uuids = Self::canonical_device_list(device_uuids)?;
+        let plan = plan_artifact(&device_uuids, &before);
+        let prepared = Self {
+            operation: "device_sync".to_owned(),
+            device_uuids,
+            before,
+            plan_digest: canonical_digest(&plan)
+                .map_err(|error| SdcError::PreparedChange(error.to_string()))?,
+        };
+        prepared.validate()?;
+        Ok(prepared)
+    }
+
+    /// Check and canonicalise a device list without reading anything.
+    ///
+    /// Separated so a caller can refuse a malformed or oversized request
+    /// *before* spending a read per device against the tenant — the bound is on
+    /// outbound work, not only on what ends up in the plan.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an empty or oversized list, a malformed UUID, or duplicates.
+    pub fn canonical_device_list(mut device_uuids: Vec<String>) -> Result<Vec<String>, SdcError> {
         if device_uuids.is_empty() {
             return Err(SdcError::PreparedChange(
                 "device sync requires at least one device".to_owned(),
@@ -108,16 +142,7 @@ impl SdcPreparedDeviceSync {
             ));
         }
 
-        let plan = plan_artifact(&device_uuids, &before);
-        let prepared = Self {
-            operation: "device_sync".to_owned(),
-            device_uuids,
-            before,
-            plan_digest: canonical_digest(&plan)
-                .map_err(|error| SdcError::PreparedChange(error.to_string()))?,
-        };
-        prepared.validate()?;
-        Ok(prepared)
+        Ok(device_uuids)
     }
 
     /// Devices this sync covers.
@@ -189,10 +214,87 @@ impl SdcPreparedDeviceSync {
 fn plan_artifact(device_uuids: &[String], before: &Value) -> Value {
     json!({
         "action": "device_sync",
-        "direction": "import: reads each device and updates SDC's model; no device is written",
+        "direction": "import: reads each device's inventory and updates SDC's model; \
+                      no device is written",
+        "does_not": "reconcile configuration drift — device_config_state is left untouched",
         "device_uuids": device_uuids,
         "before": before,
     })
+}
+
+/// The inventory state `BulkSyncDevices` moves, as a comparable pair.
+///
+/// Anything else on the device record changes for reasons unrelated to this
+/// operation, and comparing it would refuse plans over irrelevant drift.
+fn inventory_state(device: &Value) -> (Option<String>, Option<String>) {
+    let sync_status = device
+        .get("device_sync_status")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let overall = device
+        .get("inventory_sync_info")
+        .and_then(|info| info.get("overall_sync_status"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    (sync_status, overall)
+}
+
+/// Terminal state of a device inventory sync.
+///
+/// `GetSyncStatus` answers `SUCCESS`/`FAILURE` and does not share the deploy
+/// path's vocabulary. An unrecognised value is kept verbatim and treated as
+/// non-terminal, so a vocabulary SDC adds later surfaces as a timeout rather
+/// than as a silent success.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
+pub enum DeviceSyncStatus {
+    /// Every named device synced.
+    Success,
+    /// At least one device failed.
+    Failure,
+    /// A value absent from the observed vocabulary, kept verbatim.
+    Unrecognized(String),
+}
+
+impl DeviceSyncStatus {
+    /// Whether polling may stop.
+    #[must_use]
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Self::Success | Self::Failure)
+    }
+
+    /// Whether the sync succeeded for every device.
+    #[must_use]
+    pub fn succeeded(&self) -> bool {
+        matches!(self, Self::Success)
+    }
+}
+
+impl From<String> for DeviceSyncStatus {
+    fn from(value: String) -> Self {
+        match value.as_str() {
+            "SUCCESS" => Self::Success,
+            "FAILURE" => Self::Failure,
+            _ => Self::Unrecognized(value),
+        }
+    }
+}
+
+impl From<DeviceSyncStatus> for String {
+    fn from(value: DeviceSyncStatus) -> Self {
+        match value {
+            DeviceSyncStatus::Success => "SUCCESS".to_owned(),
+            DeviceSyncStatus::Failure => "FAILURE".to_owned(),
+            DeviceSyncStatus::Unrecognized(other) => other,
+        }
+    }
+}
+
+/// One `GetSyncStatus` response.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeviceSyncJob {
+    /// Overall job state.
+    pub status: DeviceSyncStatus,
 }
 
 /// Outcome of revalidating a device sync immediately before it runs.
@@ -239,20 +341,21 @@ impl SdcDeviceSyncTransaction {
 
     /// Re-read every named device and report whether the plan still holds.
     ///
-    /// The state that matters is `device_config_state`: it is what says whether
-    /// SDC believes the device has drifted, and therefore what the sync is for.
-    /// If a device that was `OUT_OF_BAND_CHANGED` at plan time now reads
-    /// `IN_SYNC`, someone has already reconciled it and this plan describes work
-    /// that no longer exists — approving one thing and doing another.
+    /// The fields compared are the ones this endpoint actually moves —
+    /// `device_sync_status` and `inventory_sync_info.overall_sync_status`.
+    /// Comparing `device_config_state` would look more meaningful and detect
+    /// nothing: the live record shows this sync leaves it untouched, so a
+    /// competing sync between prepare and apply would pass a check built on it
+    /// while having already done the work being approved.
     async fn targets_unchanged(&self, staged: &SdcPreparedDeviceSync) -> Result<bool, SdcError> {
         for uuid in staged.device_uuids() {
             let current = self.client.get_device(uuid, &self.cancellation).await?;
-            let now = current.get("device_config_state");
             let then = staged
                 .before()
                 .get(uuid)
-                .and_then(|entry| entry.get("device_config_state"));
-            if now != then {
+                .map(inventory_state)
+                .unwrap_or_default();
+            if inventory_state(&current) != then {
                 return Ok(false);
             }
         }
@@ -326,18 +429,37 @@ impl DeviceTransaction for SdcDeviceSyncTransaction {
             return Err(SdcError::TargetDrifted);
         }
         self.refused_before_write.store(false, Ordering::SeqCst);
-        let (sync_id, status) = self
+        match self
             .client
             .sync_devices(staged.device_uuids(), &self.cancellation)
-            .await?;
-        Ok(CommitOutcome::Reconciled {
-            succeeded: status.succeeded(),
-            job_id: Some(sync_id),
-            details: Some(format!(
-                "SDC imported {} device(s) with status {status:?}",
-                staged.device_uuids().len()
-            )),
-        })
+            .await
+        {
+            Ok((sync_id, status)) => Ok(CommitOutcome::Reconciled {
+                succeeded: status.succeeded(),
+                job_id: Some(sync_id),
+                details: Some(format!(
+                    "SDC synced inventory for {} device(s) with status {status:?}",
+                    staged.device_uuids().len()
+                )),
+            }),
+            // The request was accepted and its outcome could not be learned —
+            // a poll deadline, a cancellation, or a response that could not be
+            // read. Propagating the error would record this as `Failed`, and a
+            // failed record is a claim that nothing happened. SDC may well have
+            // synced. `Indeterminate` is the honest state and the one an
+            // operator can resolve.
+            Err(
+                error @ (SdcError::JobDeadline
+                | SdcError::Cancelled
+                | SdcError::MutationOutcomeUnknown
+                | SdcError::InvalidJson),
+            ) => Ok(CommitOutcome::Indeterminate {
+                reason: format!(
+                    "device inventory sync was submitted but its outcome is unknown: {error}"
+                ),
+            }),
+            Err(error) => Err(error),
+        }
     }
 
     /// Release a planned-but-unrun sync.
@@ -401,8 +523,15 @@ mod tests {
 
     fn before_state() -> Value {
         json!({
-            "dev-a": {"device_config_state": "OUT_OF_BAND_CHANGED"},
-            "dev-b": {"device_config_state": "IN_SYNC"},
+            "dev-a": {
+                "device_sync_status": "OUT_OF_SYNC",
+                "inventory_sync_info": {"overall_sync_status": "OUT_OF_SYNC"},
+                "device_config_state": "OUT_OF_BAND_CHANGED",
+            },
+            "dev-b": {
+                "device_sync_status": "IN_SYNC",
+                "inventory_sync_info": {"overall_sync_status": "IN_SYNC"},
+            },
         })
     }
 
@@ -457,7 +586,10 @@ mod tests {
             SdcPreparedDeviceSync::new(vec!["dev-a".to_owned()], before_state()).expect("prepare");
         let drifted = SdcPreparedDeviceSync::new(
             vec!["dev-a".to_owned()],
-            json!({"dev-a": {"device_config_state": "IN_SYNC"}}),
+            json!({"dev-a": {
+                "device_sync_status": "IN_SYNC",
+                "inventory_sync_info": {"overall_sync_status": "IN_SYNC"},
+            }}),
         )
         .expect("prepare");
 
@@ -472,7 +604,7 @@ mod tests {
     /// to absorb a device's configuration or overwrite it. The direction is the
     /// single most important thing on this plan.
     #[test]
-    fn the_plan_states_its_direction() {
+    fn the_plan_states_its_direction_and_its_limits() {
         let prepared =
             SdcPreparedDeviceSync::new(vec!["dev-a".to_owned()], before_state()).expect("prepare");
 
@@ -481,6 +613,13 @@ mod tests {
         assert!(
             direction.contains("import") && direction.contains("no device is written"),
             "the plan must say which way the sync runs: {direction}"
+        );
+        assert!(direction.contains("inventory"), "{direction}");
+        let limits = plan["does_not"].as_str().unwrap_or_default();
+        assert!(
+            limits.contains("device_config_state"),
+            "the plan must say that configuration drift is NOT reconciled, or an \
+             operator approving it will believe it was: {limits}"
         );
     }
 
@@ -499,5 +638,79 @@ mod tests {
             tampered.validate().is_err(),
             "a device added after approval must not validate"
         );
+    }
+
+    /// The status vocabulary is this endpoint's own. Reusing the deploy path's
+    /// meant no value was ever terminal, so every apply burned its deadline and
+    /// reported a timeout on a sync that had already succeeded.
+    #[test]
+    fn the_sync_vocabulary_is_terminal_where_the_deploy_one_is_not() {
+        assert!(DeviceSyncStatus::from("SUCCESS".to_owned()).is_terminal());
+        assert!(DeviceSyncStatus::from("SUCCESS".to_owned()).succeeded());
+        assert!(DeviceSyncStatus::from("FAILURE".to_owned()).is_terminal());
+        assert!(!DeviceSyncStatus::from("FAILURE".to_owned()).succeeded());
+    }
+
+    /// An unfamiliar value must keep polling rather than be read as success —
+    /// a vocabulary SDC adds later should surface as a timeout, not as a silent
+    /// completion.
+    #[test]
+    fn an_unrecognised_status_is_not_terminal() {
+        let status = DeviceSyncStatus::from("PARTIAL".to_owned());
+
+        assert!(
+            !status.is_terminal(),
+            "unknown states must not stop polling"
+        );
+        assert!(!status.succeeded());
+        assert_eq!(
+            String::from(status),
+            "PARTIAL",
+            "the wire value is kept verbatim"
+        );
+    }
+
+    /// Drift must be judged on the fields this endpoint moves. Watching
+    /// `device_config_state` would look meaningful and detect nothing, because
+    /// the sync leaves it untouched.
+    #[test]
+    fn drift_is_detected_on_the_inventory_pair_this_sync_moves() {
+        let planned =
+            SdcPreparedDeviceSync::new(vec!["dev-a".to_owned()], before_state()).expect("prepare");
+
+        // Someone else synced it: the inventory pair moved, config state did not.
+        let after_someone_else_synced = json!({
+            "device_sync_status": "IN_SYNC",
+            "inventory_sync_info": {"overall_sync_status": "IN_SYNC"},
+            "device_config_state": "OUT_OF_BAND_CHANGED",
+        });
+        let then = planned.before().get("dev-a").expect("planned device");
+
+        assert_ne!(
+            inventory_state(&after_someone_else_synced),
+            inventory_state(then),
+            "a competing sync must be visible in the fields this operation moves"
+        );
+    }
+
+    /// The bound has to hold before any device is read, or it bounds nothing
+    /// outbound: one bad identifier in last place would still cost a GET per
+    /// preceding entry against the tenant's rate limit.
+    #[test]
+    fn the_device_list_is_checked_without_reading_anything() {
+        let too_many: Vec<String> = (0..=MAX_DEVICES_PER_SYNC)
+            .map(|n| format!("dev-{n}"))
+            .collect();
+        assert!(SdcPreparedDeviceSync::canonical_device_list(too_many).is_err());
+
+        let malformed = vec!["dev-a".to_owned(), "bad uuid".to_owned()];
+        assert!(SdcPreparedDeviceSync::canonical_device_list(malformed).is_err());
+
+        let good = SdcPreparedDeviceSync::canonical_device_list(vec![
+            "dev-b".to_owned(),
+            "dev-a".to_owned(),
+        ])
+        .expect("a valid list canonicalises");
+        assert_eq!(good, vec!["dev-a".to_owned(), "dev-b".to_owned()], "sorted");
     }
 }

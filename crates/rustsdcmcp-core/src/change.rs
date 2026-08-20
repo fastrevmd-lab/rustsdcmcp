@@ -969,12 +969,13 @@ impl ChangeManager {
         })
     }
 
-    /// Read each device's current state and create a digest-bound sync plan.
+    /// Read each device's current inventory state and create a digest-bound plan.
     ///
-    /// `BulkSyncDevices` **imports** — it reads devices and updates SDC's model,
-    /// never the reverse (`docs/sdc-api/README.md` §5). It is still gated,
-    /// because it changes what SDC believes is current and every later preview
-    /// and deploy is computed against that belief.
+    /// `BulkSyncDevices` **imports**, and reconciles **inventory only** — it
+    /// leaves `device_config_state` untouched, so it is not a remedy for
+    /// out-of-band configuration drift (`docs/sdc-api/README.md` §5). It is
+    /// gated because it changes what SDC believes about a device, and later
+    /// previews and deploys are computed against those beliefs.
     ///
     /// # Errors
     ///
@@ -985,9 +986,15 @@ impl ChangeManager {
         device_uuids: Vec<String>,
         cancellation: &CancellationToken,
     ) -> Result<crate::DeviceSyncPrepareResult, SdcError> {
-        // Read each device so the digest binds to observed reality. The field
-        // that matters is `device_config_state` — whether SDC thinks the device
-        // has drifted — which is the whole reason to sync it.
+        // Validate and canonicalise *before* any read. Doing it afterwards made
+        // the 64-device bound bound nothing outbound: a call naming a thousand
+        // devices, or one bad identifier in last place, still issued a GET per
+        // preceding entry against the tenant's rate limit before being refused.
+        let device_uuids = crate::SdcPreparedDeviceSync::canonical_device_list(device_uuids)?;
+
+        // Read each device so the digest binds to observed reality — the
+        // inventory pair this sync moves, not `device_config_state`, which it
+        // leaves untouched.
         let mut before = serde_json::Map::new();
         for uuid in &device_uuids {
             let device = self.client.get_device(uuid, cancellation).await?;
@@ -1012,7 +1019,7 @@ impl ChangeManager {
         })
     }
 
-    /// Run one exact approved device sync.
+    /// Run one exact approved device inventory sync.
     ///
     /// # Errors
     ///

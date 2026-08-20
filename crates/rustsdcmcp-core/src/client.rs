@@ -1066,7 +1066,7 @@ impl SdcClient {
         &self,
         device_uuids: &[String],
         cancellation: &CancellationToken,
-    ) -> Result<(String, DeploymentStatus), SdcError> {
+    ) -> Result<(String, crate::DeviceSyncStatus), SdcError> {
         if device_uuids.is_empty() {
             return Err(SdcError::InvalidInput(
                 "device sync requires at least one device UUID",
@@ -1092,10 +1092,45 @@ impl SdcClient {
             ))?
             .to_owned();
         validate_atom("sync_id", &sync_id)?;
-        let status = self
-            .poll_job(JobKind::SyncDevices, &sync_id, cancellation)
-            .await?;
-        Ok((sync_id, status.status))
+        // Polled here rather than through `poll_job`: this endpoint answers
+        // `SUCCESS`/`FAILURE`, which `DeploymentStatus` does not recognise, so
+        // the shared loop would never see a terminal state and every sync would
+        // end in `JobDeadline` however well it went.
+        //
+        // The `sync_id` is returned alongside every error after this point, so a
+        // caller that cannot learn the outcome can still name the job to an
+        // operator.
+        let status = self.poll_device_sync(&sync_id, cancellation).await?;
+        Ok((sync_id, status))
+    }
+
+    /// Poll one device inventory sync to a terminal state.
+    async fn poll_device_sync(
+        &self,
+        sync_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<crate::DeviceSyncStatus, SdcError> {
+        let deadline = Instant::now() + self.poll.deadline;
+        let mut interval = self.poll.initial;
+        loop {
+            let probe = self.sync_devices_status(sync_id, cancellation);
+            let job = tokio::select! {
+                () = cancellation.cancelled() => return Err(SdcError::Cancelled),
+                () = self.shutdown.cancelled() => return Err(SdcError::Cancelled),
+                () = time::sleep_until(deadline) => return Err(SdcError::JobDeadline),
+                result = probe => result?,
+            };
+            if job.status.is_terminal() {
+                return Ok(job.status);
+            }
+            tokio::select! {
+                () = cancellation.cancelled() => return Err(SdcError::Cancelled),
+                () = self.shutdown.cancelled() => return Err(SdcError::Cancelled),
+                () = time::sleep_until(deadline) => return Err(SdcError::JobDeadline),
+                () = time::sleep(interval) => {}
+            }
+            interval = interval.saturating_mul(2).min(self.poll.maximum);
+        }
     }
 
     /// Read a device-sync job status without polling.
@@ -1107,7 +1142,7 @@ impl SdcClient {
         &self,
         sync_id: &str,
         cancellation: &CancellationToken,
-    ) -> Result<JobStatus, SdcError> {
+    ) -> Result<crate::DeviceSyncJob, SdcError> {
         validate_atom("sync_id", sync_id)?;
         self.get(
             &["api", "v1", "devices", "sync", sync_id],
@@ -1498,7 +1533,6 @@ impl SdcClient {
             let probe = async {
                 match kind {
                     JobKind::Preview => self.preview_status(job_id, cancellation).await,
-                    JobKind::SyncDevices => self.sync_devices_status(job_id, cancellation).await,
                     JobKind::Deploy => self.deploy_status(job_id, cancellation).await,
                     JobKind::InstallLicense => {
                         self.install_license_status(job_id, cancellation).await
@@ -1762,7 +1796,6 @@ impl SdcClient {
 #[derive(Debug, Clone, Copy)]
 enum JobKind {
     Preview,
-    SyncDevices,
     Deploy,
     InstallLicense,
     InstallCaCertificate,

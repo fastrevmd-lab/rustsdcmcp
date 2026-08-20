@@ -85,8 +85,8 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "apply_sdc_firewall_write",
     "prepare_sdc_license_write",
     "apply_sdc_license_write",
-    "prepare_sdc_device_sync",
-    "apply_sdc_device_sync",
+    "prepare_sdc_device_inventory_sync",
+    "apply_sdc_device_inventory_sync",
     "get_sdc_firewall_policy_state",
 ];
 
@@ -103,8 +103,8 @@ pub const WRITE_TOOLS: &[&str] = &[
     "apply_sdc_firewall_write",
     "prepare_sdc_license_write",
     "apply_sdc_license_write",
-    "prepare_sdc_device_sync",
-    "apply_sdc_device_sync",
+    "prepare_sdc_device_inventory_sync",
+    "apply_sdc_device_inventory_sync",
     "discard_sdc_operation",
 ];
 
@@ -316,17 +316,17 @@ pub struct PrepareLicenseArgs {
 /// Arguments for planning a device configuration sync.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct PrepareDeviceSyncArgs {
+pub struct PrepareDeviceInventorySyncArgs {
     /// Configured tenant alias.
     pub tenant: String,
-    /// Devices to re-read into SDC's model.
+    /// Devices whose inventory SDC should re-read.
     pub device_uuids: Vec<String>,
 }
 
 /// Arguments for running one approved device sync.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct ApplyDeviceSyncArgs {
+pub struct ApplyDeviceInventorySyncArgs {
     /// Configured tenant alias.
     pub tenant: String,
     /// Approved change-set identifier.
@@ -1740,23 +1740,25 @@ impl SdcHandler {
     }
 
     #[tool(
-        name = "prepare_sdc_device_sync",
-        description = "Plan a device configuration sync and create a digest-bound change set. This imports: SDC re-reads each device and updates its own model; no device is written. This does not run the sync."
+        name = "prepare_sdc_device_inventory_sync",
+        description = "Plan a device INVENTORY sync and create a digest-bound change set. SDC re-reads each device's inventory and updates its own model; no device is written. This does NOT reconcile configuration drift: device_config_state (OUT_OF_BAND_CHANGED) is left untouched. This does not run the sync."
     )]
-    async fn prepare_sdc_device_sync(
+    async fn prepare_sdc_device_inventory_sync(
         &self,
-        Parameters(args): Parameters<PrepareDeviceSyncArgs>,
+        Parameters(args): Parameters<PrepareDeviceInventorySyncArgs>,
         extensions: Extensions,
         cancellation: CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let caller = caller_from_extensions::<NoGrant>(&extensions);
         let mut audit = audit_scope(
             caller,
-            "prepare_sdc_device_sync",
+            "prepare_sdc_device_inventory_sync",
             "prepare",
             vec![args.tenant.clone()],
         );
-        if let Err(error) = self.authorize(caller, "prepare_sdc_device_sync", &args.tenant) {
+        if let Err(error) =
+            self.authorize(caller, "prepare_sdc_device_inventory_sync", &args.tenant)
+        {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
@@ -1769,23 +1771,24 @@ impl SdcHandler {
     }
 
     #[tool(
-        name = "apply_sdc_device_sync",
-        description = "Run only an independently approved SDC device configuration sync."
+        name = "apply_sdc_device_inventory_sync",
+        description = "Run only an independently approved SDC device inventory sync. Reconciles inventory state, not configuration."
     )]
-    async fn apply_sdc_device_sync(
+    async fn apply_sdc_device_inventory_sync(
         &self,
-        Parameters(args): Parameters<ApplyDeviceSyncArgs>,
+        Parameters(args): Parameters<ApplyDeviceInventorySyncArgs>,
         extensions: Extensions,
         cancellation: CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let caller = caller_from_extensions::<NoGrant>(&extensions);
         let mut audit = audit_scope(
             caller,
-            "apply_sdc_device_sync",
+            "apply_sdc_device_inventory_sync",
             "apply",
             vec![args.tenant.clone()],
         );
-        if let Err(error) = self.authorize(caller, "apply_sdc_device_sync", &args.tenant) {
+        if let Err(error) = self.authorize(caller, "apply_sdc_device_inventory_sync", &args.tenant)
+        {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
