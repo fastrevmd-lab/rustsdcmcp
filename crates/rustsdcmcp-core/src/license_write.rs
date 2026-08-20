@@ -136,6 +136,23 @@ impl SdcPreparedLicenseWrite {
         plan_artifact(self.action, &self.device_uuid, &self.request, &self.before)
     }
 
+    /// This prepared write as the caller should see it: `before` projected.
+    ///
+    /// See `project_before` for why the projection lives here and not in
+    /// `Serialize` — the persisted and digested envelope must stay raw.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the captured state cannot be projected.
+    pub fn caller_view(&self) -> Result<Value, SdcError> {
+        let mut value = serde_json::to_value(self).map_err(|_| SdcError::Serialization)?;
+        let projected = projected_or_withheld(self.action, &self.before);
+        if let Some(object) = value.as_object_mut() {
+            object.insert("before".to_owned(), projected);
+        }
+        Ok(value)
+    }
+
     /// Revalidate shape, bounds, and digest integrity.
     ///
     /// # Errors
@@ -187,6 +204,82 @@ impl SdcPreparedLicenseWrite {
             ));
         }
         Ok(())
+    }
+}
+
+/// `project_before`, with failure expressed as withheld state rather than as a
+/// failed call.
+///
+/// The projection runs on the way out, after the change set has been persisted
+/// or the write committed. Propagating an error there would fail the tool
+/// *after* the side effect: the caller would never learn the change-set id of a
+/// record that now blocks their later plans, or would read a committed write as
+/// failed. Neither is worth a projection error, and neither is safer than
+/// returning the result with its before-state withheld.
+///
+/// Withholding is also the fail-closed direction: a state that cannot be
+/// projected is exactly the state that must not be passed through raw.
+fn projected_or_withheld(action: LicenseWriteOperation, before: &Value) -> Value {
+    project_before(action, before).unwrap_or_else(|error| {
+        json!({
+            "withheld": "before-state could not be projected onto the read-path allowlist",
+            "reason": error.to_string(),
+        })
+    })
+}
+
+/// Project a captured before-state onto the same allowlists the read tools use.
+///
+/// The write path captures before-state by calling the very endpoints the read
+/// tools serve, so returning it verbatim would hand callers fields the read
+/// tools drop — a field upstream adds reaches MCP callers through the write
+/// tools and nowhere else (#55).
+///
+/// This is applied **only** on the way to a caller. The digested and persisted
+/// `before` stays raw: projecting it would erase an unknown field from both
+/// sides of the drift comparison, so a write whose target drifted in exactly
+/// that field would apply as unchanged.
+///
+/// # Errors
+///
+/// Returns an error when the captured state is not the shape its endpoint
+/// returns — projection fails closed rather than passing content through.
+pub(crate) fn project_before(
+    action: LicenseWriteOperation,
+    before: &Value,
+) -> Result<Value, SdcError> {
+    use LicenseWriteOperation::{
+        DeleteCertificate, InstallCaCertificate, InstallLicense, InstallLocalCertificate,
+    };
+
+    if before.is_null() {
+        // No prior state was applicable; there is nothing to disclose.
+        return Ok(Value::Null);
+    }
+
+    match action {
+        InstallLicense => crate::projection::project_licenses(before.clone()),
+        InstallCaCertificate => crate::projection::project_ca_certificates(before.clone()),
+        InstallLocalCertificate => crate::projection::project_local_certificates(before.clone()),
+        // A delete may target either kind, so prepare captures both halves under
+        // fixed keys. Both are projected; a missing half is left as it was found
+        // rather than invented.
+        DeleteCertificate => {
+            let object = before.as_object().ok_or_else(|| {
+                SdcError::PreparedChange(
+                    "certificate delete before-state must be an object".to_owned(),
+                )
+            })?;
+            let ca = match object.get("ca_certificates") {
+                Some(value) => crate::projection::project_ca_certificates(value.clone())?,
+                None => Value::Null,
+            };
+            let local = match object.get("local_certificates") {
+                Some(value) => crate::projection::project_local_certificates(value.clone())?,
+                None => Value::Null,
+            };
+            Ok(json!({ "ca_certificates": ca, "local_certificates": local }))
+        }
     }
 }
 
@@ -491,6 +584,21 @@ pub struct LicensePrepareResult {
     pub prepared_change: SdcPreparedLicenseWrite,
 }
 
+impl LicensePrepareResult {
+    /// This result as the caller should see it: the prepared change's
+    /// before-state projected onto the read-path allowlists (#55).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the captured state cannot be projected.
+    pub fn caller_view(&self) -> Result<Value, SdcError> {
+        Ok(json!({
+            "change_set": self.change_set,
+            "prepared_change": self.prepared_change.caller_view()?,
+        }))
+    }
+}
+
 /// Result of applying one approved SDC license/certificate write.
 #[derive(Debug, Clone, Serialize)]
 pub struct LicenseApplyResult {
@@ -502,6 +610,43 @@ pub struct LicenseApplyResult {
     pub validation: LicenseValidationReport,
     /// Known, detached, or indeterminate commit disposition.
     pub outcome: CommitOutcome,
+}
+
+impl LicenseApplyResult {
+    /// This result as the caller should see it: the plan's before-state
+    /// projected onto the read-path allowlists (#55).
+    ///
+    /// `action` is the operation the plan describes, which selects the
+    /// allowlist. It is read from the plan itself so the caller cannot pick a
+    /// projection that discloses more than the write's own kind allows.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the plan is malformed or cannot be projected.
+    pub fn caller_view(&self) -> Result<Value, SdcError> {
+        let action: Option<LicenseWriteOperation> = self
+            .plan
+            .get("action")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok());
+
+        let mut value = serde_json::to_value(self).map_err(|_| SdcError::Serialization)?;
+        let before = self.plan.get("before").cloned().unwrap_or(Value::Null);
+        // The write has already committed by the time this runs. A plan that
+        // does not name its action is unprojectable, so its before-state is
+        // withheld — the outcome of the write is still reported.
+        let projected = match action {
+            Some(action) => projected_or_withheld(action, &before),
+            None => json!({
+                "withheld": "before-state could not be projected onto the read-path allowlist",
+                "reason": "plan does not name a license write action",
+            }),
+        };
+        if let Some(plan) = value.get_mut("plan").and_then(Value::as_object_mut) {
+            plan.insert("before".to_owned(), projected);
+        }
+        Ok(value)
+    }
 }
 
 #[cfg(test)]
@@ -538,6 +683,115 @@ mod tests {
             before,
         )
         .expect("prepared license write")
+    }
+
+    /// A certificate delete captures both certificate kinds, so both halves
+    /// need projecting — a composite that projects one is a leak with extra
+    /// steps (#55).
+    #[test]
+    fn a_certificate_delete_projects_both_halves_of_its_before_state() {
+        let before = json!({
+            "ca_certificates": {
+                "items": [{"uuid": "ca-1", "name": "root", "upstream_addition": "leak"}],
+                "count": 1
+            },
+            "local_certificates": {
+                "items": [{"uuid": "local-1", "name": "id", "upstream_addition": "leak"}],
+                "count": 1
+            }
+        });
+
+        let projected = project_before(LicenseWriteOperation::DeleteCertificate, &before)
+            .expect("project composite");
+
+        let rendered = serde_json::to_string(&projected).expect("serialize");
+        assert!(!rendered.contains("upstream_addition"), "{rendered}");
+        assert!(
+            rendered.contains("ca-1") && rendered.contains("local-1"),
+            "{rendered}"
+        );
+    }
+
+    /// The projection runs after the change set is persisted and after the
+    /// write commits. A shape it cannot project must not turn a completed
+    /// operation into a failed call — the caller would lose the change-set id
+    /// of a record that now blocks their later plans, or read a committed write
+    /// as failed. The state is withheld instead, which is also the fail-closed
+    /// direction.
+    #[test]
+    fn an_unprojectable_before_state_is_withheld_not_fatal() {
+        // `items` as an object is valid JSON and not a collection response.
+        let prepared = license_fixture(json!({"items": {"lic-1": "unexpected"}, "count": 1}));
+
+        let view = prepared
+            .caller_view()
+            .expect("an unprojectable before-state must not fail the call");
+
+        assert_eq!(
+            view["before"]["withheld"],
+            "before-state could not be projected onto the read-path allowlist",
+            "{view}"
+        );
+        assert!(
+            !serde_json::to_string(&view)
+                .expect("serialize")
+                .contains("unexpected"),
+            "withholding must not leak the state it could not project: {view}"
+        );
+        assert!(
+            !view["plan_digest"].as_str().unwrap_or_default().is_empty(),
+            "the rest of the result must still reach the caller: {view}"
+        );
+    }
+
+    /// The apply result hands back the plan, which embeds the same captured
+    /// state as prepare (#55).
+    #[test]
+    fn an_apply_result_projects_the_plan_before_state() {
+        let prepared = license_fixture(json!({
+            "items": [{"uuid": "lic-1", "name": "initial", "upstream_addition": "leak"}],
+            "count": 1
+        }));
+        let result = LicenseApplyResult {
+            operation_id: "op-1".to_owned(),
+            plan: prepared.plan(),
+            validation: LicenseValidationReport {
+                valid: true,
+                action: LicenseWriteOperation::InstallLicense,
+                target_unchanged: true,
+            },
+            outcome: CommitOutcome::Reconciled {
+                succeeded: true,
+                job_id: None,
+                details: None,
+            },
+        };
+
+        let rendered =
+            serde_json::to_string(&result.caller_view().expect("caller view")).expect("serialize");
+        assert!(!rendered.contains("upstream_addition"), "{rendered}");
+        assert!(rendered.contains("lic-1"), "{rendered}");
+    }
+
+    /// The projection must not reach the digest. If it did, a target that
+    /// drifted in an unallowlisted field would compare equal and the write
+    /// would apply against state nobody approved.
+    #[test]
+    fn drift_in_an_unallowlisted_field_still_changes_the_plan_digest() {
+        let at_prepare = license_fixture(json!({
+            "items": [{"uuid": "lic-1", "upstream_addition": "before"}],
+            "count": 1
+        }));
+        let at_apply = license_fixture(json!({
+            "items": [{"uuid": "lic-1", "upstream_addition": "after"}],
+            "count": 1
+        }));
+
+        assert_ne!(
+            at_prepare.plan_digest(),
+            at_apply.plan_digest(),
+            "a field outside the allowlist must still be part of what the digest binds"
+        );
     }
 
     #[tokio::test]
