@@ -138,7 +138,7 @@ impl SdcPreparedLicenseWrite {
 
     /// This prepared write as the caller should see it: `before` projected.
     ///
-    /// See [`project_before`] for why the projection lives here and not in
+    /// See `project_before` for why the projection lives here and not in
     /// `Serialize` — the persisted and digested envelope must stay raw.
     ///
     /// # Errors
@@ -207,7 +207,7 @@ impl SdcPreparedLicenseWrite {
     }
 }
 
-/// [`project_before`], with failure expressed as withheld state rather than as a
+/// `project_before`, with failure expressed as withheld state rather than as a
 /// failed call.
 ///
 /// The projection runs on the way out, after the change set has been persisted
@@ -244,7 +244,10 @@ fn projected_or_withheld(action: LicenseWriteOperation, before: &Value) -> Value
 ///
 /// Returns an error when the captured state is not the shape its endpoint
 /// returns — projection fails closed rather than passing content through.
-pub fn project_before(action: LicenseWriteOperation, before: &Value) -> Result<Value, SdcError> {
+pub(crate) fn project_before(
+    action: LicenseWriteOperation,
+    before: &Value,
+) -> Result<Value, SdcError> {
     use LicenseWriteOperation::{
         DeleteCertificate, InstallCaCertificate, InstallLicense, InstallLocalCertificate,
     };
