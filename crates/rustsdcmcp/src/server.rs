@@ -85,6 +85,8 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "apply_sdc_firewall_write",
     "prepare_sdc_license_write",
     "apply_sdc_license_write",
+    "prepare_sdc_device_inventory_sync",
+    "apply_sdc_device_inventory_sync",
     "get_sdc_firewall_policy_state",
 ];
 
@@ -101,6 +103,8 @@ pub const WRITE_TOOLS: &[&str] = &[
     "apply_sdc_firewall_write",
     "prepare_sdc_license_write",
     "apply_sdc_license_write",
+    "prepare_sdc_device_inventory_sync",
+    "apply_sdc_device_inventory_sync",
     "discard_sdc_operation",
 ];
 
@@ -307,6 +311,33 @@ pub struct PrepareLicenseArgs {
     pub device_uuid: String,
     /// Request body (license key, certificate data, etc).
     pub body: Value,
+}
+
+/// Arguments for planning a device configuration sync.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PrepareDeviceInventorySyncArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Devices whose inventory SDC should re-read.
+    pub device_uuids: Vec<String>,
+}
+
+/// Arguments for running one approved device sync.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ApplyDeviceInventorySyncArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Approved change-set identifier.
+    pub change_set_id: String,
+    /// Exact approved digest.
+    pub expected_digest: String,
+    /// Exact plan digest returned by prepare.
+    pub expected_plan_digest: String,
+    /// Optional external change reference for the audit record.
+    #[serde(default)]
+    pub change_ref: Option<String>,
 }
 
 /// Arguments for applying one approved license/certificate write.
@@ -1705,6 +1736,75 @@ impl SdcHandler {
                 // Same reason as prepare: the plan carries the captured
                 // before-state, and the caller sees it projected (#55).
                 .and_then(|result| result.caller_view()),
+        ))
+    }
+
+    #[tool(
+        name = "prepare_sdc_device_inventory_sync",
+        description = "Plan a device INVENTORY sync and create a digest-bound change set. SDC re-reads each device's inventory and updates its own model; no device is written. This does NOT reconcile configuration drift: device_config_state (OUT_OF_BAND_CHANGED) is left untouched. This does not run the sync."
+    )]
+    async fn prepare_sdc_device_inventory_sync(
+        &self,
+        Parameters(args): Parameters<PrepareDeviceInventorySyncArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "prepare_sdc_device_inventory_sync",
+            "prepare",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) =
+            self.authorize(caller, "prepare_sdc_device_inventory_sync", &args.tenant)
+        {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish(
+            audit,
+            self.changes
+                .prepare_device_sync(owner(caller), args.device_uuids, &cancellation)
+                .await,
+        ))
+    }
+
+    #[tool(
+        name = "apply_sdc_device_inventory_sync",
+        description = "Run only an independently approved SDC device inventory sync. Reconciles inventory state, not configuration."
+    )]
+    async fn apply_sdc_device_inventory_sync(
+        &self,
+        Parameters(args): Parameters<ApplyDeviceInventorySyncArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "apply_sdc_device_inventory_sync",
+            "apply",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "apply_sdc_device_inventory_sync", &args.tenant)
+        {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let attribution = attribution(caller, args.change_ref);
+        Ok(finish(
+            audit,
+            self.changes
+                .apply_device_sync(
+                    args.change_set_id,
+                    owner(caller),
+                    args.expected_digest,
+                    args.expected_plan_digest,
+                    &attribution,
+                    &cancellation,
+                )
+                .await,
         ))
     }
 

@@ -1046,6 +1046,131 @@ impl SdcClient {
         .await
     }
 
+    /// Ask SDC to re-read one or more devices' running configuration.
+    ///
+    /// **Direction: import.** `BulkSyncDevices` reads the device and updates
+    /// SDC's model to match; it does not push SDC's view down. Confirmed
+    /// against `vsrx-ci` on the live tenant (snapshot-gated, single device):
+    /// the device's commit log was unchanged across the sync. The OpenAPI spec
+    /// states no direction, which is why the finding is recorded in
+    /// `docs/sdc-api/README.md` §5 and repeated here — this is the one property
+    /// of this call that decides whether it is safe.
+    ///
+    /// Asynchronous: returns a `sync_id`, which this polls to completion.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an empty or malformed UUID list, a rejected
+    /// request, or a job that does not finish within the poll deadline.
+    pub async fn sync_devices(
+        &self,
+        device_uuids: &[String],
+        cancellation: &CancellationToken,
+    ) -> Result<(String, crate::DeviceSyncJob), crate::DeviceSyncFailure> {
+        use crate::DeviceSyncFailure;
+        if device_uuids.is_empty() {
+            return Err(DeviceSyncFailure::BeforeSubmit(SdcError::InvalidInput(
+                "device sync requires at least one device UUID",
+            )));
+        }
+        for uuid in device_uuids {
+            validate_atom("device_uuid", uuid).map_err(DeviceSyncFailure::BeforeSubmit)?;
+        }
+        let body = serde_json::json!({ "uuids": device_uuids });
+        let response_value = self
+            .send_write(
+                Method::POST,
+                &["api", "v1", "devices", "sync"],
+                Some(&body),
+                cancellation,
+            )
+            .await
+            .map_err(DeviceSyncFailure::from_submit)?;
+        // Past this line the request has been accepted. Everything that can go
+        // wrong now must carry the `sync_id`, or an operator is told the outcome
+        // is unknown and given no way to look it up.
+        let sync_id = response_value
+            .get("sync_id")
+            .and_then(Value::as_str)
+            // A 2xx without a usable id still means SDC took the request.
+            .ok_or(DeviceSyncFailure::AfterSubmit {
+                sync_id: None,
+                source: SdcError::InvalidInput("device sync response missing sync_id"),
+            })?
+            .to_owned();
+        validate_atom("sync_id", &sync_id).map_err(|error| DeviceSyncFailure::AfterSubmit {
+            sync_id: None,
+            source: error,
+        })?;
+        // Polled here rather than through `poll_job`: this endpoint answers
+        // `SUCCESS`/`FAILURE`, which `DeploymentStatus` does not recognise, so
+        // the shared loop would never see a terminal state and every sync would
+        // end in `JobDeadline` however well it went.
+        //
+        // The `sync_id` is returned alongside every error after this point, so a
+        // caller that cannot learn the outcome can still name the job to an
+        // operator.
+        match self.poll_device_sync(&sync_id, cancellation).await {
+            Ok(job) => Ok((sync_id, job)),
+            // Every failure here is post-acceptance, whatever its kind — a
+            // deadline, a cancellation, an unreadable body, a 5xx on the status
+            // GET. Listing kinds would mean a new one silently becoming
+            // "nothing happened" later.
+            Err(source) => Err(DeviceSyncFailure::AfterSubmit {
+                sync_id: Some(sync_id),
+                source,
+            }),
+        }
+    }
+
+    /// Poll one device inventory sync to a terminal state.
+    async fn poll_device_sync(
+        &self,
+        sync_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<crate::DeviceSyncJob, SdcError> {
+        let deadline = Instant::now() + self.poll.deadline;
+        let mut interval = self.poll.initial;
+        loop {
+            let probe = self.sync_devices_status(sync_id, cancellation);
+            let job = tokio::select! {
+                () = cancellation.cancelled() => return Err(SdcError::Cancelled),
+                () = self.shutdown.cancelled() => return Err(SdcError::Cancelled),
+                () = time::sleep_until(deadline) => return Err(SdcError::JobDeadline),
+                result = probe => result?,
+            };
+            if job.status.is_terminal() {
+                return Ok(job);
+            }
+            tokio::select! {
+                () = cancellation.cancelled() => return Err(SdcError::Cancelled),
+                () = self.shutdown.cancelled() => return Err(SdcError::Cancelled),
+                () = time::sleep_until(deadline) => return Err(SdcError::JobDeadline),
+                () = time::sleep(interval) => {}
+            }
+            interval = interval.saturating_mul(2).min(self.poll.maximum);
+        }
+    }
+
+    /// Read a device-sync job status without polling.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed sync id or an unreadable response.
+    pub async fn sync_devices_status(
+        &self,
+        sync_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<crate::DeviceSyncJob, SdcError> {
+        validate_atom("sync_id", sync_id)?;
+        self.get(
+            &["api", "v1", "devices", "sync", sync_id],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
     /// Read an install_ca_certificate job status without polling.
     pub async fn install_ca_certificate_status(
         &self,

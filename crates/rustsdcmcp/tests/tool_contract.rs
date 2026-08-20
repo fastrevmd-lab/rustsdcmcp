@@ -5,11 +5,12 @@ use std::collections::BTreeSet;
 
 #[test]
 fn tool_registry_has_expected_unique_surface() {
-    // 40 reads / 12 writes. #32 added 6 license/certificate reads (PR #49) and
+    // 40 reads / 14 writes. #32 added 6 license/certificate reads (PR #49) and
     // 2 license/certificate writes; #34 added device-group list and get; #63
     // added discard_sdc_operation, which must be a write tool so a wildcard
-    // scope cannot reach it; #21 added list_sdc_config_versions (read).
-    assert_eq!(KNOWN_TOOLS.len(), 52);
+    // scope cannot reach it; #21 added list_sdc_config_versions (read) and the
+    // device-sync prepare/apply pair.
+    assert_eq!(KNOWN_TOOLS.len(), 54);
     assert_eq!(
         KNOWN_TOOLS.iter().copied().collect::<BTreeSet<_>>().len(),
         KNOWN_TOOLS.len()
@@ -18,12 +19,14 @@ fn tool_registry_has_expected_unique_surface() {
         WRITE_TOOLS.iter().copied().collect::<BTreeSet<_>>(),
         BTreeSet::from([
             "apply_sdc_change_set",
+            "apply_sdc_device_inventory_sync",
             "apply_sdc_firewall_write",
             "apply_sdc_license_write",
             "apply_sdc_nat_write",
             "apply_sdc_object_write",
             "approve_sdc_change_set",
             "discard_sdc_operation",
+            "prepare_sdc_device_inventory_sync",
             "prepare_sdc_firewall_write",
             "prepare_sdc_license_write",
             "prepare_sdc_nat_write",

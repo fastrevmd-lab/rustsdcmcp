@@ -7,6 +7,7 @@ mod catalog;
 mod change;
 mod client;
 mod config;
+mod device_sync;
 mod firewall_write;
 mod license_write;
 mod models;
@@ -22,6 +23,11 @@ pub use change::{
 };
 pub use client::{SdcClient, SdcError};
 pub use config::{AuthScheme, SdcConfig};
+pub use device_sync::{
+    DeviceSyncApplyResult, DeviceSyncEntry, DeviceSyncFailure, DeviceSyncJob,
+    DeviceSyncPrepareResult, DeviceSyncStatus, DeviceSyncValidationReport,
+    SdcDeviceSyncTransaction, SdcPreparedDeviceSync,
+};
 pub use firewall_write::{
     FirewallApplyResult, FirewallPrepareResult, FirewallValidationReport, FirewallWriteOperation,
     SdcFirewallTransaction, SdcPreparedFirewallWrite,
