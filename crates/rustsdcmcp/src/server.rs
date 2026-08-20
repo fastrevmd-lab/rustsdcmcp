@@ -1650,6 +1650,9 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
+        // The projected view, not the raw result: `before` is captured from the
+        // same endpoints the read tools serve, and returning it verbatim would
+        // disclose through the write tools what the read tools drop (#55).
         Ok(finish(
             audit,
             self.changes
@@ -1660,7 +1663,8 @@ impl SdcHandler {
                     args.body,
                     &cancellation,
                 )
-                .await,
+                .await
+                .and_then(|result| result.caller_view()),
         ))
     }
 
@@ -1697,7 +1701,10 @@ impl SdcHandler {
                     &attribution,
                     &cancellation,
                 )
-                .await,
+                .await
+                // Same reason as prepare: the plan carries the captured
+                // before-state, and the caller sees it projected (#55).
+                .and_then(|result| result.caller_view()),
         ))
     }
 

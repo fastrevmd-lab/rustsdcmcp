@@ -1379,13 +1379,15 @@ impl ChangeManager {
     ///
     /// Returns an error if the change set does not exist, the actions cannot be
     /// deserialized as `SdcPreparedChange`, or the change set has no actions.
-    pub async fn prepared_change(
-        &self,
-        change_set_id: String,
-    ) -> Result<SdcPreparedChange, SdcError> {
+    pub async fn prepared_change(&self, change_set_id: String) -> Result<Value, SdcError> {
+        // Keyed by tenant, because that is what every `create_change_set` in
+        // this file stores. It read `self.endpoint` before, so the lookup
+        // mismatched for every change set this server had ever created and the
+        // tool answered "change set belongs to another device" every time
+        // (#81).
         let record = self
             .coordinator
-            .change_set(&change_set_id, &self.endpoint)
+            .change_set(&change_set_id, &self.tenant)
             .await
             .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
 
@@ -1394,9 +1396,31 @@ impl ChangeManager {
             .first()
             .ok_or_else(|| SdcError::ChangeControl("change set has no actions".to_owned()))?;
 
-        serde_json::from_value::<SdcPreparedChange>(action.clone()).map_err(|error| {
-            SdcError::ChangeControl(format!("failed to deserialize prepared change: {error}"))
-        })
+        // Dispatch on the prepared kind. Deserializing straight into
+        // `SdcPreparedChange` would reject four of the five: it is the
+        // policy-deploy type, and every prepared type denies unknown fields.
+        match action.get("operation").and_then(Value::as_str) {
+            // A licence or certificate write carries device state read from the
+            // same endpoints the read tools project, so it goes back projected
+            // (#55). The stored action is untouched — the digest and drift
+            // detection depend on it staying raw.
+            Some("license_write") => {
+                let prepared: crate::SdcPreparedLicenseWrite =
+                    serde_json::from_value(action.clone()).map_err(|error| {
+                        SdcError::ChangeControl(format!(
+                            "failed to deserialize prepared license write: {error}"
+                        ))
+                    })?;
+                prepared.caller_view()
+            }
+            // Every other kind is returned as staged. Their before-state comes
+            // from endpoints with no read-path allowlist, so there is nothing
+            // to project and inventing one here would diverge from the reads.
+            Some(_) => Ok(action.clone()),
+            None => Err(SdcError::ChangeControl(
+                "staged change does not name an operation".to_owned(),
+            )),
+        }
     }
 
     /// Apply, diff, validate, and deploy one exact approved plan.
@@ -2081,6 +2105,140 @@ mod tests {
             .await
             .expect("an unchanged target validates");
         assert!(report.valid && report.target_unchanged);
+        server.abort();
+    }
+
+    /// `get_sdc_change_set_details` is how a reviewer inspects a staged change
+    /// before approving it. Change sets are created keyed by tenant and were
+    /// looked up by endpoint, so it failed for every change set this server
+    /// ever created (#81) — and once found, a licence write must come back
+    /// projected (#55).
+    #[tokio::test]
+    async fn change_set_details_returns_the_staged_change_with_before_projected() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let state = json!({
+            "items": [{"uuid": "lic-1", "name": "initial", "upstream_addition": "leak"}],
+            "count": 1
+        });
+        let app = Router::new().route(
+            "/api/v1/devices/device-123/licenses",
+            get(move || {
+                let state = state.clone();
+                async move { Json(state) }
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        let client =
+            SdcClient::from_test_parts(base_url.clone(), "test-secret".to_owned(), 64 * 1024, 100);
+        let manager = ChangeManager::load(
+            client,
+            "tenant-a",
+            base_url.to_string(),
+            None,
+            Duration::from_secs(60),
+            false,
+        )
+        .expect("change manager");
+        let prepared = manager
+            .prepare_license_write(
+                "alice".to_owned(),
+                crate::LicenseWriteOperation::InstallLicense,
+                "device-123".to_owned(),
+                json!({"license_key": "NEW-KEY"}),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("prepare");
+
+        let details = manager
+            .prepared_change(prepared.change_set.change_set_id.clone())
+            .await
+            .expect("a change set this server just created must be findable");
+
+        let rendered = serde_json::to_string(&details).expect("serialize");
+        assert!(
+            rendered.contains("lic-1"),
+            "details must show the staged change: {rendered}"
+        );
+        assert!(
+            !rendered.contains("upstream_addition"),
+            "staged licence before-state must be projected like the read path: {rendered}"
+        );
+        server.abort();
+    }
+
+    /// The read tools project SDC responses onto an allowlist; the write path
+    /// reads the same endpoints for before-state and handed it back raw, so a
+    /// field upstream adds would reach callers through the write tools even
+    /// though the read tools drop it (#55).
+    ///
+    /// The projection must be caller-facing only: the digested and persisted
+    /// state keeps the raw response, or drift on an unallowlisted field stops
+    /// being detectable.
+    #[tokio::test]
+    async fn a_license_before_state_is_projected_to_the_caller_but_kept_raw_for_drift() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        // `upstream_addition` stands for a field SDC starts returning that no
+        // allowlist knows about yet.
+        let state = json!({
+            "items": [{
+                "uuid": "lic-1",
+                "name": "initial",
+                "upstream_addition": "must not reach the caller"
+            }],
+            "count": 1
+        });
+        let app = Router::new().route(
+            "/api/v1/devices/device-123/licenses",
+            get(move || {
+                let state = state.clone();
+                async move { Json(state) }
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        let client =
+            SdcClient::from_test_parts(base_url.clone(), "test-secret".to_owned(), 64 * 1024, 100);
+        let manager = ChangeManager::load(
+            client,
+            "tenant-a",
+            base_url.to_string(),
+            None,
+            Duration::from_secs(60),
+            false,
+        )
+        .expect("change manager");
+
+        let prepared = manager
+            .prepare_license_write(
+                "alice".to_owned(),
+                crate::LicenseWriteOperation::InstallLicense,
+                "device-123".to_owned(),
+                json!({"license_key": "NEW-KEY"}),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("prepare");
+
+        // What the caller sees.
+        let view = serde_json::to_string(&prepared.caller_view().expect("caller view"))
+            .expect("serialize view");
+        assert!(
+            !view.contains("upstream_addition"),
+            "the write path must project before-state like the read path: {view}"
+        );
+        assert!(
+            view.contains("lic-1"),
+            "projection must keep the allowlisted fields: {view}"
+        );
+
+        // What the digest and the state file see.
+        assert_eq!(
+            prepared.prepared_change.before()["items"][0]["upstream_addition"],
+            "must not reach the caller",
+            "the digested state must stay raw, or drift on this field becomes undetectable"
+        );
+
         server.abort();
     }
 
