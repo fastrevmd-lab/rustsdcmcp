@@ -290,11 +290,86 @@ impl From<DeviceSyncStatus> for String {
     }
 }
 
+/// One device's result within a sync job.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DeviceSyncEntry {
+    /// SDC device UUID.
+    #[serde(default)]
+    pub uuid: String,
+    /// Device hostname as SDC reports it here — note this is the *hostname*,
+    /// not the SDC device name, which differ on the live tenant.
+    #[serde(default)]
+    pub name: String,
+    /// This device's outcome.
+    pub status: DeviceSyncStatus,
+    /// SDC's per-device message.
+    #[serde(default)]
+    pub message: String,
+}
+
 /// One `GetSyncStatus` response.
+///
+/// The per-device array is kept. A bulk sync where one device fails answers
+/// overall `FAILURE` with a per-device entry for each; collapsing that to one
+/// flag would tell an operator "it failed" while withholding which device and
+/// why — the two things needed to act on it.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DeviceSyncJob {
     /// Overall job state.
     pub status: DeviceSyncStatus,
+    /// Per-device results, when SDC supplies them.
+    #[serde(default)]
+    pub device_sync_status: Vec<DeviceSyncEntry>,
+}
+
+impl DeviceSyncJob {
+    /// Devices that did not sync, as `uuid: message` pairs.
+    #[must_use]
+    pub fn failures(&self) -> Vec<String> {
+        self.device_sync_status
+            .iter()
+            .filter(|entry| !entry.status.succeeded())
+            .map(|entry| {
+                let who = if entry.uuid.is_empty() {
+                    entry.name.as_str()
+                } else {
+                    entry.uuid.as_str()
+                };
+                format!("{who}: {}", entry.message)
+            })
+            .collect()
+    }
+}
+
+/// A sync that failed, and whether it had already been accepted.
+///
+/// The distinction is the whole point: before submission nothing happened and
+/// the operation may be discarded; after submission SDC may be syncing right
+/// now, and the `sync_id` is the only handle an operator has to find out.
+#[derive(Debug)]
+pub enum DeviceSyncFailure {
+    /// Refused before anything was sent.
+    BeforeSubmit(SdcError),
+    /// Accepted, outcome unknown.
+    AfterSubmit {
+        /// Job identifier, for `GET /api/v1/devices/sync/{sync_id}`.
+        sync_id: String,
+        /// What went wrong while learning the outcome.
+        source: SdcError,
+    },
+}
+
+impl std::fmt::Display for DeviceSyncFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BeforeSubmit(error) => write!(formatter, "{error}"),
+            Self::AfterSubmit { sync_id, source } => write!(
+                formatter,
+                "{source}; the sync was accepted as {sync_id} and may still be running \
+                 — query GET /api/v1/devices/sync/{sync_id}"
+            ),
+        }
+    }
 }
 
 /// Outcome of revalidating a device sync immediately before it runs.
@@ -434,31 +509,43 @@ impl DeviceTransaction for SdcDeviceSyncTransaction {
             .sync_devices(staged.device_uuids(), &self.cancellation)
             .await
         {
-            Ok((sync_id, status)) => Ok(CommitOutcome::Reconciled {
-                succeeded: status.succeeded(),
-                job_id: Some(sync_id),
-                details: Some(format!(
-                    "SDC synced inventory for {} device(s) with status {status:?}",
-                    staged.device_uuids().len()
-                )),
-            }),
-            // The request was accepted and its outcome could not be learned —
-            // a poll deadline, a cancellation, or a response that could not be
-            // read. Propagating the error would record this as `Failed`, and a
-            // failed record is a claim that nothing happened. SDC may well have
-            // synced. `Indeterminate` is the honest state and the one an
-            // operator can resolve.
-            Err(
-                error @ (SdcError::JobDeadline
-                | SdcError::Cancelled
-                | SdcError::MutationOutcomeUnknown
-                | SdcError::InvalidJson),
-            ) => Ok(CommitOutcome::Indeterminate {
-                reason: format!(
-                    "device inventory sync was submitted but its outcome is unknown: {error}"
-                ),
-            }),
-            Err(error) => Err(error),
+            Ok((sync_id, job)) => {
+                let failures = job.failures();
+                let detail = if failures.is_empty() {
+                    format!(
+                        "SDC synced inventory for {} device(s) with status {:?}",
+                        staged.device_uuids().len(),
+                        job.status
+                    )
+                } else {
+                    // A bulk sync reports one overall status and a result per
+                    // device. Reporting only the overall one tells an operator
+                    // "it failed" and withholds which device and why.
+                    format!(
+                        "SDC inventory sync finished {:?}; {} device(s) failed: {}",
+                        job.status,
+                        failures.len(),
+                        failures.join("; ")
+                    )
+                };
+                Ok(CommitOutcome::Reconciled {
+                    succeeded: job.status.succeeded() && failures.is_empty(),
+                    job_id: Some(sync_id),
+                    details: Some(detail),
+                })
+            }
+            // Refused before anything was sent: nothing happened, and the
+            // coordinator may discard the operation rather than strand it.
+            Err(DeviceSyncFailure::BeforeSubmit(error)) => Err(error),
+            // Accepted, outcome unlearned. `Failed` would be a claim that
+            // nothing happened; SDC may be syncing right now. The `sync_id`
+            // travels with the record because it is the only handle an operator
+            // has for `GET /api/v1/devices/sync/{sync_id}`.
+            Err(failure @ DeviceSyncFailure::AfterSubmit { .. }) => {
+                Ok(CommitOutcome::Indeterminate {
+                    reason: format!("device inventory sync outcome is unknown: {failure}"),
+                })
+            }
         }
     }
 
@@ -712,5 +799,66 @@ mod tests {
         ])
         .expect("a valid list canonicalises");
         assert_eq!(good, vec!["dev-a".to_owned(), "dev-b".to_owned()], "sorted");
+    }
+
+    /// A bulk sync answers one overall status and a result per device. Reporting
+    /// only the overall one tells an operator "it failed" and withholds the two
+    /// things they need: which device, and why.
+    #[test]
+    fn a_partial_failure_names_the_devices_that_failed() {
+        let job = DeviceSyncJob {
+            status: DeviceSyncStatus::Failure,
+            device_sync_status: vec![
+                DeviceSyncEntry {
+                    uuid: "dev-a".to_owned(),
+                    name: "host-a".to_owned(),
+                    status: DeviceSyncStatus::Success,
+                    message: "Successful sync inventory".to_owned(),
+                },
+                DeviceSyncEntry {
+                    uuid: "dev-b".to_owned(),
+                    name: "host-b".to_owned(),
+                    status: DeviceSyncStatus::Failure,
+                    message: "device unreachable".to_owned(),
+                },
+            ],
+        };
+
+        let failures = job.failures();
+
+        assert_eq!(failures.len(), 1, "only the failed device is reported");
+        assert!(failures[0].contains("dev-b"), "{failures:?}");
+        assert!(failures[0].contains("device unreachable"), "{failures:?}");
+    }
+
+    /// After acceptance, every failure must carry the job id. An operator told
+    /// "outcome unknown" with no handle cannot find out; the id is the only
+    /// route to `GET /api/v1/devices/sync/{sync_id}`.
+    #[test]
+    fn a_post_submission_failure_carries_the_sync_id() {
+        let failure = DeviceSyncFailure::AfterSubmit {
+            sync_id: "3d5e881b".to_owned(),
+            source: SdcError::JobDeadline,
+        };
+
+        let rendered = failure.to_string();
+
+        assert!(rendered.contains("3d5e881b"), "{rendered}");
+        assert!(
+            rendered.contains("may still be running"),
+            "the message must not read as a failure: {rendered}"
+        );
+    }
+
+    /// Before submission nothing happened, and the message must not imply a job
+    /// exists to go looking for.
+    #[test]
+    fn a_pre_submission_failure_mentions_no_job() {
+        let failure = DeviceSyncFailure::BeforeSubmit(SdcError::InvalidInput("bad list"));
+
+        let rendered = failure.to_string();
+
+        assert!(!rendered.contains("sync_id"), "{rendered}");
+        assert!(!rendered.contains("still be running"), "{rendered}");
     }
 }

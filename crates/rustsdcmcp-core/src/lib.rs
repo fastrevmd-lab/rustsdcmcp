@@ -24,8 +24,9 @@ pub use change::{
 pub use client::{SdcClient, SdcError};
 pub use config::{AuthScheme, SdcConfig};
 pub use device_sync::{
-    DeviceSyncApplyResult, DeviceSyncJob, DeviceSyncPrepareResult, DeviceSyncStatus,
-    DeviceSyncValidationReport, SdcDeviceSyncTransaction, SdcPreparedDeviceSync,
+    DeviceSyncApplyResult, DeviceSyncEntry, DeviceSyncFailure, DeviceSyncJob,
+    DeviceSyncPrepareResult, DeviceSyncStatus, DeviceSyncValidationReport,
+    SdcDeviceSyncTransaction, SdcPreparedDeviceSync,
 };
 pub use firewall_write::{
     FirewallApplyResult, FirewallPrepareResult, FirewallValidationReport, FirewallWriteOperation,

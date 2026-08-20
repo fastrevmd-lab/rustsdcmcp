@@ -1066,14 +1066,15 @@ impl SdcClient {
         &self,
         device_uuids: &[String],
         cancellation: &CancellationToken,
-    ) -> Result<(String, crate::DeviceSyncStatus), SdcError> {
+    ) -> Result<(String, crate::DeviceSyncJob), crate::DeviceSyncFailure> {
+        use crate::DeviceSyncFailure;
         if device_uuids.is_empty() {
-            return Err(SdcError::InvalidInput(
+            return Err(DeviceSyncFailure::BeforeSubmit(SdcError::InvalidInput(
                 "device sync requires at least one device UUID",
-            ));
+            )));
         }
         for uuid in device_uuids {
-            validate_atom("device_uuid", uuid)?;
+            validate_atom("device_uuid", uuid).map_err(DeviceSyncFailure::BeforeSubmit)?;
         }
         let body = serde_json::json!({ "uuids": device_uuids });
         let response_value = self
@@ -1083,15 +1084,19 @@ impl SdcClient {
                 Some(&body),
                 cancellation,
             )
-            .await?;
+            .await
+            .map_err(DeviceSyncFailure::BeforeSubmit)?;
+        // Past this line the request has been accepted. Everything that can go
+        // wrong now must carry the `sync_id`, or an operator is told the outcome
+        // is unknown and given no way to look it up.
         let sync_id = response_value
             .get("sync_id")
             .and_then(Value::as_str)
-            .ok_or(SdcError::InvalidInput(
+            .ok_or(DeviceSyncFailure::BeforeSubmit(SdcError::InvalidInput(
                 "device sync response missing sync_id",
-            ))?
+            )))?
             .to_owned();
-        validate_atom("sync_id", &sync_id)?;
+        validate_atom("sync_id", &sync_id).map_err(DeviceSyncFailure::BeforeSubmit)?;
         // Polled here rather than through `poll_job`: this endpoint answers
         // `SUCCESS`/`FAILURE`, which `DeploymentStatus` does not recognise, so
         // the shared loop would never see a terminal state and every sync would
@@ -1100,8 +1105,14 @@ impl SdcClient {
         // The `sync_id` is returned alongside every error after this point, so a
         // caller that cannot learn the outcome can still name the job to an
         // operator.
-        let status = self.poll_device_sync(&sync_id, cancellation).await?;
-        Ok((sync_id, status))
+        match self.poll_device_sync(&sync_id, cancellation).await {
+            Ok(job) => Ok((sync_id, job)),
+            // Every failure here is post-acceptance, whatever its kind — a
+            // deadline, a cancellation, an unreadable body, a 5xx on the status
+            // GET. Listing kinds would mean a new one silently becoming
+            // "nothing happened" later.
+            Err(source) => Err(DeviceSyncFailure::AfterSubmit { sync_id, source }),
+        }
     }
 
     /// Poll one device inventory sync to a terminal state.
@@ -1109,7 +1120,7 @@ impl SdcClient {
         &self,
         sync_id: &str,
         cancellation: &CancellationToken,
-    ) -> Result<crate::DeviceSyncStatus, SdcError> {
+    ) -> Result<crate::DeviceSyncJob, SdcError> {
         let deadline = Instant::now() + self.poll.deadline;
         let mut interval = self.poll.initial;
         loop {
@@ -1121,7 +1132,7 @@ impl SdcClient {
                 result = probe => result?,
             };
             if job.status.is_terminal() {
-                return Ok(job.status);
+                return Ok(job);
             }
             tokio::select! {
                 () = cancellation.cancelled() => return Err(SdcError::Cancelled),
