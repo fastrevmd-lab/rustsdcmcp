@@ -350,23 +350,65 @@ impl DeviceSyncJob {
 pub enum DeviceSyncFailure {
     /// Refused before anything was sent.
     BeforeSubmit(SdcError),
-    /// Accepted, outcome unknown.
+    /// Dispatched, outcome unknown.
+    ///
+    /// `sync_id` is present when SDC's acceptance was read and the job could
+    /// later be queried; `None` when the request went out and even the
+    /// acceptance could not be read — SDC may be syncing under an id nobody
+    /// knows. Both are indeterminate; only one is recoverable by query.
     AfterSubmit {
         /// Job identifier, for `GET /api/v1/devices/sync/{sync_id}`.
-        sync_id: String,
+        sync_id: Option<String>,
         /// What went wrong while learning the outcome.
         source: SdcError,
     },
+}
+
+impl DeviceSyncFailure {
+    /// Classify an error raised while issuing the POST.
+    ///
+    /// `MutationOutcomeUnknown` means SDC answered 2xx and the body could not be
+    /// read — the sync may be running. A cancellation after dispatch is the same
+    /// shape. Calling either "before submit" would record a running sync as
+    /// failed, which is the regression this exists to prevent.
+    pub(crate) fn from_submit(error: SdcError) -> Self {
+        match error {
+            SdcError::MutationOutcomeUnknown | SdcError::Cancelled => Self::AfterSubmit {
+                sync_id: None,
+                source: error,
+            },
+            other => Self::BeforeSubmit(other),
+        }
+    }
+}
+
+impl std::error::Error for DeviceSyncFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::BeforeSubmit(error) | Self::AfterSubmit { source: error, .. } => Some(error),
+        }
+    }
 }
 
 impl std::fmt::Display for DeviceSyncFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::BeforeSubmit(error) => write!(formatter, "{error}"),
-            Self::AfterSubmit { sync_id, source } => write!(
+            Self::AfterSubmit {
+                sync_id: Some(sync_id),
+                source,
+            } => write!(
                 formatter,
                 "{source}; the sync was accepted as {sync_id} and may still be running \
                  — query GET /api/v1/devices/sync/{sync_id}"
+            ),
+            Self::AfterSubmit {
+                sync_id: None,
+                source,
+            } => write!(
+                formatter,
+                "{source}; the request was dispatched and its acceptance could not be \
+                 read, so a sync may be running under an unknown id"
             ),
         }
     }
@@ -837,7 +879,7 @@ mod tests {
     #[test]
     fn a_post_submission_failure_carries_the_sync_id() {
         let failure = DeviceSyncFailure::AfterSubmit {
-            sync_id: "3d5e881b".to_owned(),
+            sync_id: Some("3d5e881b".to_owned()),
             source: SdcError::JobDeadline,
         };
 
@@ -860,5 +902,52 @@ mod tests {
 
         assert!(!rendered.contains("sync_id"), "{rendered}");
         assert!(!rendered.contains("still be running"), "{rendered}");
+    }
+
+    /// `MutationOutcomeUnknown` means SDC answered 2xx and the body could not be
+    /// read — the sync may be running. Classifying it as pre-submit records a
+    /// running sync as failed, which is worse than saying nothing.
+    #[test]
+    fn an_unreadable_acceptance_is_post_submit_not_pre() {
+        let failure = DeviceSyncFailure::from_submit(SdcError::MutationOutcomeUnknown);
+
+        assert!(
+            matches!(
+                failure,
+                DeviceSyncFailure::AfterSubmit { sync_id: None, .. }
+            ),
+            "a 2xx whose body could not be read means the request landed"
+        );
+        assert!(
+            failure.to_string().contains("unknown id"),
+            "the operator must be told a sync may be running they cannot query: {failure}"
+        );
+    }
+
+    /// A refusal that never reached SDC stays pre-submit, so the operation can
+    /// be discarded rather than stranded.
+    #[test]
+    fn a_refusal_before_dispatch_stays_pre_submit() {
+        let failure = DeviceSyncFailure::from_submit(SdcError::InvalidInput("bad list"));
+
+        assert!(matches!(failure, DeviceSyncFailure::BeforeSubmit(_)));
+    }
+
+    /// The failure type is public and returned from a public method, so it has
+    /// to compose with `?` into `anyhow::Error` and `Box<dyn Error>`.
+    #[test]
+    fn the_failure_type_is_a_std_error_with_a_source() {
+        use std::error::Error as _;
+
+        let failure = DeviceSyncFailure::AfterSubmit {
+            sync_id: Some("abc".to_owned()),
+            source: SdcError::JobDeadline,
+        };
+        let boxed: Box<dyn std::error::Error> = Box::new(failure);
+
+        assert!(
+            boxed.source().is_some(),
+            "the wrapped SdcError must be reachable"
+        );
     }
 }

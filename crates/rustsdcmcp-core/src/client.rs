@@ -1085,18 +1085,23 @@ impl SdcClient {
                 cancellation,
             )
             .await
-            .map_err(DeviceSyncFailure::BeforeSubmit)?;
+            .map_err(DeviceSyncFailure::from_submit)?;
         // Past this line the request has been accepted. Everything that can go
         // wrong now must carry the `sync_id`, or an operator is told the outcome
         // is unknown and given no way to look it up.
         let sync_id = response_value
             .get("sync_id")
             .and_then(Value::as_str)
-            .ok_or(DeviceSyncFailure::BeforeSubmit(SdcError::InvalidInput(
-                "device sync response missing sync_id",
-            )))?
+            // A 2xx without a usable id still means SDC took the request.
+            .ok_or(DeviceSyncFailure::AfterSubmit {
+                sync_id: None,
+                source: SdcError::InvalidInput("device sync response missing sync_id"),
+            })?
             .to_owned();
-        validate_atom("sync_id", &sync_id).map_err(DeviceSyncFailure::BeforeSubmit)?;
+        validate_atom("sync_id", &sync_id).map_err(|error| DeviceSyncFailure::AfterSubmit {
+            sync_id: None,
+            source: error,
+        })?;
         // Polled here rather than through `poll_job`: this endpoint answers
         // `SUCCESS`/`FAILURE`, which `DeploymentStatus` does not recognise, so
         // the shared loop would never see a terminal state and every sync would
@@ -1111,7 +1116,10 @@ impl SdcClient {
             // deadline, a cancellation, an unreadable body, a 5xx on the status
             // GET. Listing kinds would mean a new one silently becoming
             // "nothing happened" later.
-            Err(source) => Err(DeviceSyncFailure::AfterSubmit { sync_id, source }),
+            Err(source) => Err(DeviceSyncFailure::AfterSubmit {
+                sync_id: Some(sync_id),
+                source,
+            }),
         }
     }
 
