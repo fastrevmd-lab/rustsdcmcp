@@ -28,13 +28,30 @@ mapfile -t roots < <(find "$WORK" -mindepth 1 -maxdepth 1 -type d -print)
 INSTALLER="${roots[0]}/packaging/lxc/install.sh"
 [[ -x "$INSTALLER" ]] || { echo "installer not executable: $INSTALLER" >&2; exit 1; }
 
+# SDCMCP_INSTALL_TEST_LIVE=1 makes the installer take its live_install branch
+# against a staged root. Without it live_install stays 0 and the ownership block
+# is skipped entirely — so a regression that made the token `chown` unconditional
+# again would go unnoticed here while breaking a real legacy-only upgrade.
 run_installer() {
     SDCMCP_INSTALL_ROOT="$1" \
         SDCMCP_INSTALL_SKIP_USER=1 \
         SDCMCP_INSTALL_SKIP_SYSTEMD_RELOAD=1 \
         SDCMCP_INSTALL_SKIP_RUNTIME_DEPS=1 \
+        ${TEST_LIVE:+SDCMCP_INSTALL_TEST_LIVE=1} \
         "$INSTALLER" >"$2" 2>&1
 }
+
+# The live branch additionally requires the service account to exist, since it
+# chowns to it. Run it when the account is present and say so plainly when it is
+# not — a silently skipped branch is how the ownership half stayed uncovered.
+if getent passwd rustsdcmcp >/dev/null 2>&1 && getent group rustsdcmcp >/dev/null 2>&1; then
+    TEST_LIVE=1
+    echo ">> service account present: exercising the live ownership branch"
+else
+    TEST_LIVE=""
+    echo ">> NOTE: rustsdcmcp account absent - the live ownership branch is NOT covered here."
+    echo ">>       Create the account (or run this in the LXC) to cover it."
+fi
 
 # --- Upgrade: only the legacy /etc store exists.
 UPGRADE="$WORK/upgrade"
@@ -42,6 +59,7 @@ mkdir -p "$UPGRADE/etc/rustsdcmcp"
 printf '%s\n' '{"version":1,"tokens":[{"name":"live-token"}]}' \
     >"$UPGRADE/etc/rustsdcmcp/tokens.json"
 chmod 0600 "$UPGRADE/etc/rustsdcmcp/tokens.json"
+LEGACY_DIGEST="$(sha256sum <"$UPGRADE/etc/rustsdcmcp/tokens.json" | cut -d' ' -f1)"
 
 if ! run_installer "$UPGRADE" "$WORK/upgrade.log"; then
     echo "FAIL: installer aborted on a legacy-only upgrade" >&2
@@ -54,7 +72,10 @@ if [[ -e "$UPGRADE/var/lib/rustsdcmcp/tokens.json" ]]; then
     exit 1
 fi
 
-if ! grep -q 'live-token' "$UPGRADE/etc/rustsdcmcp/tokens.json"; then
+# Byte-exact, not a substring. A truncating or rewriting installer that happened
+# to retain the string "live-token" would otherwise be reported as having left
+# the store untouched.
+if [[ "$(sha256sum <"$UPGRADE/etc/rustsdcmcp/tokens.json" | cut -d" " -f1)" != "$LEGACY_DIGEST" ]]; then
     echo "FAIL: the legacy token store was modified" >&2
     exit 1
 fi
