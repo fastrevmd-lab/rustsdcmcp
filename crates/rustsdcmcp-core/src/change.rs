@@ -295,6 +295,7 @@ impl ChangeManager {
         state_path: Option<&Path>,
         approval_ttl: Duration,
         lab_mode: bool,
+        evidence: Option<Arc<mecmcp_audit::recorder::EvidenceRecorder>>,
     ) -> Result<Self, SdcError> {
         let tenant = tenant.into();
         let endpoint = endpoint.into();
@@ -308,7 +309,7 @@ impl ChangeManager {
             mutation_policy_signature(format!("sdc-license-write-v1:{tenant}:{endpoint}"));
         let device_sync_signature =
             mutation_policy_signature(format!("sdc-device-sync-v1:{tenant}:{endpoint}"));
-        let coordinator = ChangesetCoordinator::load_with_recovery(
+        let mut coordinator = ChangesetCoordinator::load_with_recovery(
             state_path,
             OperationLimits::default(),
             approval_ttl,
@@ -316,6 +317,9 @@ impl ChangeManager {
             StagedRecovery::Discard,
         )
         .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
+        if let Some(recorder) = evidence {
+            coordinator = coordinator.with_evidence(recorder);
+        }
         Ok(Self {
             coordinator: Arc::new(coordinator),
             client,
@@ -1893,6 +1897,7 @@ mod tests {
             None,
             Duration::from_secs(60),
             true,
+            None,
         )
         .expect("change manager");
         let cancellation = CancellationToken::new();
@@ -2004,6 +2009,7 @@ mod tests {
             None,
             Duration::from_secs(60),
             false,
+            None,
         )
         .expect("change manager");
         let cancellation = CancellationToken::new();
@@ -2342,6 +2348,7 @@ mod tests {
             None,
             Duration::from_secs(60),
             false,
+            None,
         )
         .expect("change manager");
         let prepared = manager
@@ -2411,6 +2418,7 @@ mod tests {
             None,
             Duration::from_secs(60),
             false,
+            None,
         )
         .expect("change manager");
 
@@ -2479,6 +2487,7 @@ mod tests {
             None,
             Duration::from_secs(60),
             false,
+            None,
         )
         .expect("change manager");
         let cancellation = CancellationToken::new();
@@ -2583,6 +2592,7 @@ mod tests {
             None,
             Duration::from_secs(60),
             false,
+            None,
         )
         .expect("change manager");
         let cancellation = CancellationToken::new();
@@ -2660,6 +2670,7 @@ mod tests {
             None,
             Duration::from_secs(60),
             false,
+            None,
         )
         .expect("change manager");
 
@@ -2751,6 +2762,7 @@ mod tests {
             None,
             Duration::from_secs(60),
             true,
+            None,
         )
         .expect("change manager");
         let cancellation = CancellationToken::new();

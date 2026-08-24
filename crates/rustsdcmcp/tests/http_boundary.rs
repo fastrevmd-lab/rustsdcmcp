@@ -51,6 +51,7 @@ impl TestServer {
                 None,
                 Duration::from_secs(60),
                 false,
+                None,
             )
             .expect("changes"),
         );
@@ -254,6 +255,7 @@ async fn router_rejects_body_over_limit_before_rmcp_dispatch() {
                 None,
                 Duration::from_secs(60),
                 false,
+                None,
             )
             .expect("changes"),
         );
@@ -405,6 +407,7 @@ async fn allow_insecure_bind_is_wired() {
             None,
             Duration::from_secs(60),
             false,
+            None,
         )
         .expect("changes"),
     );
