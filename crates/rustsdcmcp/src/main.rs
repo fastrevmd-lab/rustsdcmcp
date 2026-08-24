@@ -7,6 +7,7 @@ use rmcp::ServiceExt as _;
 use rustsdcmcp::{KNOWN_TOOLS, SdcHandler, serve_http};
 use rustsdcmcp_core::{ChangeManager, SdcClient, SdcConfig};
 use std::{
+    fs,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -60,6 +61,14 @@ struct ServerCli {
         value_parser = clap::value_parser!(u64).range(1..),
     )]
     approval_timeout_secs: u64,
+
+    /// Validate package configuration and SBOM, then exit.
+    ///
+    /// Validates config/sdc.json.example and SBOM.cdx.json in the package
+    /// directory. Used by the installer to verify package integrity without
+    /// requiring external dependencies like jq.
+    #[arg(long)]
+    validate_package: Option<PathBuf>,
 }
 
 /// Parser default for `--approval-timeout-secs`.
@@ -135,6 +144,298 @@ fn install_shutdown_signals(shutdown: CancellationToken) -> Result<()> {
     Ok(())
 }
 
+/// Validate package configuration file.
+///
+/// Checks that config/sdc.json.example:
+/// - Parses as valid JSON with the expected structure
+/// - Has version == 1
+/// - Has non-empty tenant and credential_env
+/// - Has endpoint starting with "https://"
+/// - Has changeset_state_file == "/var/lib/rustsdcmcp/changeset-state.json"
+fn validate_config_file(package_dir: &Path) -> Result<()> {
+    let config_path = package_dir.join("config/sdc.json.example");
+    let content = fs::read_to_string(&config_path)
+        .with_context(|| format!("reading {}", config_path.display()))?;
+
+    let value: serde_json::Value =
+        serde_json::from_str(&content).context("config example is not valid JSON")?;
+
+    // Check version
+    if value.get("version") != Some(&serde_json::json!(1)) {
+        anyhow::bail!("config example version must be 1");
+    }
+
+    // Check tenant is non-empty string
+    if !value
+        .get("tenant")
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.is_empty())
+    {
+        anyhow::bail!("config example tenant must be a non-empty string");
+    }
+
+    // Check credential_env is non-empty string
+    if !value
+        .get("credential_env")
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.is_empty())
+    {
+        anyhow::bail!("config example credential_env must be a non-empty string");
+    }
+
+    // Check endpoint starts with https://
+    if !value
+        .get("endpoint")
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| s.starts_with("https://"))
+    {
+        anyhow::bail!("config example endpoint must start with 'https://'");
+    }
+
+    // Check changeset_state_file
+    if value.get("changeset_state_file")
+        != Some(&serde_json::json!(
+            "/var/lib/rustsdcmcp/changeset-state.json"
+        ))
+    {
+        anyhow::bail!(
+            "config example changeset_state_file must be '/var/lib/rustsdcmcp/changeset-state.json'"
+        );
+    }
+
+    Ok(())
+}
+
+/// Parse JSON while rejecting duplicate object members.
+///
+/// `serde_json::Value` silently keeps the **last** value for a repeated name.
+/// For a supply-chain gate that is a bypass, not a convenience: a forbidden
+/// marker can be hidden in a member that is then discarded by a duplicate.
+///
+/// Neither surface of the forbidden-string check sees it on its own —
+///
+/// ```text
+/// {"version":"\u0076\u0030\u002e\u0038\u002e\u0030","version":"safe"}
+/// ```
+///
+/// — the raw bytes contain no literal `v0.8.0` because it is escaped, and the
+/// re-serialized tree contains only `safe` because the duplicate collapsed it.
+/// Composing the two techniques defeats both checks, which is why parsing has
+/// to refuse the shape rather than the checks chasing every encoding of it.
+///
+/// RFC 8259 says object names SHOULD be unique; a shipped SBOM with repeated
+/// members is malformed, so rejecting is correct as well as safe.
+fn parse_json_rejecting_duplicate_keys(text: &str) -> Result<serde_json::Value> {
+    struct Strict(serde_json::Value);
+
+    struct StrictVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for StrictVisitor {
+        type Value = Strict;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("JSON with unique object member names")
+        }
+
+        fn visit_unit<E>(self) -> std::result::Result<Strict, E> {
+            Ok(Strict(serde_json::Value::Null))
+        }
+
+        fn visit_bool<E>(self, v: bool) -> std::result::Result<Strict, E> {
+            Ok(Strict(v.into()))
+        }
+
+        fn visit_i64<E>(self, v: i64) -> std::result::Result<Strict, E> {
+            Ok(Strict(v.into()))
+        }
+
+        fn visit_u64<E>(self, v: u64) -> std::result::Result<Strict, E> {
+            Ok(Strict(v.into()))
+        }
+
+        fn visit_f64<E>(self, v: f64) -> std::result::Result<Strict, E> {
+            Ok(Strict(v.into()))
+        }
+
+        fn visit_str<E>(self, v: &str) -> std::result::Result<Strict, E> {
+            Ok(Strict(v.into()))
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> std::result::Result<Strict, A::Error>
+        where
+            A: serde::de::SeqAccess<'de>,
+        {
+            let mut items = Vec::new();
+            while let Some(Strict(v)) = seq.next_element::<Strict>()? {
+                items.push(v);
+            }
+            Ok(Strict(serde_json::Value::Array(items)))
+        }
+
+        fn visit_map<A>(self, mut map: A) -> std::result::Result<Strict, A::Error>
+        where
+            A: serde::de::MapAccess<'de>,
+        {
+            let mut out = serde_json::Map::new();
+            while let Some(key) = map.next_key::<String>()? {
+                let Strict(value) = map.next_value::<Strict>()?;
+                if out.insert(key.clone(), value).is_some() {
+                    return Err(serde::de::Error::custom(format!(
+                        "duplicate object member '{key}'"
+                    )));
+                }
+            }
+            Ok(Strict(serde_json::Value::Object(out)))
+        }
+    }
+
+    impl<'de> serde::Deserialize<'de> for Strict {
+        fn deserialize<D>(d: D) -> std::result::Result<Strict, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            d.deserialize_any(StrictVisitor)
+        }
+    }
+
+    let Strict(value) = serde_json::from_str::<Strict>(text)?;
+    Ok(value)
+}
+
+/// Validate package SBOM file.
+///
+/// Checks that SBOM.cdx.json:
+/// - Has bomFormat == "CycloneDX"
+/// - Has metadata.component.name == "rustsdcmcp"
+/// - Has non-empty components array containing "serde"
+/// - Has exactly the expected mecmcp-* components at version 0.16.0
+/// - Does not contain the forbidden version tag or commit hash
+/// - Does not contain absolute repository paths
+fn validate_sbom_file(package_dir: &Path) -> Result<()> {
+    let sbom_path = package_dir.join("SBOM.cdx.json");
+    let content = fs::read_to_string(&sbom_path)
+        .with_context(|| format!("reading {}", sbom_path.display()))?;
+
+    let value = parse_json_rejecting_duplicate_keys(&content)
+        .context("SBOM is not valid JSON with unique object members")?;
+
+    // Check bomFormat
+    if value.get("bomFormat").and_then(|v| v.as_str()) != Some("CycloneDX") {
+        anyhow::bail!("SBOM bomFormat must be 'CycloneDX'");
+    }
+
+    // Check metadata.component.name
+    if value
+        .get("metadata")
+        .and_then(|m| m.get("component"))
+        .and_then(|c| c.get("name"))
+        .and_then(|n| n.as_str())
+        != Some("rustsdcmcp")
+    {
+        anyhow::bail!("SBOM metadata.component.name must be 'rustsdcmcp'");
+    }
+
+    // Check components is non-empty array
+    let components = value
+        .get("components")
+        .and_then(|c| c.as_array())
+        .ok_or_else(|| anyhow::anyhow!("SBOM components must be a non-empty array"))?;
+
+    if components.is_empty() {
+        anyhow::bail!("SBOM components array must not be empty");
+    }
+
+    // Check for serde
+    if !components
+        .iter()
+        .any(|c| c.get("name").and_then(|n| n.as_str()) == Some("serde"))
+    {
+        anyhow::bail!("SBOM must contain 'serde' component");
+    }
+
+    // Check mecmcp-* components
+    let expected_mecmcp_components = [
+        ("mecmcp-audit", "0.16.0"),
+        ("mecmcp-auth", "0.16.0"),
+        ("mecmcp-changeset", "0.16.0"),
+        ("mecmcp-runtime", "0.16.0"),
+        ("mecmcp-secret", "0.16.0"),
+        ("mecmcp-server", "0.16.0"),
+        ("mecmcp-transport", "0.16.0"),
+    ];
+
+    let mut found_mecmcp: Vec<(String, String)> = Vec::new();
+    for c in components {
+        if let Some(name) = c
+            .get("name")
+            .and_then(|n| n.as_str())
+            .filter(|n| n.starts_with("mecmcp-"))
+        {
+            let version = c.get("version").and_then(|v| v.as_str()).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "SBOM mecmcp-* component '{}' has missing or non-string version",
+                    name
+                )
+            })?;
+            found_mecmcp.push((name.to_string(), version.to_string()));
+        }
+    }
+    found_mecmcp.sort();
+
+    let expected: Vec<(String, String)> = expected_mecmcp_components
+        .iter()
+        .map(|(n, v)| (n.to_string(), v.to_string()))
+        .collect();
+
+    if found_mecmcp != expected {
+        anyhow::bail!(
+            "SBOM mecmcp-* components mismatch. Expected: {:?}, Found: {:?}",
+            expected,
+            found_mecmcp
+        );
+    }
+
+    // Check for forbidden strings in BOTH the raw bytes and the decoded/normalized
+    // JSON tree. Neither alone is sufficient:
+    //
+    // - raw only: a marker written as an escape sequence (`v\u0030.8.0`) decodes to
+    //   `v0.8.0` but never appears literally, so a raw search misses it.
+    // - normalized only: `serde_json` keeps the LAST value for duplicate object
+    //   members, so `{"probe":"v0.8.0","probe":"safe"}` re-serializes with the
+    //   forbidden value discarded and passes. The raw search still catches it.
+    //
+    // Searching both closes each gap with the other. Do not "simplify" this to one.
+    let normalized = serde_json::to_string(&value)
+        .context("re-serializing SBOM for forbidden-string validation")?;
+
+    let contains_forbidden = |needle: &str| content.contains(needle) || normalized.contains(needle);
+
+    if contains_forbidden("v0.8.0") {
+        anyhow::bail!("SBOM must not contain 'v0.8.0'");
+    }
+
+    if contains_forbidden("70ac3d8fb5f27db3257d11aef28bd09587f085e1") {
+        anyhow::bail!("SBOM must not contain forbidden commit hash");
+    }
+
+    // Check for absolute paths
+    if contains_forbidden("/home/")
+        || contains_forbidden("/workspace/")
+        || contains_forbidden("/workspaces/")
+    {
+        anyhow::bail!("SBOM contains an absolute repository or worktree path");
+    }
+
+    Ok(())
+}
+
+/// Validate both package configuration and SBOM.
+fn validate_package(package_dir: &Path) -> Result<()> {
+    validate_config_file(package_dir).context("config validation failed")?;
+    validate_sbom_file(package_dir).context("SBOM validation failed")?;
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // `parse_for`/`parse_with_provenance` name the binary and its version, so
@@ -145,6 +446,16 @@ async fn main() -> Result<()> {
         env!("CARGO_PKG_NAME"),
         env!("CARGO_PKG_VERSION"),
     );
+
+    // Handle --validate-package before any other setup. This must run
+    // synchronously and exit immediately, so the installer can use it without
+    // credentials, configuration, or a network connection.
+    if let Some(package_dir) = &parsed.cli.validate_package {
+        return validate_package(package_dir).map(|()| {
+            println!("Package validation successful");
+        });
+    }
+
     // Read provenance before consuming `parsed.cli`; `Command` is not `Clone`,
     // so the shared arguments have to be moved out rather than borrowed.
     let state_file_supplied = parsed.was_supplied("state_file");
@@ -154,6 +465,7 @@ async fn main() -> Result<()> {
         lab_mode,
         state_file: cli_state_file,
         approval_timeout_secs: cli_approval_timeout_secs,
+        validate_package: _,
     } = parsed.cli;
     mecmcp_runtime::cli_validate::validate(&args).map_err(|error| anyhow::anyhow!("{error}"))?;
 

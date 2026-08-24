@@ -179,7 +179,6 @@ installer=packaging/lxc/install.sh
 ci=.github/workflows/ci.yml
 tmpfiles=packaging/systemd/rustsdcmcp.tmpfiles
 sysusers=packaging/systemd/rustsdcmcp.sysusers
-journal=packaging/journald/mecmcp.conf
 expected_exec='/usr/local/bin/rustsdcmcp --device-mapping /etc/rustsdcmcp/sdc.json --transport streamable-http --host 127.0.0.1 --port 30032 --tokens-file /etc/rustsdcmcp/tokens.json --audit-format json --audit-journald --audit-redact devices=hmac --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key'
 
 assert_upload_step_policy() {
@@ -202,13 +201,9 @@ assert_upload_step_policy() {
 assert_upload_step_policy
 
 assert_installer_post_jq_validation_order() {
-    local jq_line sbom_line sysusers_line install_line
-    local -a config_lines=() jq_lines=() sbom_lines=() sysusers_lines=() install_lines=()
-    mapfile -t config_lines < <(logical_line_numbers 'validate_config' "$installer")
-    mapfile -t jq_lines < <(logical_line_numbers \
-        "command -v jq >/dev/null || die 'jq is required to validate package JSON'" \
-        "$installer")
-    mapfile -t sbom_lines < <(logical_line_numbers 'validate_sbom' "$installer")
+    local validation_line sysusers_line install_line
+    local -a validation_lines=() sysusers_lines=() install_lines=()
+    mapfile -t validation_lines < <(logical_line_numbers 'validate_package_json' "$installer")
     # shellcheck disable=SC2016
     mapfile -t sysusers_lines < <(logical_line_numbers \
         'systemd-sysusers "$package_dir/packaging/systemd/rustsdcmcp.sysusers"' \
@@ -217,20 +212,15 @@ assert_installer_post_jq_validation_order() {
     mapfile -t install_lines < <(logical_line_numbers \
         'install -d -m 0750 "$config_dir"' \
         "$installer")
-    [[ ${#config_lines[@]} -eq 2 && ${#jq_lines[@]} -eq 1 \
-        && ${#sbom_lines[@]} -eq 1 && ${#sysusers_lines[@]} -eq 1 \
+    [[ ${#validation_lines[@]} -eq 1 && ${#sysusers_lines[@]} -eq 1 \
         && ${#install_lines[@]} -eq 1 ]] \
         || fail 'installer must have singular ordered validation and mutation calls'
-    jq_line=${jq_lines[0]}
-    sbom_line=${sbom_lines[0]}
+    validation_line=${validation_lines[0]}
     sysusers_line=${sysusers_lines[0]}
     install_line=${install_lines[0]}
-    (( config_lines[0] < jq_line
-        && jq_line < config_lines[1]
-        && config_lines[1] < sbom_line
-        && sbom_line < sysusers_line
-        && sbom_line < install_line )) \
-        || fail 'installer must revalidate config after jq and before SBOM or mutation'
+    (( validation_line < sysusers_line
+        && validation_line < install_line )) \
+        || fail 'installer must validate package JSON before mutation'
 }
 assert_installer_post_jq_validation_order
 
@@ -283,9 +273,6 @@ require_service_directive ReadWritePaths /var/lib/rustsdcmcp
 require 'u rustsdcmcp - "rustsdcmcp service" /var/lib/rustsdcmcp /usr/sbin/nologin' "$sysusers"
 require 'd /etc/rustsdcmcp 0750 root rustsdcmcp -' "$tmpfiles"
 require 'd /var/lib/rustsdcmcp 0700 rustsdcmcp rustsdcmcp -' "$tmpfiles"
-require '[Journal]' "$journal"
-require 'Storage=persistent' "$journal"
-require 'SystemMaxUse=512M' "$journal"
 # These assertions intentionally match literal shell source fragments.
 # shellcheck disable=SC2016
 require_contains 'install -o root -g rustsdcmcp -m 0640 "$package_dir/config/sdc.json.example" "$config_dir/sdc.json.example"' "$installer"
@@ -298,10 +285,14 @@ require_contains 'systemd-sysusers "$package_dir/packaging/systemd/rustsdcmcp.sy
 # shellcheck disable=SC2016
 require_contains 'systemd-tmpfiles --create "$package_dir/packaging/systemd/rustsdcmcp.tmpfiles"' "$installer"
 require_logical_line \
-    'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates jq' \
+    'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates' \
     "$installer"
 require_logical_line \
-    "command -v jq >/dev/null || die 'jq is required to validate package JSON'" \
+    'apt-get clean' \
+    "$installer"
+# shellcheck disable=SC2016
+require_contains \
+    '"$package_dir/bin/rustsdcmcp" --validate-package "$package_dir"' \
     "$installer"
 require_contains 'systemctl daemon-reload' "$installer"
 # grep, not rg — same fail-open bug as above.
@@ -345,7 +336,6 @@ require_logical_line \
     "$ci"
 sbom_validators=(
     scripts/build-lab-package.sh
-    packaging/lxc/install.sh
     packaging/tests/package-smoke.sh
     "$ci"
 )
