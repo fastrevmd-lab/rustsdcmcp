@@ -309,5 +309,8 @@ chmod 0644 "$stage_dir/SBOM.cdx.json"
 )
 validate_output_entries exact
 packaging/tests/package-smoke.sh "$archive"
+# Runs the REAL installer against a staged legacy-only root. Wired here rather
+# than left standalone: a regression guard nothing invokes is not a guard.
+packaging/tests/test-legacy-store-upgrade.sh "$archive"
 artifact_complete=1
 printf '%s\n' "built $archive"

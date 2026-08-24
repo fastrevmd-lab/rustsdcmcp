@@ -288,9 +288,17 @@ if [[ ! -e "$tokens_path" ]]; then
     if [[ -e "$legacy_tokens_path" ]]; then
         printf '%s\n' ">> Not creating $tokens_path: a token store already exists at"
         printf '%s\n' ">> $legacy_tokens_path. The server reads it via the legacy fallback and warns."
-        printf '%s\n' ">> Migrate it deliberately, then remove the old copy:"
+        printf '%s\n' ">>"
+        printf '%s\n' ">> Migrate it deliberately. The service must be RESTARTED, not reloaded:"
+        printf '%s\n' ">> the token store is bound to the path resolved at startup, so a reload"
+        printf '%s\n' ">> keeps reading the old file and later rotations and revocations would"
+        printf '%s\n' ">> silently stop applying — revoked credentials would stay active."
+        printf '%s\n' ">> Restart it through your normal procedure only if it was already"
+        printf '%s\n' ">> running — this installer deliberately never enables or starts the"
+        printf '%s\n' ">> service, and a unit left stopped must stay stopped."
         printf '%s\n' ">>   install -m 0600 -o rustsdcmcp -g rustsdcmcp $legacy_tokens_path $tokens_path"
-        printf '%s\n' ">>   rm $legacy_tokens_path"
+        printf '%s\n' ">>   <restart the unit if it was running, then confirm its state>"
+        printf '%s\n' ">>   shred -u $legacy_tokens_path   # secure erase, not rm"
     else
         printf '%s\n' '{"version":1,"tokens":[]}' >"$tokens_path"
     fi

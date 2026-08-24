@@ -1,109 +1,83 @@
 #!/usr/bin/env bash
-# Test that the token store setup logic completes when only a legacy store exists.
+# An upgrade whose live tokens are still at /etc must complete, and must not
+# create an empty store at /var/lib.
 #
-# A staged install where only the legacy store exists must:
-# - Complete the chmod/chown phase without error
-# - Leave /var/lib/rustsdcmcp/tokens.json absent
-# - Not attempt to chmod a non-existent file
+# Two failure modes this covers, both of which shipped at some point:
 #
-# This test extracts the critical logic from install.sh and verifies it handles
-# the legacy-only scenario correctly.
-
+#  1. Creating an empty primary shadows the live legacy store. The runtime
+#     prefers an existing primary, so the service starts and rejects every
+#     existing bearer token — a silent auth wipe.
+#  2. Deliberately leaving the primary absent, then chmod-ing it anyway. That
+#     returns ENOENT and `set -e` aborts the installer BEFORE the unit is
+#     installed, so the fallback cannot support upgrades at all.
+#
+# This runs the REAL installer from the built package. An earlier version of
+# this file reimplemented the installer's logic and asserted against its own
+# copy, so it passed no matter what install.sh did.
 set -euo pipefail
 
-# Test the FIXED version - conditional chmod
-echo "Testing fixed version (conditional chmod)..."
-test_dir=$(mktemp -d)
-trap 'rm -rf "$test_dir"' EXIT
+ARCHIVE="${1:?usage: test-legacy-store-upgrade.sh <package.tar.gz>}"
+[[ -f "$ARCHIVE" ]] || { echo "archive not found: $ARCHIVE" >&2; exit 1; }
 
-legacy_tokens_path="$test_dir/etc/rustsdcmcp/tokens.json"
-tokens_path="$test_dir/var/lib/rustsdcmcp/tokens.json"
-hmac_path="$test_dir/var/lib/rustsdcmcp/hmac.key"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
 
-mkdir -p "$(dirname "$legacy_tokens_path")"
-mkdir -p "$(dirname "$tokens_path")"
+tar -xzf "$ARCHIVE" -C "$WORK"
+mapfile -t roots < <(find "$WORK" -mindepth 1 -maxdepth 1 -type d -print)
+[[ "${#roots[@]}" -eq 1 ]] || { echo "archive must contain one package root" >&2; exit 1; }
+INSTALLER="${roots[0]}/packaging/lxc/install.sh"
+[[ -x "$INSTALLER" ]] || { echo "installer not executable: $INSTALLER" >&2; exit 1; }
 
-# Create legacy store
-echo '{"version":1,"tokens":[{"name":"test","hash":"abc","grants":{"tools":["*"]}}]}' > "$legacy_tokens_path"
+run_installer() {
+    SDCMCP_INSTALL_ROOT="$1" \
+        SDCMCP_INSTALL_SKIP_USER=1 \
+        SDCMCP_INSTALL_SKIP_SYSTEMD_RELOAD=1 \
+        SDCMCP_INSTALL_SKIP_RUNTIME_DEPS=1 \
+        "$INSTALLER" >"$2" 2>&1
+}
 
-# The installer's token creation logic (lines 287-297 of install.sh)
-if [[ ! -e "$tokens_path" ]]; then
-    if [[ -e "$legacy_tokens_path" ]]; then
-        # Legacy exists, so tokens_path is intentionally left absent
-        :
-    else
-        printf '%s\n' '{"version":1,"tokens":[]}' >"$tokens_path"
-    fi
-fi
-if [[ ! -e "$hmac_path" ]]; then
-    head -c 32 /dev/urandom >"$hmac_path"
-fi
+# --- Upgrade: only the legacy /etc store exists.
+UPGRADE="$WORK/upgrade"
+mkdir -p "$UPGRADE/etc/rustsdcmcp"
+printf '%s\n' '{"version":1,"tokens":[{"name":"live-token"}]}' \
+    >"$UPGRADE/etc/rustsdcmcp/tokens.json"
+chmod 0600 "$UPGRADE/etc/rustsdcmcp/tokens.json"
 
-# FIXED VERSION: conditional chmod (the fix we applied)
-chmod 0600 "$hmac_path"
-if [[ -e "$tokens_path" ]]; then
-    chmod 0600 "$tokens_path"
-fi
-
-# Verify outcomes
-if [[ -e "$tokens_path" ]]; then
-    echo "FAIL: tokens_path exists but should be absent when legacy exists"
-    exit 1
-fi
-if [[ ! -e "$legacy_tokens_path" ]]; then
-    echo "FAIL: legacy store was removed"
-    exit 1
-fi
-if [[ ! -e "$hmac_path" ]]; then
-    echo "FAIL: hmac key was not created"
+if ! run_installer "$UPGRADE" "$WORK/upgrade.log"; then
+    echo "FAIL: installer aborted on a legacy-only upgrade" >&2
+    tail -20 "$WORK/upgrade.log" >&2
     exit 1
 fi
 
-echo "PASS (fixed): chmod logic handled legacy-only scenario correctly"
-
-# Test the BROKEN version - unconditional chmod
-echo ""
-echo "Testing broken version (unconditional chmod) - should fail..."
-
-# Create a new test dir for the broken scenario
-test_dir2=$(mktemp -d)
-trap 'rm -rf "$test_dir" "$test_dir2"' EXIT
-
-legacy_tokens_path2="$test_dir2/etc/rustsdcmcp/tokens.json"
-tokens_path2="$test_dir2/var/lib/rustsdcmcp/tokens.json"
-hmac_path2="$test_dir2/var/lib/rustsdcmcp/hmac.key"
-
-mkdir -p "$(dirname "$legacy_tokens_path2")"
-mkdir -p "$(dirname "$tokens_path2")"
-
-# Create legacy store
-echo '{"version":1,"tokens":[{"name":"test","hash":"abc","grants":{"tools":["*"]}}]}' > "$legacy_tokens_path2"
-
-# The installer's token creation logic - same as before
-if [[ ! -e "$tokens_path2" ]]; then
-    if [[ -e "$legacy_tokens_path2" ]]; then
-        :
-    else
-        printf '%s\n' '{"version":1,"tokens":[]}' >"$tokens_path2"
-    fi
-fi
-if [[ ! -e "$hmac_path2" ]]; then
-    head -c 32 /dev/urandom >"$hmac_path2"
-fi
-
-# BROKEN VERSION: unconditional chmod (the bug we fixed)
-# This should fail because tokens_path2 doesn't exist
-set +e
-chmod 0600 "$tokens_path2" "$hmac_path2" 2>&1
-broken_exit=$?
-set -e
-
-if [[ $broken_exit -eq 0 ]]; then
-    echo "FAIL: broken version should have failed (chmod on non-existent file) but didn't"
+if [[ -e "$UPGRADE/var/lib/rustsdcmcp/tokens.json" ]]; then
+    echo "FAIL: created an empty primary that shadows the live legacy store" >&2
     exit 1
-else
-    echo "PASS (sabotage): broken version failed as expected (chmod returned exit code $broken_exit)"
 fi
 
-echo ""
-echo "All tests passed."
+if ! grep -q 'live-token' "$UPGRADE/etc/rustsdcmcp/tokens.json"; then
+    echo "FAIL: the legacy token store was modified" >&2
+    exit 1
+fi
+
+# The installer must have completed far enough to install the unit.
+if [[ ! -e "$UPGRADE/etc/systemd/system/rustsdcmcp.service" ]]; then
+    echo "FAIL: installer did not reach unit installation" >&2
+    tail -20 "$WORK/upgrade.log" >&2
+    exit 1
+fi
+
+# --- Fresh install: no legacy store, so an empty primary IS correct.
+FRESH="$WORK/fresh"
+mkdir -p "$FRESH"
+if ! run_installer "$FRESH" "$WORK/fresh.log"; then
+    echo "FAIL: installer aborted on a fresh install" >&2
+    tail -20 "$WORK/fresh.log" >&2
+    exit 1
+fi
+
+if [[ ! -e "$FRESH/var/lib/rustsdcmcp/tokens.json" ]]; then
+    echo "FAIL: fresh install did not create the primary token store" >&2
+    exit 1
+fi
+
+echo ">> legacy store upgrade test passed"
