@@ -328,64 +328,75 @@ async fn main() -> Result<()> {
         .context("installing token reload handler")?;
     }
 
-    match args.transport {
-        Transport::Stdio => {
-            // serve_with_ct rather than serve: `serve` does not return until
-            // the client sends `initialize`, so a token installed afterwards
-            // would miss a signal arriving during the handshake and leave the
-            // process blocked on an open stdin. The token owns the service
-            // here, and cancelling it cascades to every in-flight request
-            // context, so a signal abandons running SDC work rather than
-            // waiting out the job-poll deadline.
-            let service = match handler
-                .serve_with_ct((tokio::io::stdin(), tokio::io::stdout()), shutdown)
-                .await
-            {
-                Ok(service) => service,
-                // A signal arriving before the client sends `initialize` is the
-                // exact case this cancellation path exists for. rmcp reports it
-                // as ServerInitializeError::Cancelled; propagating that would
-                // exit non-zero and record a clean stop as a startup failure.
-                Err(rmcp::service::ServerInitializeError::Cancelled) => {
-                    tracing::info!("shutdown signalled before initialization; exiting cleanly");
-                    return Ok(());
-                }
-                Err(error) => {
-                    return Err(anyhow::Error::new(error)).context("starting MCP stdio service");
-                }
-            };
-            service
-                .waiting()
-                .await
-                .context("MCP stdio service exited with error")?;
+    // Bound rather than propagated with `?`, so the flush below runs whichever
+    // way serving ended. `EvidenceService::Drop` deliberately does not spool --
+    // a Drop performing network I/O turns teardown into an unpredictable stall
+    // -- so returning the error directly would lose every record the recorder
+    // still held, on exactly the failure the trail exists to describe.
+    let served: anyhow::Result<()> = async {
+        match args.transport {
+            Transport::Stdio => {
+                // serve_with_ct rather than serve: `serve` does not return until
+                // the client sends `initialize`, so a token installed afterwards
+                // would miss a signal arriving during the handshake and leave the
+                // process blocked on an open stdin. The token owns the service
+                // here, and cancelling it cascades to every in-flight request
+                // context, so a signal abandons running SDC work rather than
+                // waiting out the job-poll deadline.
+                let service = match handler
+                    .serve_with_ct((tokio::io::stdin(), tokio::io::stdout()), shutdown)
+                    .await
+                {
+                    Ok(service) => service,
+                    // A signal arriving before the client sends `initialize` is the
+                    // exact case this cancellation path exists for. rmcp reports it
+                    // as ServerInitializeError::Cancelled; propagating that would
+                    // exit non-zero and record a clean stop as a startup failure.
+                    Err(rmcp::service::ServerInitializeError::Cancelled) => {
+                        tracing::info!("shutdown signalled before initialization; exiting cleanly");
+                        return Ok(());
+                    }
+                    Err(error) => {
+                        return Err(anyhow::Error::new(error))
+                            .context("starting MCP stdio service");
+                    }
+                };
+                service
+                    .waiting()
+                    .await
+                    .context("MCP stdio service exited with error")?;
+            }
+            Transport::StreamableHttp => {
+                let address = format!("{}:{}", args.host, args.port)
+                    .parse()
+                    .with_context(|| format!("parsing {}:{}", args.host, args.port))?;
+                let tls = match (&args.tls_cert, &args.tls_key) {
+                    (Some(cert), Some(key)) => Some(
+                        mecmcp_transport::load_tls(cert, key, Arc::new(provider))
+                            .context("loading listener TLS")?,
+                    ),
+                    _ => None,
+                };
+                serve_http(
+                    handler,
+                    address,
+                    token_store,
+                    args.allowed_host,
+                    args.allowed_origin,
+                    mecmcp_transport::LimitsConfig::default(),
+                    false,
+                    args.allow_insecure_bind,
+                    tls,
+                    shutdown,
+                    Duration::from_secs(10),
+                )
+                .await?;
+            }
         }
-        Transport::StreamableHttp => {
-            let address = format!("{}:{}", args.host, args.port)
-                .parse()
-                .with_context(|| format!("parsing {}:{}", args.host, args.port))?;
-            let tls = match (&args.tls_cert, &args.tls_key) {
-                (Some(cert), Some(key)) => Some(
-                    mecmcp_transport::load_tls(cert, key, Arc::new(provider))
-                        .context("loading listener TLS")?,
-                ),
-                _ => None,
-            };
-            serve_http(
-                handler,
-                address,
-                token_store,
-                args.allowed_host,
-                args.allowed_origin,
-                mecmcp_transport::LimitsConfig::default(),
-                false,
-                args.allow_insecure_bind,
-                tls,
-                shutdown,
-                Duration::from_secs(10),
-            )
-            .await?;
-        }
+        Ok(())
     }
+    .await;
+
     // Deliver what is still spooled. The drain ships on an interval, so without
     // this every record since the last tick waits for the next start, and a
     // segment still open has never been spooled at all.
@@ -395,7 +406,7 @@ async fn main() -> Result<()> {
         tracing::error!(%error, "the SSDF evidence pipeline did not flush cleanly");
     }
 
-    Ok(())
+    served
 }
 
 #[cfg(test)]
