@@ -78,7 +78,6 @@ expected=(
     "$package_root/packaging"
     "$package_root/packaging/lxc"
     "$package_root/packaging/systemd"
-    "$package_root/packaging/journald"
     "$package_root/docs"
     "$package_root/bin/rustsdcmcp"
     "$package_root/config/sdc.json.example"
@@ -86,7 +85,6 @@ expected=(
     "$package_root/packaging/systemd/rustsdcmcp.service"
     "$package_root/packaging/systemd/rustsdcmcp.sysusers"
     "$package_root/packaging/systemd/rustsdcmcp.tmpfiles"
-    "$package_root/packaging/journald/mecmcp.conf"
     "$package_root/BUILD-INFO"
     "$package_root/SBOM.cdx.json"
     "$package_root/README.md"
@@ -319,4 +317,21 @@ if SDCMCP_INSTALL_ROOT="$work_dir/repeated-service-root" \
     printf '%s\n' 'installer accepted a repeated whitespace Service section conflict' >&2
     exit 1
 fi
+
+stale_journal_unsafe_root="$work_dir/stale-journal-unsafe-root"
+stale_journal_sentinel_dir="$work_dir/stale-journal-sentinels"
+mkdir -p "$stale_journal_unsafe_root/etc/systemd" "$stale_journal_sentinel_dir"
+printf '%s\n' stale-journal-sentinel >"$stale_journal_sentinel_dir/mecmcp.conf"
+chmod 0644 "$stale_journal_sentinel_dir/mecmcp.conf"
+ln -s "$stale_journal_sentinel_dir" "$stale_journal_unsafe_root/etc/systemd/journald.conf.d"
+if SDCMCP_INSTALL_ROOT="$stale_journal_unsafe_root" \
+    SDCMCP_INSTALL_SKIP_USER=1 \
+    SDCMCP_INSTALL_SKIP_SYSTEMD_RELOAD=1 \
+    SDCMCP_INSTALL_SKIP_RUNTIME_DEPS=1 \
+    "$installer" >/dev/null 2>&1; then
+    printf '%s\n' 'installer accepted unsafe stale journal path with symlinked parent' >&2
+    exit 1
+fi
+printf '%s\n' stale-journal-sentinel | cmp -s - "$stale_journal_sentinel_dir/mecmcp.conf"
+[[ $(stat -c %a "$stale_journal_sentinel_dir/mecmcp.conf") == 644 ]] || exit 1
 printf '%s\n' 'package smoke passed'

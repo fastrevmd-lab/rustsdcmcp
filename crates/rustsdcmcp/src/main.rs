@@ -268,18 +268,18 @@ fn validate_sbom_file(package_dir: &Path) -> Result<()> {
         ("mecmcp-transport", "0.16.0"),
     ];
 
-    let mut found_mecmcp: Vec<(String, String)> = components
-        .iter()
-        .filter_map(|c| {
-            let name = c.get("name")?.as_str()?;
-            if name.starts_with("mecmcp-") {
-                let version = c.get("version")?.as_str()?;
-                Some((name.to_string(), version.to_string()))
-            } else {
-                None
-            }
-        })
-        .collect();
+    let mut found_mecmcp: Vec<(String, String)> = Vec::new();
+    for c in components {
+        if let Some(name) = c.get("name").and_then(|n| n.as_str()).filter(|n| n.starts_with("mecmcp-")) {
+            let version = c.get("version").and_then(|v| v.as_str()).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "SBOM mecmcp-* component '{}' has missing or non-string version",
+                    name
+                )
+            })?;
+            found_mecmcp.push((name.to_string(), version.to_string()));
+        }
+    }
     found_mecmcp.sort();
 
     let expected: Vec<(String, String)> = expected_mecmcp_components
@@ -295,19 +295,24 @@ fn validate_sbom_file(package_dir: &Path) -> Result<()> {
         );
     }
 
-    // Check for forbidden strings
-    if content.contains("v0.8.0") {
+    // Check for forbidden strings in the decoded/normalized JSON tree to prevent
+    // evasion via JSON escape sequences like v0.8.0
+    // for "v0.8.0".
+    let normalized = serde_json::to_string(&value)
+        .context("re-serializing SBOM for forbidden-string validation")?;
+
+    if normalized.contains("v0.8.0") {
         anyhow::bail!("SBOM must not contain 'v0.8.0'");
     }
 
-    if content.contains("70ac3d8fb5f27db3257d11aef28bd09587f085e1") {
+    if normalized.contains("70ac3d8fb5f27db3257d11aef28bd09587f085e1") {
         anyhow::bail!("SBOM must not contain forbidden commit hash");
     }
 
     // Check for absolute paths
-    if content.contains("/home/")
-        || content.contains("/workspace/")
-        || content.contains("/workspaces/")
+    if normalized.contains("/home/")
+        || normalized.contains("/workspace/")
+        || normalized.contains("/workspaces/")
     {
         anyhow::bail!("SBOM contains an absolute repository or worktree path");
     }

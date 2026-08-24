@@ -231,7 +231,10 @@ done
 # (rustsdcmcp#97), and rustmistmcp is removing it in parallel
 # (rustmistmcp#44). The file duplicated fleet-wide audit policy and could
 # silently override it. Stopping shipping alone is insufficient — the old file
-# persists across upgrades.
+# persists across upgrades. Validate the path first to prevent escape via
+# symlinked parent directories.
+reject_unsafe_file "$stale_journal_path"
+reject_unsafe_parent_dirs "$stale_journal_path"
 if [[ -f "$stale_journal_path" ]]; then
     rm -f "$stale_journal_path"
 fi
