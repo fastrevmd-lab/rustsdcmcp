@@ -270,7 +270,11 @@ fn validate_sbom_file(package_dir: &Path) -> Result<()> {
 
     let mut found_mecmcp: Vec<(String, String)> = Vec::new();
     for c in components {
-        if let Some(name) = c.get("name").and_then(|n| n.as_str()).filter(|n| n.starts_with("mecmcp-")) {
+        if let Some(name) = c
+            .get("name")
+            .and_then(|n| n.as_str())
+            .filter(|n| n.starts_with("mecmcp-"))
+        {
             let version = c.get("version").and_then(|v| v.as_str()).ok_or_else(|| {
                 anyhow::anyhow!(
                     "SBOM mecmcp-* component '{}' has missing or non-string version",
@@ -295,24 +299,33 @@ fn validate_sbom_file(package_dir: &Path) -> Result<()> {
         );
     }
 
-    // Check for forbidden strings in the decoded/normalized JSON tree to prevent
-    // evasion via JSON escape sequences like v0.8.0
-    // for "v0.8.0".
+    // Check for forbidden strings in BOTH the raw bytes and the decoded/normalized
+    // JSON tree. Neither alone is sufficient:
+    //
+    // - raw only: a marker written as an escape sequence (`v\u0030.8.0`) decodes to
+    //   `v0.8.0` but never appears literally, so a raw search misses it.
+    // - normalized only: `serde_json` keeps the LAST value for duplicate object
+    //   members, so `{"probe":"v0.8.0","probe":"safe"}` re-serializes with the
+    //   forbidden value discarded and passes. The raw search still catches it.
+    //
+    // Searching both closes each gap with the other. Do not "simplify" this to one.
     let normalized = serde_json::to_string(&value)
         .context("re-serializing SBOM for forbidden-string validation")?;
 
-    if normalized.contains("v0.8.0") {
+    let contains_forbidden = |needle: &str| content.contains(needle) || normalized.contains(needle);
+
+    if contains_forbidden("v0.8.0") {
         anyhow::bail!("SBOM must not contain 'v0.8.0'");
     }
 
-    if normalized.contains("70ac3d8fb5f27db3257d11aef28bd09587f085e1") {
+    if contains_forbidden("70ac3d8fb5f27db3257d11aef28bd09587f085e1") {
         anyhow::bail!("SBOM must not contain forbidden commit hash");
     }
 
     // Check for absolute paths
-    if normalized.contains("/home/")
-        || normalized.contains("/workspace/")
-        || normalized.contains("/workspaces/")
+    if contains_forbidden("/home/")
+        || contains_forbidden("/workspace/")
+        || contains_forbidden("/workspaces/")
     {
         anyhow::bail!("SBOM contains an absolute repository or worktree path");
     }
