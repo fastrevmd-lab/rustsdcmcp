@@ -260,6 +260,33 @@ async fn main() -> Result<()> {
         .await
         .context("verifying SDC credential tenant scope")?;
 
+    // Built before the change manager because its coordinator takes the
+    // recorder, and started eagerly so a misconfiguration stops the server here
+    // rather than at the first change.
+    let evidence = match args.evidence.into_config() {
+        Ok(Some(config)) => {
+            tracing::info!(
+                server_id = %config.server_id,
+                run_id = %config.run_id,
+                "SSDF evidence pipeline enabled"
+            );
+            let provider = Arc::new(rustls::crypto::ring::default_provider());
+            let transport = Arc::new(
+                mecmcp_transport::evidence_transport::EvidenceHttpTransport::new(
+                    args.evidence.ca_file(),
+                    provider,
+                )
+                .context("building the SSDF evidence transport")?,
+            );
+            Some(
+                mecmcp_audit::EvidenceService::start_with_transport(config, transport)
+                    .context("starting the SSDF evidence pipeline")?,
+            )
+        }
+        Ok(None) => None,
+        Err(error) => anyhow::bail!("SSDF evidence configuration: {error}"),
+    };
+
     let changes = Arc::new(ChangeManager::load(
         client.clone(),
         config.tenant.clone(),
@@ -267,6 +294,9 @@ async fn main() -> Result<()> {
         state_file.as_deref(),
         Duration::from_secs(approval_ttl_secs),
         lab_mode,
+        evidence
+            .as_ref()
+            .map(mecmcp_audit::EvidenceService::recorder),
     )?);
     let handler = SdcHandler::new(Arc::<str>::from(config.tenant.as_str()), client, changes);
 
@@ -356,6 +386,15 @@ async fn main() -> Result<()> {
             .await?;
         }
     }
+    // Deliver what is still spooled. The drain ships on an interval, so without
+    // this every record since the last tick waits for the next start, and a
+    // segment still open has never been spooled at all.
+    if let Some(service) = evidence
+        && let Err(error) = service.shutdown()
+    {
+        tracing::error!(%error, "the SSDF evidence pipeline did not flush cleanly");
+    }
+
     Ok(())
 }
 
