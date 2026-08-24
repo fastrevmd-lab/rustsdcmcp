@@ -116,7 +116,7 @@ done <"$members_file"
 
 build_info="$work_dir/BUILD-INFO"
 tar -xOf "$archive" "$package_root/BUILD-INFO" >"$build_info"
-has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.16.0' "$build_info" || {
+has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.17.0' "$build_info" || {
     printf '%s\n' 'archive BUILD-INFO has the wrong mecmcp ref' >&2
     exit 1
 }
@@ -135,13 +135,13 @@ jq -e '
                 | [.name, .version]
             ] | sort)
             == [
-                ["mecmcp-audit", "0.16.0"],
-                ["mecmcp-auth", "0.16.0"],
-                ["mecmcp-changeset", "0.16.0"],
-                ["mecmcp-runtime", "0.16.0"],
-                ["mecmcp-secret", "0.16.0"],
-            ["mecmcp-server", "0.16.0"],
-                ["mecmcp-transport", "0.16.0"]
+                ["mecmcp-audit", "0.17.0"],
+                ["mecmcp-auth", "0.17.0"],
+                ["mecmcp-changeset", "0.17.0"],
+                ["mecmcp-runtime", "0.17.0"],
+                ["mecmcp-secret", "0.17.0"],
+            ["mecmcp-server", "0.17.0"],
+                ["mecmcp-transport", "0.17.0"]
             ]
         )
         and (tostring | contains("v0.8.0") | not)
@@ -178,8 +178,8 @@ grep -Fqx '1. Create config: install -o root -g rustsdcmcp -m 0640 /etc/rustsdcm
     printf '%s\n' 'fresh install created credentials.env' >&2
     exit 1
 }
-jq -e '. == {"version": 1, "tokens": []}' "$fresh_root/etc/rustsdcmcp/tokens.json" >/dev/null
-[[ $(stat -c %a "$fresh_root/etc/rustsdcmcp/tokens.json") == 600 ]] || exit 1
+jq -e '. == {"version": 1, "tokens": []}' "$fresh_root/var/lib/rustsdcmcp/tokens.json" >/dev/null
+[[ $(stat -c %a "$fresh_root/var/lib/rustsdcmcp/tokens.json") == 600 ]] || exit 1
 [[ $(stat -c %a "$fresh_root/etc/rustsdcmcp/audit-hmac.key") == 600 ]] || exit 1
 [[ $(wc -c <"$fresh_root/etc/rustsdcmcp/audit-hmac.key") == 32 ]] || exit 1
 [[ $(stat -c %a "$fresh_root/etc/rustsdcmcp/sdc.json.example") == 640 ]] || exit 1
@@ -189,14 +189,14 @@ mkdir -p "$stage_root/etc/rustsdcmcp" "$stage_root/var/lib/rustsdcmcp" \
     "$stage_root/etc/systemd/system"
 printf '%s\n' 'existing config' >"$stage_root/etc/rustsdcmcp/sdc.json"
 printf '%s\n' 'existing credentials' >"$stage_root/etc/rustsdcmcp/credentials.env"
-printf '%s\n' 'existing tokens' >"$stage_root/etc/rustsdcmcp/tokens.json"
+printf '%s\n' 'existing tokens' >"$stage_root/var/lib/rustsdcmcp/tokens.json"
 printf '%s\n' 'existing audit key' >"$stage_root/etc/rustsdcmcp/audit-hmac.key"
 printf '%s\n' 'existing changeset state' >"$stage_root/var/lib/rustsdcmcp/changeset-state.json"
 printf '%s\n' 'custom unit' >"$stage_root/etc/systemd/system/rustsdcmcp.service"
 preserved=(
     "$stage_root/etc/rustsdcmcp/sdc.json"
     "$stage_root/etc/rustsdcmcp/credentials.env"
-    "$stage_root/etc/rustsdcmcp/tokens.json"
+    "$stage_root/var/lib/rustsdcmcp/tokens.json"
     "$stage_root/etc/rustsdcmcp/audit-hmac.key"
     "$stage_root/var/lib/rustsdcmcp/changeset-state.json"
     "$stage_root/etc/systemd/system/rustsdcmcp.service"
@@ -214,11 +214,11 @@ sha256sum -c "$work_dir/preserved.sha256" >/dev/null
 
 unsafe_root="$work_dir/unsafe-root"
 sentinel_dir="$work_dir/sentinels"
-mkdir -p "$unsafe_root/etc/rustsdcmcp" "$sentinel_dir"
+mkdir -p "$unsafe_root/etc/rustsdcmcp" "$unsafe_root/var/lib/rustsdcmcp" "$sentinel_dir"
 printf '%s\n' token-sentinel >"$sentinel_dir/tokens"
 printf '%s\n' hmac-sentinel >"$sentinel_dir/hmac"
 chmod 0644 "$sentinel_dir/tokens" "$sentinel_dir/hmac"
-ln -s "$sentinel_dir/tokens" "$unsafe_root/etc/rustsdcmcp/tokens.json"
+ln -s "$sentinel_dir/tokens" "$unsafe_root/var/lib/rustsdcmcp/tokens.json"
 ln -s "$sentinel_dir/hmac" "$unsafe_root/etc/rustsdcmcp/audit-hmac.key"
 if SDCMCP_INSTALL_ROOT="$unsafe_root" \
     SDCMCP_INSTALL_SKIP_USER=1 \

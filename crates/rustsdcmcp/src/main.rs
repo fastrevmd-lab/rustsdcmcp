@@ -355,13 +355,13 @@ fn validate_sbom_file(package_dir: &Path) -> Result<()> {
 
     // Check mecmcp-* components
     let expected_mecmcp_components = [
-        ("mecmcp-audit", "0.16.0"),
-        ("mecmcp-auth", "0.16.0"),
-        ("mecmcp-changeset", "0.16.0"),
-        ("mecmcp-runtime", "0.16.0"),
-        ("mecmcp-secret", "0.16.0"),
-        ("mecmcp-server", "0.16.0"),
-        ("mecmcp-transport", "0.16.0"),
+        ("mecmcp-audit", "0.17.0"),
+        ("mecmcp-auth", "0.17.0"),
+        ("mecmcp-changeset", "0.17.0"),
+        ("mecmcp-runtime", "0.17.0"),
+        ("mecmcp-secret", "0.17.0"),
+        ("mecmcp-server", "0.17.0"),
+        ("mecmcp-transport", "0.17.0"),
     ];
 
     let mut found_mecmcp: Vec<(String, String)> = Vec::new();
@@ -615,11 +615,76 @@ async fn main() -> Result<()> {
     let token_store = match auth_mode {
         None => None,
         Some(AuthMode::Tokens(path)) => {
+            // Resolve token path with fallback for backward compatibility (#92).
+            // Primary: /var/lib/rustsdcmcp/tokens.json (writable under ProtectSystem=strict)
+            // Fallback: /etc/rustsdcmcp/tokens.json (legacy location, read-only to service)
+            let primary_path = PathBuf::from("/var/lib/rustsdcmcp/tokens.json");
+            let fallback_path = PathBuf::from("/etc/rustsdcmcp/tokens.json");
+
+            let resolved = if path == primary_path || path == fallback_path {
+                // CLI passed one of the standard paths; use resolve_token_path
+                mecmcp_auth::resolve_token_path(&primary_path, &fallback_path)
+                    .context("resolving token file path")?
+            } else {
+                // Non-standard path from CLI; use it directly
+                mecmcp_auth::ResolvedTokenPath {
+                    path: path.clone(),
+                    used_fallback: false,
+                    fallback_from: None,
+                }
+            };
+
+            if resolved.used_fallback {
+                tracing::warn!(
+                    primary = %primary_path.display(),
+                    fallback = %resolved.path.display(),
+                    "Token file not found at primary location; using fallback. \
+                     Migration required: move the token file to the primary location \
+                     and update any site-specific overrides."
+                );
+            }
+
             let store = Arc::new(
-                TokenStoreFile::<NoGrant>::load(&path)
-                    .with_context(|| format!("loading {}", path.display()))?,
+                TokenStoreFile::<NoGrant>::load(&resolved.path)
+                    .with_context(|| format!("loading {}", resolved.path.display()))?,
             );
-            tracing::info!(tokens = store.store().len(), "token store loaded");
+            tracing::info!(
+                tokens = store.store().len(),
+                path = %resolved.path.display(),
+                "token store loaded"
+            );
+
+            // Warn about stale secrets in the token directory (#95).
+            // Parent directory resolution: /var/lib/rustsdcmcp/tokens.json → /var/lib/rustsdcmcp
+            if let Some(token_dir) = resolved.path.parent() {
+                let token_filename = resolved
+                    .path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("tokens.json");
+
+                let stale = mecmcp_auth::find_stale_secrets(token_dir, &[token_filename]);
+                if !stale.is_empty() {
+                    tracing::warn!("Stale secret files detected in {}:", token_dir.display());
+                    for s in &stale {
+                        tracing::warn!(
+                            "  {} ({})",
+                            s.path.display(),
+                            match s.reason {
+                                mecmcp_auth::StaleReason::SupersededToken =>
+                                    "superseded token file",
+                                mecmcp_auth::StaleReason::RetiredKey => "retired TLS key",
+                                mecmcp_auth::StaleReason::Backup => "backup file",
+                            }
+                        );
+                    }
+                    tracing::warn!(
+                        "These files should be reviewed and deleted during a maintenance window. \
+                         Revocations do not reach backup copies."
+                    );
+                }
+            }
+
             Some(store)
         }
         Some(AuthMode::NoAuth) => {

@@ -1,0 +1,13 @@
+misconfigurations:
+  - id: AVD-DS-0026
+    paths:
+      - "Dockerfile"
+    statement: >-
+      No HEALTHCHECK, deliberately. The runtime is distroless: it has no shell
+      and no utilities, so a HEALTHCHECK command has nothing to execute. The
+      only available exec-form probe would be re-running the server binary,
+      which proves the file is executable and nothing about service health,
+      while spawning a second process inside a container whose entire point is
+      that it contains one. Container orchestrators (Compose healthcheck,
+      Kubernetes liveness probes) supervise the process through the runtime
+      instead. Same position as RustJunosMCP's Dockerfile.

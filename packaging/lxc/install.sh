@@ -92,7 +92,7 @@ validate_build_info() {
     grep -Eq '^git_commit=[0-9a-f]{40}$' "$build_info" || die 'BUILD-INFO commit is invalid'
     grep -Eq '^source_date_epoch=[0-9]+$' "$build_info" || die 'BUILD-INFO epoch is invalid'
     grep -Fqx 'target=x86_64-unknown-linux-gnu' "$build_info" || die 'BUILD-INFO target is invalid'
-    has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.16.0' "$build_info" || die 'BUILD-INFO mecmcp ref is invalid'
+    has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.17.0' "$build_info" || die 'BUILD-INFO mecmcp ref is invalid'
     grep -Eq '^glibc_floor=[0-9]+(\.[0-9]+)+$' "$build_info" || die 'BUILD-INFO GLIBC floor is invalid'
     grep -Eq '^rustc=rustc ' "$build_info" || die 'BUILD-INFO rustc metadata is invalid'
 }
@@ -152,7 +152,8 @@ require_service_directive() {
 
 validate_service() {
     local expected exec_start
-    expected='/usr/local/bin/rustsdcmcp --device-mapping /etc/rustsdcmcp/sdc.json --transport streamable-http --host 127.0.0.1 --port 30032 --tokens-file /etc/rustsdcmcp/tokens.json --audit-format json --audit-journald --audit-redact devices=hmac --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key'
+    # shellcheck disable=SC2016  # $STATE_DIRECTORY is a systemd variable, not a shell expansion
+    expected='/usr/local/bin/rustsdcmcp --device-mapping /etc/rustsdcmcp/sdc.json --transport streamable-http --host 127.0.0.1 --port 30032 --tokens-file /var/lib/rustsdcmcp/tokens.json --audit-format json --audit-journald --audit-log-file $STATE_DIRECTORY/audit.jsonl --audit-redact devices=hmac --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key'
     exec_start=$(extract_exec_start | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//') || die 'unit has invalid ExecStart'
     [[ "$exec_start" == "$expected" ]] || die 'unit ExecStart does not match the package policy'
     require_service_directive EnvironmentFile /etc/rustsdcmcp/credentials.env
@@ -185,7 +186,8 @@ sysusers_path=$(target_path /usr/lib/sysusers.d/rustsdcmcp.conf)
 tmpfiles_path=$(target_path /usr/lib/tmpfiles.d/rustsdcmcp.conf)
 stale_journal_path=$(target_path /etc/systemd/journald.conf.d/mecmcp.conf)
 unit_path=$(target_path /etc/systemd/system/rustsdcmcp.service)
-tokens_path=$(target_path /etc/rustsdcmcp/tokens.json)
+tokens_path=$(target_path /var/lib/rustsdcmcp/tokens.json)
+legacy_tokens_path=$(target_path /etc/rustsdcmcp/tokens.json)
 hmac_path=$(target_path /etc/rustsdcmcp/audit-hmac.key)
 
 reject_unsafe_directory() {
@@ -273,16 +275,49 @@ fi
 if (( live_install )) && [[ "$skip_user" != 1 ]]; then
     systemd-tmpfiles --create "$package_dir/packaging/systemd/rustsdcmcp.tmpfiles"
 fi
+# tokens.json moved from /etc/rustsdcmcp to /var/lib/rustsdcmcp (#92).
+#
+# Create an empty store ONLY when no legacy store exists. The runtime prefers an
+# existing primary, so writing an empty file here while the live tokens are still
+# at the legacy path would shadow them: the service starts and rejects every
+# existing bearer token. A silent auth wipe on upgrade is worse than a refusal.
+#
+# The file is never copied automatically — that would leave a duplicate secret
+# behind, which is what the stale-secret scan exists to flag.
 if [[ ! -e "$tokens_path" ]]; then
-    printf '%s\n' '{"version":1,"tokens":[]}' >"$tokens_path"
+    if [[ -e "$legacy_tokens_path" ]]; then
+        printf '%s\n' ">> Not creating $tokens_path: a token store already exists at"
+        printf '%s\n' ">> $legacy_tokens_path. The server reads it via the legacy fallback and warns."
+        printf '%s\n' ">>"
+        printf '%s\n' ">> Migrate it deliberately. The service must be RESTARTED, not reloaded:"
+        printf '%s\n' ">> the token store is bound to the path resolved at startup, so a reload"
+        printf '%s\n' ">> keeps reading the old file and later rotations and revocations would"
+        printf '%s\n' ">> silently stop applying — revoked credentials would stay active."
+        printf '%s\n' ">> Restart it through your normal procedure only if it was already"
+        printf '%s\n' ">> running — this installer deliberately never enables or starts the"
+        printf '%s\n' ">> service, and a unit left stopped must stay stopped."
+        printf '%s\n' ">>   install -m 0600 -o rustsdcmcp -g rustsdcmcp $legacy_tokens_path $tokens_path"
+        printf '%s\n' ">>   <restart the unit if it was running, then confirm its state>"
+        printf '%s\n' ">>   shred -u $legacy_tokens_path   # secure erase, not rm"
+    else
+        printf '%s\n' '{"version":1,"tokens":[]}' >"$tokens_path"
+    fi
 fi
 if [[ ! -e "$hmac_path" ]]; then
     umask 077
     head -c 32 /dev/urandom >"$hmac_path"
 fi
-chmod 0600 "$tokens_path" "$hmac_path"
+# Apply 0600 only to files that exist. tokens_path may be absent when a legacy
+# store exists, in which case the runtime serves the legacy file and warns.
+chmod 0600 "$hmac_path"
+if [[ -e "$tokens_path" ]]; then
+    chmod 0600 "$tokens_path"
+fi
 if (( live_install )); then
-    chown rustsdcmcp:rustsdcmcp "$tokens_path" "$hmac_path"
+    chown rustsdcmcp:rustsdcmcp "$hmac_path"
+    if [[ -e "$tokens_path" ]]; then
+        chown rustsdcmcp:rustsdcmcp "$tokens_path"
+    fi
 fi
 
 if [[ -e "$unit_path" ]] && ! cmp -s "$unit_path" "$package_dir/packaging/systemd/rustsdcmcp.service" && [[ "$force_unit" != 1 ]]; then

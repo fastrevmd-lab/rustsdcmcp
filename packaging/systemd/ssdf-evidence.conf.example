@@ -1,0 +1,37 @@
+# Example systemd drop-in for SSDF evidence pipeline
+#
+# This enables the evidence pipeline that sends audit records to an SSDF
+# evidence aggregator. Customize the endpoint, server-id, and CA certificate
+# path to match your deployment.
+#
+# To use:
+#   1. Copy this file to /etc/systemd/system/rustsdcmcp.service.d/ssdf-evidence.conf
+#   2. Update the endpoint URL, server-id, and CA certificate path
+#   3. Reload systemd: systemctl daemon-reload
+#   4. Restart the service: systemctl restart rustsdcmcp
+#
+# The evidence pipeline stores pending records in
+# /var/lib/rustsdcmcp/evidence-outbox.ndjson and tracks sent records in
+# evidence-ledger.ndjson. Both files are managed automatically.
+
+[Service]
+Environment=SSDF_SERVER_ID=rustsdcmcp-951
+Environment=SSDF_ENDPOINT=https://192.168.1.151:8443/api/evidence/ingest
+Environment=SSDF_CA_FILE=/etc/rustsdcmcp/ssdf-ca.pem
+ExecStart=
+ExecStart=/usr/local/bin/rustsdcmcp \
+    --device-mapping /etc/rustsdcmcp/sdc.json \
+    --transport streamable-http \
+    --host 127.0.0.1 \
+    --port 30032 \
+    --tokens-file /var/lib/rustsdcmcp/tokens.json \
+    --audit-format json \
+    --audit-journald \
+    --audit-log-file $STATE_DIRECTORY/audit.jsonl \
+    --audit-redact devices=hmac \
+    --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key \
+    --ssdf-audit-server-id ${SSDF_SERVER_ID} \
+    --ssdf-audit-endpoint ${SSDF_ENDPOINT} \
+    --ssdf-audit-ca-file ${SSDF_CA_FILE} \
+    --ssdf-audit-ledger-file $STATE_DIRECTORY/evidence-ledger.ndjson \
+    --ssdf-audit-outbox-file $STATE_DIRECTORY/evidence-outbox.ndjson

@@ -19,3 +19,4 @@ tokens.json
 test.log
 *.log
 .gstack/
+.review-codex/

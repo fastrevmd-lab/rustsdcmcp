@@ -263,13 +263,13 @@ jq -e '
             | [.name, .version]
         ] | sort)
         == [
-            ["mecmcp-audit", "0.16.0"],
-            ["mecmcp-auth", "0.16.0"],
-            ["mecmcp-changeset", "0.16.0"],
-            ["mecmcp-runtime", "0.16.0"],
-            ["mecmcp-secret", "0.16.0"],
-            ["mecmcp-server", "0.16.0"],
-            ["mecmcp-transport", "0.16.0"]
+            ["mecmcp-audit", "0.17.0"],
+            ["mecmcp-auth", "0.17.0"],
+            ["mecmcp-changeset", "0.17.0"],
+            ["mecmcp-runtime", "0.17.0"],
+            ["mecmcp-secret", "0.17.0"],
+            ["mecmcp-server", "0.17.0"],
+            ["mecmcp-transport", "0.17.0"]
         ]
     )
     and (tostring | contains("v0.8.0") | not)
@@ -309,5 +309,8 @@ chmod 0644 "$stage_dir/SBOM.cdx.json"
 )
 validate_output_entries exact
 packaging/tests/package-smoke.sh "$archive"
+# Runs the REAL installer against a staged legacy-only root. Wired here rather
+# than left standalone: a regression guard nothing invokes is not a guard.
+packaging/tests/test-legacy-store-upgrade.sh "$archive"
 artifact_complete=1
 printf '%s\n' "built $archive"

@@ -74,11 +74,11 @@ source_has_single_exact_key() {
 assert_build_info_key_contract() {
     local fixture
     fixture=$(mktemp)
-    printf '%s\n' 'mecmcp_ref=v0.16.0' >"$fixture"
-    has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.16.0' "$fixture" \
+    printf '%s\n' 'mecmcp_ref=v0.17.0' >"$fixture"
+    has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.17.0' "$fixture" \
         || fail 'singular expected BUILD-INFO mecmcp key was rejected'
     printf '%s\n' 'mecmcp_ref=v0.7.3' >>"$fixture"
-    if has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.16.0' "$fixture"; then
+    if has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.17.0' "$fixture"; then
         fail 'conflicting BUILD-INFO mecmcp key was accepted'
     fi
     rm -f -- "$fixture"
@@ -140,13 +140,13 @@ assert_exact_mecmcp_sbom_set() {
         metadata: {component: {name: "rustsdcmcp"}},
         components: [
             {name: "serde", version: "1.0.0"},
-            {name: "mecmcp-audit", version: "0.16.0"},
-            {name: "mecmcp-auth", version: "0.16.0"},
-            {name: "mecmcp-changeset", version: "0.16.0"},
-            {name: "mecmcp-runtime", version: "0.16.0"},
-            {name: "mecmcp-secret", version: "0.16.0"},
-            {name: "mecmcp-server", version: "0.16.0"},
-            {name: "mecmcp-transport", version: "0.16.0"}
+            {name: "mecmcp-audit", version: "0.17.0"},
+            {name: "mecmcp-auth", version: "0.17.0"},
+            {name: "mecmcp-changeset", version: "0.17.0"},
+            {name: "mecmcp-runtime", version: "0.17.0"},
+            {name: "mecmcp-secret", version: "0.17.0"},
+            {name: "mecmcp-server", version: "0.17.0"},
+            {name: "mecmcp-transport", version: "0.17.0"}
         ]
     }')
     jq -e "$filter" <<<"$valid" >/dev/null \
@@ -179,7 +179,8 @@ installer=packaging/lxc/install.sh
 ci=.github/workflows/ci.yml
 tmpfiles=packaging/systemd/rustsdcmcp.tmpfiles
 sysusers=packaging/systemd/rustsdcmcp.sysusers
-expected_exec='/usr/local/bin/rustsdcmcp --device-mapping /etc/rustsdcmcp/sdc.json --transport streamable-http --host 127.0.0.1 --port 30032 --tokens-file /etc/rustsdcmcp/tokens.json --audit-format json --audit-journald --audit-redact devices=hmac --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key'
+# shellcheck disable=SC2016  # $STATE_DIRECTORY is a systemd variable, not a shell expansion
+expected_exec='/usr/local/bin/rustsdcmcp --device-mapping /etc/rustsdcmcp/sdc.json --transport streamable-http --host 127.0.0.1 --port 30032 --tokens-file /var/lib/rustsdcmcp/tokens.json --audit-format json --audit-journald --audit-log-file $STATE_DIRECTORY/audit.jsonl --audit-redact devices=hmac --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key'
 
 assert_upload_step_policy() {
     local mutated condition
@@ -311,16 +312,16 @@ fi
 # a source-text match would pass while the manifest said something else, and it
 # would forbid single-sourcing the ref into the generated package README.
 mapfile -t builder_mecmcp_refs < <(grep -oP 'tag = "\K[^"]+' Cargo.toml | sort -u)
-[[ ${#builder_mecmcp_refs[@]} -eq 1 && ${builder_mecmcp_refs[0]} == 'v0.16.0' ]] \
+[[ ${#builder_mecmcp_refs[@]} -eq 1 && ${builder_mecmcp_refs[0]} == 'v0.17.0' ]] \
     || fail "Cargo.toml must pin exactly one approved mecmcp tag, found: ${builder_mecmcp_refs[*]-none}"
 # shellcheck disable=SC2016  # literal source fragment, not an expansion
 grep -Fq 'mecmcp_ref=$mecmcp_ref' scripts/build-lab-package.sh \
     || fail 'builder must emit the derived mecmcp BUILD-INFO key'
 require_logical_line \
-    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.16.0' \"\$build_info\" || die 'BUILD-INFO mecmcp ref is invalid'" \
+    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.17.0' \"\$build_info\" || die 'BUILD-INFO mecmcp ref is invalid'" \
     "$installer"
 require_logical_line \
-    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.16.0' \"\$build_info\" || {" \
+    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.17.0' \"\$build_info\" || {" \
     packaging/tests/package-smoke.sh
 for build_info_consumer in "$installer" packaging/tests/package-smoke.sh; do
     # shellcheck disable=SC2016
@@ -332,7 +333,7 @@ for build_info_consumer in "$installer" packaging/tests/package-smoke.sh; do
         "$build_info_consumer"
 done
 require_logical_line \
-    "printf '%s\n' \"\$build_info\" | awk -F= -v expected='mecmcp_ref=v0.16.0' '\$1 == \"mecmcp_ref\" { count += 1; matches += (\$0 == expected) } END { exit !(count == 1 && matches == 1) }'" \
+    "printf '%s\n' \"\$build_info\" | awk -F= -v expected='mecmcp_ref=v0.17.0' '\$1 == \"mecmcp_ref\" { count += 1; matches += (\$0 == expected) } END { exit !(count == 1 && matches == 1) }'" \
     "$ci"
 sbom_validators=(
     scripts/build-lab-package.sh
@@ -340,13 +341,13 @@ sbom_validators=(
     "$ci"
 )
 required_mecmcp_pairs=(
-    '["mecmcp-audit", "0.16.0"],'
-    '["mecmcp-auth", "0.16.0"],'
-    '["mecmcp-changeset", "0.16.0"],'
-    '["mecmcp-runtime", "0.16.0"],'
-    '["mecmcp-secret", "0.16.0"],'
-    '["mecmcp-server", "0.16.0"],'
-    '["mecmcp-transport", "0.16.0"]'
+    '["mecmcp-audit", "0.17.0"],'
+    '["mecmcp-auth", "0.17.0"],'
+    '["mecmcp-changeset", "0.17.0"],'
+    '["mecmcp-runtime", "0.17.0"],'
+    '["mecmcp-secret", "0.17.0"],'
+    '["mecmcp-server", "0.17.0"],'
+    '["mecmcp-transport", "0.17.0"]'
 )
 for validator in "${sbom_validators[@]}"; do
     require_logical_line \
