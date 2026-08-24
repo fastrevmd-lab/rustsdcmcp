@@ -187,6 +187,7 @@ tmpfiles_path=$(target_path /usr/lib/tmpfiles.d/rustsdcmcp.conf)
 stale_journal_path=$(target_path /etc/systemd/journald.conf.d/mecmcp.conf)
 unit_path=$(target_path /etc/systemd/system/rustsdcmcp.service)
 tokens_path=$(target_path /var/lib/rustsdcmcp/tokens.json)
+legacy_tokens_path=$(target_path /etc/rustsdcmcp/tokens.json)
 hmac_path=$(target_path /etc/rustsdcmcp/audit-hmac.key)
 
 reject_unsafe_directory() {
@@ -274,8 +275,25 @@ fi
 if (( live_install )) && [[ "$skip_user" != 1 ]]; then
     systemd-tmpfiles --create "$package_dir/packaging/systemd/rustsdcmcp.tmpfiles"
 fi
+# tokens.json moved from /etc/rustsdcmcp to /var/lib/rustsdcmcp (#92).
+#
+# Create an empty store ONLY when no legacy store exists. The runtime prefers an
+# existing primary, so writing an empty file here while the live tokens are still
+# at the legacy path would shadow them: the service starts and rejects every
+# existing bearer token. A silent auth wipe on upgrade is worse than a refusal.
+#
+# The file is never copied automatically — that would leave a duplicate secret
+# behind, which is what the stale-secret scan exists to flag.
 if [[ ! -e "$tokens_path" ]]; then
-    printf '%s\n' '{"version":1,"tokens":[]}' >"$tokens_path"
+    if [[ -e "$legacy_tokens_path" ]]; then
+        printf '%s\n' ">> Not creating $tokens_path: a token store already exists at"
+        printf '%s\n' ">> $legacy_tokens_path. The server reads it via the legacy fallback and warns."
+        printf '%s\n' ">> Migrate it deliberately, then remove the old copy:"
+        printf '%s\n' ">>   install -m 0600 -o rustsdcmcp -g rustsdcmcp $legacy_tokens_path $tokens_path"
+        printf '%s\n' ">>   rm $legacy_tokens_path"
+    else
+        printf '%s\n' '{"version":1,"tokens":[]}' >"$tokens_path"
+    fi
 fi
 if [[ ! -e "$hmac_path" ]]; then
     umask 077
