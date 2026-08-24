@@ -1,0 +1,2 @@
+# Trivy reads this automatically when run from the repository root.
+ignorefile: .trivyignore.yaml

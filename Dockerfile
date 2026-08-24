@@ -44,6 +44,11 @@ FROM gcr.io/distroless/cc-debian13@sha256:1b0d1c77030ef9df4f53b9aee5d9086f6d6b8c
 # Run as nonroot user (UID 65532)
 USER 65532:65532
 
+# No HEALTHCHECK: distroless has no shell and no utilities, so there is nothing
+# for a healthcheck command to run. Orchestrators supervise the process via the
+# container runtime. Suppressed explicitly in .trivyignore.yaml (AVD-DS-0026)
+# rather than silently, so the decision is reviewable.
+
 # Copy the server binary
 COPY --from=builder /build/target/release/rustsdcmcp /usr/local/bin/rustsdcmcp
 
