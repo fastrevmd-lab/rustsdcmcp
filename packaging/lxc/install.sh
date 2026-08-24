@@ -92,7 +92,7 @@ validate_build_info() {
     grep -Eq '^git_commit=[0-9a-f]{40}$' "$build_info" || die 'BUILD-INFO commit is invalid'
     grep -Eq '^source_date_epoch=[0-9]+$' "$build_info" || die 'BUILD-INFO epoch is invalid'
     grep -Fqx 'target=x86_64-unknown-linux-gnu' "$build_info" || die 'BUILD-INFO target is invalid'
-    has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.16.0' "$build_info" || die 'BUILD-INFO mecmcp ref is invalid'
+    has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.17.0' "$build_info" || die 'BUILD-INFO mecmcp ref is invalid'
     grep -Eq '^glibc_floor=[0-9]+(\.[0-9]+)+$' "$build_info" || die 'BUILD-INFO GLIBC floor is invalid'
     grep -Eq '^rustc=rustc ' "$build_info" || die 'BUILD-INFO rustc metadata is invalid'
 }
@@ -152,7 +152,8 @@ require_service_directive() {
 
 validate_service() {
     local expected exec_start
-    expected='/usr/local/bin/rustsdcmcp --device-mapping /etc/rustsdcmcp/sdc.json --transport streamable-http --host 127.0.0.1 --port 30032 --tokens-file /etc/rustsdcmcp/tokens.json --audit-format json --audit-journald --audit-redact devices=hmac --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key'
+    # shellcheck disable=SC2016  # $STATE_DIRECTORY is a systemd variable, not a shell expansion
+    expected='/usr/local/bin/rustsdcmcp --device-mapping /etc/rustsdcmcp/sdc.json --transport streamable-http --host 127.0.0.1 --port 30032 --tokens-file /var/lib/rustsdcmcp/tokens.json --audit-format json --audit-journald --audit-log-file $STATE_DIRECTORY/audit.jsonl --audit-redact devices=hmac --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key'
     exec_start=$(extract_exec_start | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//') || die 'unit has invalid ExecStart'
     [[ "$exec_start" == "$expected" ]] || die 'unit ExecStart does not match the package policy'
     require_service_directive EnvironmentFile /etc/rustsdcmcp/credentials.env
@@ -185,7 +186,7 @@ sysusers_path=$(target_path /usr/lib/sysusers.d/rustsdcmcp.conf)
 tmpfiles_path=$(target_path /usr/lib/tmpfiles.d/rustsdcmcp.conf)
 stale_journal_path=$(target_path /etc/systemd/journald.conf.d/mecmcp.conf)
 unit_path=$(target_path /etc/systemd/system/rustsdcmcp.service)
-tokens_path=$(target_path /etc/rustsdcmcp/tokens.json)
+tokens_path=$(target_path /var/lib/rustsdcmcp/tokens.json)
 hmac_path=$(target_path /etc/rustsdcmcp/audit-hmac.key)
 
 reject_unsafe_directory() {
