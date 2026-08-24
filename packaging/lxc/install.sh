@@ -299,9 +299,17 @@ if [[ ! -e "$hmac_path" ]]; then
     umask 077
     head -c 32 /dev/urandom >"$hmac_path"
 fi
-chmod 0600 "$tokens_path" "$hmac_path"
+# Apply 0600 only to files that exist. tokens_path may be absent when a legacy
+# store exists, in which case the runtime serves the legacy file and warns.
+chmod 0600 "$hmac_path"
+if [[ -e "$tokens_path" ]]; then
+    chmod 0600 "$tokens_path"
+fi
 if (( live_install )); then
-    chown rustsdcmcp:rustsdcmcp "$tokens_path" "$hmac_path"
+    chown rustsdcmcp:rustsdcmcp "$hmac_path"
+    if [[ -e "$tokens_path" ]]; then
+        chown rustsdcmcp:rustsdcmcp "$tokens_path"
+    fi
 fi
 
 if [[ -e "$unit_path" ]] && ! cmp -s "$unit_path" "$package_dir/packaging/systemd/rustsdcmcp.service" && [[ "$force_unit" != 1 ]]; then
