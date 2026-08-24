@@ -52,10 +52,10 @@ target_path() {
 required_files=(
     bin/rustsdcmcp config/sdc.json.example packaging/lxc/install.sh
     packaging/systemd/rustsdcmcp.service packaging/systemd/rustsdcmcp.sysusers
-    packaging/systemd/rustsdcmcp.tmpfiles packaging/journald/mecmcp.conf
+    packaging/systemd/rustsdcmcp.tmpfiles
     BUILD-INFO SBOM.cdx.json README.md LICENSE SECURITY.md docs/operations.md
 )
-required_dirs=(bin config packaging packaging/lxc packaging/systemd packaging/journald docs)
+required_dirs=(bin config packaging packaging/lxc packaging/systemd docs)
 
 validate_layout() {
     local entry type file_count=0 dir_count=0
@@ -97,54 +97,13 @@ validate_build_info() {
     grep -Eq '^rustc=rustc ' "$build_info" || die 'BUILD-INFO rustc metadata is invalid'
 }
 
-validate_sbom() {
-    local sbom="$package_dir/SBOM.cdx.json"
-    jq -e '
-        .bomFormat == "CycloneDX"
-        and (.metadata.component.name == "rustsdcmcp")
-        and (.components | type == "array" and length > 0)
-        and any(.components[]; .name == "serde")
-        and (
-            ([
-                .components[]
-                | select(.name? | strings | startswith("mecmcp-"))
-                | [.name, .version]
-            ] | sort)
-            == [
-                ["mecmcp-audit", "0.16.0"],
-                ["mecmcp-auth", "0.16.0"],
-                ["mecmcp-changeset", "0.16.0"],
-                ["mecmcp-runtime", "0.16.0"],
-                ["mecmcp-secret", "0.16.0"],
-            ["mecmcp-server", "0.16.0"],
-                ["mecmcp-transport", "0.16.0"]
-            ]
-        )
-        and (tostring | contains("v0.8.0") | not)
-        and (tostring | contains("70ac3d8fb5f27db3257d11aef28bd09587f085e1") | not)
-    ' "$sbom" >/dev/null || die 'SBOM lacks required CycloneDX metadata or components'
-    ! grep -Eq '"/(home|workspace|workspaces)/' "$sbom" \
-        || die 'SBOM contains an absolute repository or worktree path'
+validate_package_json() {
+    # Validation moved to the rustsdcmcp binary itself via --validate-package.
+    # The binary validates both config/sdc.json.example and SBOM.cdx.json.
+    "$package_dir/bin/rustsdcmcp" --validate-package "$package_dir" \
+        || die 'package JSON validation failed'
 }
 
-validate_config() {
-    local config="$package_dir/config/sdc.json.example"
-    if command -v jq >/dev/null; then
-        jq -e '
-            .version == 1
-            and (.tenant | type == "string" and length > 0)
-            and (.credential_env | type == "string" and length > 0)
-            and (.endpoint | type == "string" and startswith("https://"))
-            and .changeset_state_file == "/var/lib/rustsdcmcp/changeset-state.json"
-        ' "$config" >/dev/null || die 'config example is not operationally valid JSON'
-    else
-        if ! grep -Fq '"version": 1' "$config" \
-            || ! grep -Fq '"changeset_state_file": "/var/lib/rustsdcmcp/changeset-state.json"' "$config" \
-            || ! grep -Fq '"endpoint": "https://' "$config"; then
-            die 'config example fails dependency-free validation'
-        fi
-    fi
-}
 
 extract_exec_start() {
     awk '
@@ -205,7 +164,7 @@ validate_package() {
     validate_layout
     bash -n "$package_dir/packaging/lxc/install.sh"
     validate_build_info
-    validate_config
+    validate_package_json
     validate_service
     grep -Fqx 'u rustsdcmcp - "rustsdcmcp service" /var/lib/rustsdcmcp /usr/sbin/nologin' "$package_dir/packaging/systemd/rustsdcmcp.sysusers" || die 'sysusers declaration is invalid'
     grep -Fqx 'd /etc/rustsdcmcp 0750 root rustsdcmcp -' "$package_dir/packaging/systemd/rustsdcmcp.tmpfiles" || die 'config tmpfiles declaration is invalid'
@@ -224,7 +183,7 @@ state_dir=$(target_path /var/lib/rustsdcmcp)
 bin_path=$(target_path /usr/local/bin/rustsdcmcp)
 sysusers_path=$(target_path /usr/lib/sysusers.d/rustsdcmcp.conf)
 tmpfiles_path=$(target_path /usr/lib/tmpfiles.d/rustsdcmcp.conf)
-journal_path=$(target_path /etc/systemd/journald.conf.d/mecmcp.conf)
+stale_journal_path=$(target_path /etc/systemd/journald.conf.d/mecmcp.conf)
 unit_path=$(target_path /etc/systemd/system/rustsdcmcp.service)
 tokens_path=$(target_path /etc/rustsdcmcp/tokens.json)
 hmac_path=$(target_path /etc/rustsdcmcp/audit-hmac.key)
@@ -261,12 +220,21 @@ reject_unsafe_parent_dirs "$config_dir/.parent-validation"
 reject_unsafe_parent_dirs "$state_dir/.parent-validation"
 managed_destinations=(
     "$bin_path" "$config_dir/sdc.json.example" "$sysusers_path" "$tmpfiles_path"
-    "$journal_path" "$unit_path" "$tokens_path" "$hmac_path"
+    "$unit_path" "$tokens_path" "$hmac_path"
 )
 for destination in "${managed_destinations[@]}"; do
     reject_unsafe_file "$destination"
     reject_unsafe_parent_dirs "$destination"
 done
+
+# Remove stale mecmcp.conf if present. This repo no longer ships it
+# (rustsdcmcp#97), and rustmistmcp is removing it in parallel
+# (rustmistmcp#44). The file duplicated fleet-wide audit policy and could
+# silently override it. Stopping shipping alone is insufficient — the old file
+# persists across upgrades.
+if [[ -f "$stale_journal_path" ]]; then
+    rm -f "$stale_journal_path"
+fi
 
 if (( live_install )); then
     if [[ "$skip_user" == 1 ]]; then
@@ -276,13 +244,12 @@ if (( live_install )); then
     fi
     if [[ "$skip_runtime_deps" != 1 ]]; then
         [[ -f /etc/debian_version ]] || die 'live installation requires Debian'
-        apt-get update
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates jq
+        apt-get update -qq
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates
+        apt-get clean
+        rm -rf /var/lib/apt/lists/*
     fi
 fi
-command -v jq >/dev/null || die 'jq is required to validate package JSON'
-validate_config
-validate_sbom
 if (( live_install )) && [[ "$skip_user" != 1 ]]; then
     systemd-sysusers "$package_dir/packaging/systemd/rustsdcmcp.sysusers"
 fi
@@ -290,11 +257,10 @@ fi
 install -d -m 0750 "$config_dir"
 install -d -m 0700 "$state_dir"
 install -d -m 0755 "$(dirname -- "$bin_path")" "$(dirname -- "$sysusers_path")" \
-    "$(dirname -- "$tmpfiles_path")" "$(dirname -- "$journal_path")" "$(dirname -- "$unit_path")"
+    "$(dirname -- "$tmpfiles_path")" "$(dirname -- "$unit_path")"
 install -m 0755 "$package_dir/bin/rustsdcmcp" "$bin_path"
 install -m 0644 "$package_dir/packaging/systemd/rustsdcmcp.sysusers" "$sysusers_path"
 install -m 0644 "$package_dir/packaging/systemd/rustsdcmcp.tmpfiles" "$tmpfiles_path"
-install -m 0644 "$package_dir/packaging/journald/mecmcp.conf" "$journal_path"
 if (( live_install )) && getent group rustsdcmcp >/dev/null; then
     install -o root -g rustsdcmcp -m 0640 "$package_dir/config/sdc.json.example" "$config_dir/sdc.json.example"
 else

@@ -92,7 +92,7 @@ build_dir=$(mktemp -d)
 trap cleanup EXIT
 stage_dir="$build_dir/$package_root"
 mkdir -p "$stage_dir/bin" "$stage_dir/config" "$stage_dir/packaging/lxc" \
-    "$stage_dir/packaging/systemd" "$stage_dir/packaging/journald" "$stage_dir/docs"
+    "$stage_dir/packaging/systemd" "$stage_dir/docs"
 
 install -m 0755 target/release/rustsdcmcp "$stage_dir/bin/rustsdcmcp"
 # The source example is intentionally retained unchanged; the package carries
@@ -103,7 +103,6 @@ install -m 0755 packaging/lxc/install.sh "$stage_dir/packaging/lxc/install.sh"
 install -m 0644 packaging/systemd/rustsdcmcp.service "$stage_dir/packaging/systemd/rustsdcmcp.service"
 install -m 0644 packaging/systemd/rustsdcmcp.sysusers "$stage_dir/packaging/systemd/rustsdcmcp.sysusers"
 install -m 0644 packaging/systemd/rustsdcmcp.tmpfiles "$stage_dir/packaging/systemd/rustsdcmcp.tmpfiles"
-install -m 0644 packaging/journald/mecmcp.conf "$stage_dir/packaging/journald/mecmcp.conf"
 install -m 0644 LICENSE SECURITY.md "$stage_dir/"
 install -m 0644 docs/operations.md "$stage_dir/docs/operations.md"
 
