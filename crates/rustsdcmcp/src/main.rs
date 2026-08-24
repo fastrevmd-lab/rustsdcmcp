@@ -206,6 +206,102 @@ fn validate_config_file(package_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Parse JSON while rejecting duplicate object members.
+///
+/// `serde_json::Value` silently keeps the **last** value for a repeated name.
+/// For a supply-chain gate that is a bypass, not a convenience: a forbidden
+/// marker can be hidden in a member that is then discarded by a duplicate.
+///
+/// Neither surface of the forbidden-string check sees it on its own —
+///
+/// ```text
+/// {"version":"\u0076\u0030\u002e\u0038\u002e\u0030","version":"safe"}
+/// ```
+///
+/// — the raw bytes contain no literal `v0.8.0` because it is escaped, and the
+/// re-serialized tree contains only `safe` because the duplicate collapsed it.
+/// Composing the two techniques defeats both checks, which is why parsing has
+/// to refuse the shape rather than the checks chasing every encoding of it.
+///
+/// RFC 8259 says object names SHOULD be unique; a shipped SBOM with repeated
+/// members is malformed, so rejecting is correct as well as safe.
+fn parse_json_rejecting_duplicate_keys(text: &str) -> Result<serde_json::Value> {
+    struct Strict(serde_json::Value);
+
+    struct StrictVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for StrictVisitor {
+        type Value = Strict;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("JSON with unique object member names")
+        }
+
+        fn visit_unit<E>(self) -> std::result::Result<Strict, E> {
+            Ok(Strict(serde_json::Value::Null))
+        }
+
+        fn visit_bool<E>(self, v: bool) -> std::result::Result<Strict, E> {
+            Ok(Strict(v.into()))
+        }
+
+        fn visit_i64<E>(self, v: i64) -> std::result::Result<Strict, E> {
+            Ok(Strict(v.into()))
+        }
+
+        fn visit_u64<E>(self, v: u64) -> std::result::Result<Strict, E> {
+            Ok(Strict(v.into()))
+        }
+
+        fn visit_f64<E>(self, v: f64) -> std::result::Result<Strict, E> {
+            Ok(Strict(v.into()))
+        }
+
+        fn visit_str<E>(self, v: &str) -> std::result::Result<Strict, E> {
+            Ok(Strict(v.into()))
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> std::result::Result<Strict, A::Error>
+        where
+            A: serde::de::SeqAccess<'de>,
+        {
+            let mut items = Vec::new();
+            while let Some(Strict(v)) = seq.next_element::<Strict>()? {
+                items.push(v);
+            }
+            Ok(Strict(serde_json::Value::Array(items)))
+        }
+
+        fn visit_map<A>(self, mut map: A) -> std::result::Result<Strict, A::Error>
+        where
+            A: serde::de::MapAccess<'de>,
+        {
+            let mut out = serde_json::Map::new();
+            while let Some(key) = map.next_key::<String>()? {
+                let Strict(value) = map.next_value::<Strict>()?;
+                if out.insert(key.clone(), value).is_some() {
+                    return Err(serde::de::Error::custom(format!(
+                        "duplicate object member '{key}'"
+                    )));
+                }
+            }
+            Ok(Strict(serde_json::Value::Object(out)))
+        }
+    }
+
+    impl<'de> serde::Deserialize<'de> for Strict {
+        fn deserialize<D>(d: D) -> std::result::Result<Strict, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            d.deserialize_any(StrictVisitor)
+        }
+    }
+
+    let Strict(value) = serde_json::from_str::<Strict>(text)?;
+    Ok(value)
+}
+
 /// Validate package SBOM file.
 ///
 /// Checks that SBOM.cdx.json:
@@ -220,8 +316,8 @@ fn validate_sbom_file(package_dir: &Path) -> Result<()> {
     let content = fs::read_to_string(&sbom_path)
         .with_context(|| format!("reading {}", sbom_path.display()))?;
 
-    let value: serde_json::Value =
-        serde_json::from_str(&content).context("SBOM is not valid JSON")?;
+    let value = parse_json_rejecting_duplicate_keys(&content)
+        .context("SBOM is not valid JSON with unique object members")?;
 
     // Check bomFormat
     if value.get("bomFormat").and_then(|v| v.as_str()) != Some("CycloneDX") {

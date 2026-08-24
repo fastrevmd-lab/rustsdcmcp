@@ -146,3 +146,32 @@ fn rejects_absolute_build_paths() {
         "absolute build paths must not survive into a shipped SBOM"
     );
 }
+
+#[test]
+fn rejects_marker_escaped_inside_a_discarded_duplicate() {
+    // The composition of the previous two techniques, and the one that defeated
+    // the two-surface check: the forbidden marker is escaped (so the raw bytes
+    // never contain it) AND sits in a member that a later duplicate discards
+    // (so the re-serialized tree never contains it either).
+    //
+    // The fix is not a third search surface — it is refusing the shape. An SBOM
+    // with repeated object members is malformed per RFC 8259 and is rejected at
+    // parse time.
+    let sbom = sbom_with_extra(
+        r#"{"name":"probe","version":"\u0076\u0030\u002e\u0038\u002e\u0030","version":"safe"}"#,
+    );
+    assert!(
+        !sbom.contains("v0.8.0"),
+        "fixture bug: the marker must not appear literally, or this test proves nothing"
+    );
+    let out = validate(&sbom);
+    assert!(
+        !out.status.success(),
+        "an escaped marker inside a discarded duplicate member must not validate"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("duplicate object member"),
+        "expected rejection at parse time naming the duplicate, got:\n{stderr}"
+    );
+}
