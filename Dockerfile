@@ -8,9 +8,9 @@
 # both sides satisfies this. Building on a newer base (Debian 14+) would link
 # against a newer glibc that the Debian 13 runtime does not carry.
 
-# Builder stage: Debian 13 slim with Rust 1.97
+# Builder stage: Debian 13 slim with Rust 1.98
 # Pinned to the amd64 digest resolved on 2026-08-25.
-FROM rust:1.97-slim-trixie@sha256:fc0648ac2962539be80bd424729a20fd80f7b64bfba7e90bbd642aed6c697c5a AS builder
+FROM rust:1.98-slim-trixie@sha256:90fd7674d9f6c35662cbf59ec39c32175511a1b7f49e39adcbe91b7420e5e972 AS builder
 
 WORKDIR /build
 
