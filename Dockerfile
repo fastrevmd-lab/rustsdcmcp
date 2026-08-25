@@ -9,7 +9,8 @@
 # against a newer glibc that the Debian 13 runtime does not carry.
 
 # Builder stage: Debian 13 slim with Rust 1.97
-FROM rust:1.97-slim-trixie AS builder
+# Pinned to the amd64 digest resolved on 2026-08-25.
+FROM rust:1.97-slim-trixie@sha256:fc0648ac2962539be80bd424729a20fd80f7b64bfba7e90bbd642aed6c697c5a AS builder
 
 WORKDIR /build
 

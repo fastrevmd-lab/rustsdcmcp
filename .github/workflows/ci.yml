@@ -43,6 +43,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@39b0b3842c7e8bbf6904c0bfc3d9006fdd4dc4e0 # 1.88.0
       - run: cargo +1.88 check --workspace --all-targets --locked
 
+  docker-build:
+    name: Docker image build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Build Docker image
+        run: docker build --tag rustsdcmcp:ci .
+
   packaging:
     name: Lab package
     runs-on: ubuntu-24.04
