@@ -10,6 +10,81 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
 operational: container image support, remote audit-journal forwarding, broader
 live validation, and a tool surface that covers a minority of the SDC API.
 
+## `v0.1.0-lab.10` — 2026-08-25
+
+Measured against the preceding **`v0.1.0-lab.9`** tag, not against intermediate
+untagged commits. The **Unreleased** block below is byte-identical to lab.9 and
+therefore describes surface that tag already carried — it does not cover
+anything in this release.
+
+### Added — action required for existing tokens
+
+- **`prepare_sdc_device_inventory_sync` and `apply_sdc_device_inventory_sync`**
+  (#21) take `KNOWN_TOOLS` from 52 to 54. Both are **write** tools, gated by a
+  change set. They reconcile *inventory*, not configuration.
+
+  **Existing bearer tokens will not see them until re-minted.** Tokens carry
+  explicit tool scopes, so a token issued against lab.9 keeps working for the
+  52 tools it names and silently omits the two new ones — which presents as a
+  broken upgrade rather than as a scoping decision.
+
+- **Templates as a read family** (#33).
+- **Three residual read families** that fit the generic resource pair, with the
+  four that do not documented rather than forced (#83).
+- **SSDF evidence pipeline** (mecmcp#292), flushed even when serving ends in an
+  error.
+
+### Fixed
+
+- **`get_sdc_change_set_details` works at all** (#81). It was created keyed by
+  tenant and looked up by endpoint, so it could never find a change set.
+- **License write-path before-state is projected to callers** (#55), and an
+  unprojectable before-state is now withheld rather than failing the call.
+  Previously the raw upstream before-state bypassed the read-path allowlist.
+- A `2xx` whose body could not be read is treated as the sync having landed,
+  and the job id and per-device results survive acceptance (#21).
+- The installer `chmod`s only files that actually exist during a legacy
+  upgrade.
+- The packaging SBOM check rejects duplicate members instead of chasing
+  encodings, closing a duplicate-key bypass.
+
+### Security
+
+- **Tier-2 hardening.** `tokens.json` moves to `/var/lib/rustsdcmcp`, the unit
+  gains `--audit-log-file $STATE_DIRECTORY/audit.jsonl`, stale secrets are
+  scanned for, and the container image is built and checked in CI.
+
+  The systemd unit's *sandboxing* is unchanged: `NoNewPrivileges`,
+  `ProtectSystem`, `PrivateDevices`, namespace restrictions and syscall filters
+  were already present at lab.9. Named here only so this entry is not read as
+  claiming they arrived in lab.10.
+- **The legacy token store is no longer shadowed by an empty one.** An upgrade
+  that found an empty primary could mask a populated legacy store, which reads
+  as "every credential was rejected" rather than as a packaging fault.
+
+### Changed
+
+- **`mecmcp` 0.11.0 -> 0.19.0.** That is the jump from the lab.9 baseline;
+  0.17.0 was an intermediate untagged step. This repo pins mecmcp at an exact
+  version in **ten** files — `Cargo.toml`, `Cargo.lock`,
+  `crates/rustsdcmcp/tests/mecmcp_dependency_contract.rs`,
+  `crates/rustsdcmcp/tests/sbom_validation.rs`,
+  `crates/rustsdcmcp/src/main.rs`, `.github/workflows/ci.yml`,
+  `scripts/verify-packaging.sh`,
+  `scripts/build-lab-package.sh`, `packaging/lxc/install.sh`, and
+  `packaging/tests/package-smoke.sh` (which hard-codes the BUILD-INFO and SBOM
+  versions on top of the package set). The guards are exact, so a partial bump
+  fails the build rather than shipping a mixed package.
+- `rmcp` 3.1.1 -> 3.1.4.
+- Pinned toolchain moved to 1.98.0, with a CI toolchain-pin guard and a PR
+  image build. The Docker builder must match the pin rather than drift ahead.
+- Dependabot now watches the Dockerfile.
+
+### Documentation
+
+- Recorded what this server is not for (#34), and why the distroless image has
+  no `HEALTHCHECK`.
+
 ## Unreleased
 
 ### Added
