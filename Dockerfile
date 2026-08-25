@@ -9,7 +9,7 @@
 # against a newer glibc that the Debian 13 runtime does not carry.
 
 # Builder stage: Debian 13 slim with Rust 1.97
-FROM rust:1.98-slim-trixie AS builder
+FROM rust:1.97-slim-trixie AS builder
 
 WORKDIR /build
 
