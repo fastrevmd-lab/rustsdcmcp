@@ -116,7 +116,7 @@ done <"$members_file"
 
 build_info="$work_dir/BUILD-INFO"
 tar -xOf "$archive" "$package_root/BUILD-INFO" >"$build_info"
-has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.17.0' "$build_info" || {
+has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.19.0' "$build_info" || {
     printf '%s\n' 'archive BUILD-INFO has the wrong mecmcp ref' >&2
     exit 1
 }
@@ -135,13 +135,13 @@ jq -e '
                 | [.name, .version]
             ] | sort)
             == [
-                ["mecmcp-audit", "0.17.0"],
-                ["mecmcp-auth", "0.17.0"],
-                ["mecmcp-changeset", "0.17.0"],
-                ["mecmcp-runtime", "0.17.0"],
-                ["mecmcp-secret", "0.17.0"],
-            ["mecmcp-server", "0.17.0"],
-                ["mecmcp-transport", "0.17.0"]
+                ["mecmcp-audit", "0.19.0"],
+                ["mecmcp-auth", "0.19.0"],
+                ["mecmcp-changeset", "0.19.0"],
+                ["mecmcp-runtime", "0.19.0"],
+                ["mecmcp-secret", "0.19.0"],
+            ["mecmcp-server", "0.19.0"],
+                ["mecmcp-transport", "0.19.0"]
             ]
         )
         and (tostring | contains("v0.8.0") | not)

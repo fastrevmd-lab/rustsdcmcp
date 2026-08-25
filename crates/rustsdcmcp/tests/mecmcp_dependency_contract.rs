@@ -28,9 +28,9 @@ const LOCKED_PACKAGES: [&str; 7] = [
     "mecmcp-server",
     "mecmcp-transport",
 ];
-const VERSION: &str = "0.17.0";
-const TAG: &str = "v0.17.0";
-const COMMIT: &str = "e30411a12e032a13970ff6def34a67493b63c445";
+const VERSION: &str = "0.19.0";
+const TAG: &str = "v0.19.0";
+const COMMIT: &str = "654f13082d3bb79dbd571fcbaaeb17fcec2c218f";
 const REPOSITORY: &str = "https://github.com/fastrevmd-lab/mecmcp";
 
 fn validate_mecmcp_lockfile(lock: &str) -> Result<(), String> {
