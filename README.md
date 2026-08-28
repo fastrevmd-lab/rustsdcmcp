@@ -31,10 +31,6 @@ I/O therefore protect the management plane rather than merely decorate it.
 
 ## Current status
 
-`rustsdcmcp` is available to repository collaborators as the private
-[`v0.1.0-lab.5` prerelease](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.1.0-lab.5),
-which targets `0b3a661c3c680bae1f03356e999731828db63b3d`.
-
 It exposes **48 MCP tools**: 37 bounded read tools and 11 change-control
 tools. For contrast, the earlier `v0.1.0-lab.4` exposed 17 — 14 read tools and
 three write tools — so most of the current surface postdates it.
