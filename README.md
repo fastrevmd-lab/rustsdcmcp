@@ -31,9 +31,10 @@ I/O therefore protect the management plane rather than merely decorate it.
 
 ## Current status
 
-It exposes **48 MCP tools**: 37 bounded read tools and 11 change-control
-tools. For contrast, the earlier `v0.1.0-lab.4` exposed 17 — 14 read tools and
-three write tools — so most of the current surface postdates it.
+`rustsdcmcp` **v0.0.1** exposes **54 MCP tools**: 40 bounded read tools and 14
+change-control tools. The surface covers the part of the SDC API that manages
+SRX devices and their policy; the rest of the product's API is deliberately out
+of scope.
 
 Every mutation is reachable only through prepare → independent approval →
 apply. A wildcard token scope deliberately grants no write tool, so each must be
@@ -65,39 +66,40 @@ transport and scope preflight were replaced afterwards in `e28d0cc` and
 Observed response shapes and the remaining endpoint questions are tracked in
 [`docs/sdc-api/README.md`](docs/sdc-api/README.md#still-unverified).
 
-## Private prerelease
+## Download
 
-Repository collaborators can download the private
-[`v0.1.0-lab.5` prerelease](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.1.0-lab.5)
-and verify its archive:
+Assets for the current release are on the
+[`v0.0.1` release page](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.0.1).
+The Debian archive is commit-addressed and ships with a sibling `.sha256`:
 
 ```console
-gh release download v0.1.0-lab.5 \
+gh release download v0.0.1 \
   --repo fastrevmd-lab/rustsdcmcp \
-  --pattern 'rustsdcmcp_0.1.0-lab.20260812.0b3a661c3c68_amd64.tar.gz*'
-sha256sum -c rustsdcmcp_0.1.0-lab.20260812.0b3a661c3c68_amd64.tar.gz.sha256
-sha256sum rustsdcmcp_0.1.0-lab.20260812.0b3a661c3c68_amd64.tar.gz
+  --pattern 'rustsdcmcp_0.0.1.*_amd64.tar.gz*'
+sha256sum -c rustsdcmcp_0.0.1.*_amd64.tar.gz.sha256
 ```
 
-The final command must print:
+Take the expected checksum from the release page over an authenticated
+connection. A `.sha256` carried alongside the tarball only proves that the two
+files agree, so it is not independent evidence of either.
 
-```text
-e46e17473728b8b056fd2aba2bcc7749e4061b3fca908940f6ee3b3c8662275c  rustsdcmcp_0.1.0-lab.20260812.0b3a661c3c68_amd64.tar.gz
-```
+A `linux/amd64` container image is published for the same tag to
+`ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.1`.
 
 ## Build from approved source
 
-Rust 1.88 is pinned by `rust-toolchain.toml`. In an approved clone containing
-the authorized commit, operators must first bind their detached checkout to
-that commit before building, testing, or packaging:
+`rust-toolchain.toml` pins the build toolchain at 1.98.0; the declared MSRV in
+`Cargo.toml` is 1.88. Operators must bind their checkout to the commit they
+intend to ship before building, testing, or packaging — the release tag is the
+usual choice:
 
 ```console
-approved_commit=0b3a661c3c680bae1f03356e999731828db63b3d
+approved_commit=$(git rev-parse v0.0.1^{commit})
 git checkout --detach "$approved_commit"
 test "$(git rev-parse HEAD)" = "$approved_commit"
 cargo build --release --locked
 cargo test --workspace --locked
-scripts/build-lab-package.sh
+scripts/build-package.sh
 cp examples/sdc.example.json /secure/operator/path/sdc.json
 ```
 
@@ -109,7 +111,9 @@ records only the archive basename:
 
 ```console
 artifact_dir="dist/$approved_commit"
-archive="$artifact_dir/rustsdcmcp_0.1.0-lab.20260812.0b3a661c3c68_amd64.tar.gz"
+mapfile -t archives < <(find "$artifact_dir" -maxdepth 1 -type f -name 'rustsdcmcp_*_amd64.tar.gz' -print)
+test "${#archives[@]}" -eq 1
+archive="${archives[0]}"
 (cd "$artifact_dir" && sha256sum -c "$(basename "$archive").sha256")
 package_root=$(tar -tzf "$archive" | sed -n '1s#/.*##p')
 test -n "$package_root"
@@ -121,7 +125,7 @@ tar -xOf "$archive" "$package_root/BUILD-INFO" | grep -Fx "git_commit=$approved_
 Prerequisites:
 
 - Debian 13 AMD64; an unprivileged LXC is recommended.
-- 1 vCPU, 512 MiB RAM, 512 MiB swap, and 4 GiB disk for the lab profile.
+- 1 vCPU, 512 MiB RAM, 512 MiB swap, and 4 GiB disk for the minimum profile.
 - Working DNS and time synchronization, plus outbound HTTPS to
   `api.sdcloud.juniperclouds.net`.
 - Root or equivalent operator access inside the LXC.
@@ -130,7 +134,9 @@ After downloading the release assets, install the verified package:
 
 ```bash
 set -euo pipefail
-archive=rustsdcmcp_0.1.0-lab.20260812.0b3a661c3c68_amd64.tar.gz
+mapfile -t archives < <(find . -maxdepth 1 -type f -name 'rustsdcmcp_0.0.1.*_amd64.tar.gz' -print)
+test "${#archives[@]}" -eq 1
+archive="${archives[0]}"
 sha256sum -c "$archive.sha256"
 package_root=$(tar -tzf "$archive" | sed -n '1s#/.*##p')
 test -n "$package_root"
@@ -162,10 +168,10 @@ already be mode `0600`; the output is a one-time bearer token.
 sudo /usr/local/bin/rustsdcmcp token add \
   --tokens-file /etc/rustsdcmcp/tokens.json \
   --device-mapping /etc/rustsdcmcp/sdc.json \
-  --name lab-read \
+  --name sdc-read \
   --devices production \
   --tools get_sdc_tenant_scope,list_sdc_devices,get_sdc_device,list_sdc_firewall_policies,get_sdc_firewall_policy,list_sdc_nat_policies,get_sdc_nat_policy,list_sdc_resources,get_sdc_resource,get_sdc_preview_status,get_sdc_deploy_status,get_sdc_preview_device_result,get_sdc_deploy_device_result,get_sdc_change_set \
-  --actor-type human > /secure/local/path/rustsdcmcp-lab-read-token
+  --actor-type human > /secure/local/path/rustsdcmcp-sdc-read-token
 ```
 
 Start the service and access it through an authenticated SSH tunnel:
@@ -317,39 +323,35 @@ published here; each operator supplies their own.
 
 ## Roadmap
 
-1. First-class Docker image and Compose support with secret injection, health
-   checks, and release documentation.
-2. Adopt the shared change-set CLI standard — `--lab-mode`, `--state-file`,
-   `--approval-timeout-secs`, and `parse_for` so `--version` answers instead of
-   erroring (#54).
-3. Add remote audit-journal forwarding for non-lab operation.
-4. Expand bounded live validation across the remaining read endpoints, then
-   exercise write workflows only through approved change control.
-5. Publish a stable release after the upstream and operational blockers clear.
+`v0.0.1` is the first full release; everything before it was published as a
+prerelease. It ships the Debian archive and a container image, and the shared change-set CLI standard — `--lab-mode`,
+`--state-file`, `--approval-timeout-secs`, and a `--version` that answers — is
+already adopted (#54). What remains:
+
+1. Compose support with secret injection and health checks, on top of the
+   published image.
+2. Remote audit-journal forwarding, so the trail does not stay on the host that
+   produced it.
+3. Broader bounded live validation across the remaining read endpoints, with
+   write workflows exercised only through approved change control.
+4. Wider API coverage. The tool surface is a minority of the SDC API by
+   design — IAM and subscriptions are excluded outright — but several in-scope
+   families are simply unbuilt.
 
 ## Relationship to `mecmcp`
 
 [`mecmcp`](https://github.com/fastrevmd-lab/mecmcp) is the vendor-neutral Rust
 foundation shared by the mechub MCP server family. This repository consumes it,
-rather than forking it. Current source pins all six shared crates —
-`mecmcp-audit`, `mecmcp-auth`, `mecmcp-changeset`, `mecmcp-runtime`,
-`mecmcp-server`, and `mecmcp-transport` — to `v0.8.0`.
-
-`v0.1.0-lab.5` is the first prerelease built on `v0.8.0`. Earlier ones predate
-that adoption: `v0.1.0-lab.4` pins `changeset-v0.3.7`, and `v0.1.0-lab.1` pins
-`changeset-v0.3.6`.
+rather than forking it. `v0.0.1` pins all six shared crates — `mecmcp-audit`,
+`mecmcp-auth`, `mecmcp-changeset`, `mecmcp-runtime`, `mecmcp-server`, and
+`mecmcp-transport` — to `v0.21.0`.
 
 **The compatibility blocker is cleared.** Earlier revisions of this section
-said public `v0.1.0` was blocked until 59 temporary compatibility declarations
-were replaced by one coherent upstream release. That happened: the local
-`compat/` layer was deleted in #36 on the move to mecmcp 0.7.2, and the
-compatibility ledger itself was removed in `369f9bb` on the move to 0.8.0.
-There are no temporary compatibility symbols left, and no ledger to track.
-
-What still gates a public `v0.1.0` is operational rather than upstream, and is
-listed under [Roadmap](#roadmap): container image support, remote audit-journal
-forwarding, and broader live validation. The tool surface is also still
-incomplete — the open issues track roughly 180 unimplemented API operations.
+said a release was blocked until 59 temporary compatibility declarations were
+replaced by one coherent upstream release. That happened: the local `compat/`
+layer was deleted in #36 on the move to mecmcp 0.7.2, and the compatibility
+ledger itself was removed in `369f9bb` on the move to 0.8.0. There are no
+temporary compatibility symbols left, and no ledger to track.
 
 ## API provenance
 
