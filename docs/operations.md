@@ -1,9 +1,9 @@
 # Operations
 
-## Lab deployment boundary
+## Artifact boundary
 
-This package is for a controlled lab deployment only. Its archive is named
-`rustsdcmcp_0.1.0-lab.YYYYMMDD.<source-commit-12>_amd64.tar.gz` and is paired
+Every archive is commit-addressed. It is named
+`rustsdcmcp_0.0.1.YYYYMMDD.<source-commit-12>_amd64.tar.gz` and is paired
 with a sibling `.sha256` file under `dist/<full-source-commit>/`. Select the
 approved full source commit explicitly; never glob across `dist/`. The checksum
 contains the archive basename, so verify it from that commit directory:
@@ -18,21 +18,18 @@ test "${#archives[@]}" -eq 1
 
 Current source pins all six shared `mecmcp` crates — `mecmcp-audit`,
 `mecmcp-auth`, `mecmcp-changeset`, `mecmcp-runtime`, `mecmcp-server`, and
-`mecmcp-transport` — to `v0.8.0`. The published `v0.1.0-lab.4` prerelease
-predates that adoption and pins `changeset-v0.3.7`; the older `v0.1.0-lab.1`
-pins `changeset-v0.3.6`. The immutable acceptance
-record for the original lab deployment is
+`mecmcp-transport` — to `v0.21.0`. The immutable acceptance record for the
+original lab deployment, built before any of the tagged releases, is
 [`lab-deployment-606.md`](lab-deployment-606.md).
 
 The temporary compatibility symbols this section used to warn about are gone.
 The `compat/` layer was deleted in #36 on the move to mecmcp 0.7.2, and the
 ledger that tracked it was removed in `369f9bb` on the move to 0.8.0.
 
-There is still no public `v0.1.0` release, but the reason is now operational
-rather than upstream: container image support, remote audit-journal forwarding,
-and broader live validation are outstanding, and the tool surface covers a
-minority of the SDC API. Continue to treat `v0.1.0-lab.N` archives as private
-lab prereleases — do not publish or promote one as a general release.
+`v0.0.1` is the first full release. Remote audit-journal forwarding is still
+outstanding, live validation is partial, and the tool surface covers a minority
+of the SDC API by design. Size any deployment against those limits rather than
+against the version number.
 
 ## Installed layout and configuration
 

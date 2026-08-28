@@ -1,14 +1,52 @@
 # Changelog
 
-All entries remain unreleased publicly. The `v0.1.0-lab.N` tags are private lab
-prereleases, not public releases.
+`v0.0.1` is the first full release. The `v0.1.0-lab.N` tags that precede it
+were published as prereleases; their entries are kept below as the historical
+record and are not renumbered.
 
 The upstream blocker that previously appeared here — 59 compatibility ledger
 entries awaiting one coherent `mecmcp` release — **is cleared**. The `compat/`
 layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
-`369f9bb` on the move to 0.8.0. What still gates a public `v0.1.0` is
-operational: container image support, remote audit-journal forwarding, broader
-live validation, and a tool surface that covers a minority of the SDC API.
+`369f9bb` on the move to 0.8.0.
+
+## `v0.0.1` — 2026-08-28
+
+The first release not marked as a prerelease, cut from the surface that
+`v0.1.0-lab.10` carried plus the dependency and packaging work below. **The version number moves
+down**, from the `0.1.0` the lab archives declared to `0.0.1`, because the
+earlier number described a release that was never cut. Nothing in the tool
+surface was removed to justify it.
+
+### Changed
+
+- **Version `0.1.0` -> `0.0.1`** across the workspace, the `Cargo.lock`, and
+  the packaging chain. The archive is now
+  `rustsdcmcp_0.0.1.<date>.<source-commit-12>_amd64.tar.gz`; the `-lab.`
+  infix is gone, `BUILD-INFO` carries `version=0.0.1` and
+  `release_status=release` instead of `lab-only`, and `packaging/lxc/install.sh`
+  asserts both new values. An older archive will **not** install under this
+  installer, and vice versa — the assertions are exact-match by design.
+- **`scripts/build-lab-package.sh` is now `scripts/build-package.sh`.** Any
+  local automation calling the old path breaks; there is no shim.
+- **`mecmcp` 0.19.0 -> 0.21.0**, in the ten files that pin it exactly.
+- The CI package steps and the uploaded artifact drop their `lab` naming
+  (`rustsdcmcp-<sha>`, was `rustsdcmcp-lab-<sha>`).
+
+### Fixed
+
+- **The yanked `chacha20` 0.10.1 is out of the lockfile** (#120). It arrives
+  through `rand` -> `rmcp` -> `mecmcp-server`, so nothing here selected it
+  directly, and `cargo-deny`'s advisories check fails on a yanked crate. `main`
+  looked green only because its last run predated the yank.
+
+### Documentation
+
+- The README describes a release rather than a private prerelease, and its
+  stale claims are corrected: **54 tools (40 read, 14 change-control)**, not
+  48; the pinned build toolchain is **1.98.0** with MSRV 1.88, not 1.88 for
+  both; `mecmcp` is pinned at **v0.21.0**, not v0.8.0. The roadmap no longer
+  lists the container image or the shared change-set CLI standard (#54) as
+  outstanding — both shipped.
 
 ## `v0.1.0-lab.10` — 2026-08-25
 

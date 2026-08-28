@@ -121,7 +121,7 @@ extract_builder_sbom_filter() {
         $0 == "jq -e " quote { capture = 1; next }
         capture && index($0, quote " \"") == 1 { exit }
         capture { print }
-    ' scripts/build-lab-package.sh
+    ' scripts/build-package.sh
 }
 
 assert_exact_mecmcp_sbom_set() {
@@ -160,7 +160,7 @@ assert_exact_mecmcp_sbom_set() {
 }
 assert_exact_mecmcp_sbom_set
 
-for script in scripts/build-lab-package.sh scripts/verify-packaging.sh \
+for script in scripts/build-package.sh scripts/verify-packaging.sh \
     packaging/lxc/install.sh packaging/tests/package-smoke.sh; do
     [[ -x "$script" ]] || fail "$script must be executable"
     bash -n "$script"
@@ -191,7 +191,7 @@ assert_upload_step_policy() {
     CONDITION="$condition" awk '
         BEGIN { condition = ENVIRON["CONDITION"] }
         $0 == condition { next }
-        $0 == "      - name: Upload lab package" { print condition }
+        $0 == "      - name: Upload package" { print condition }
         { print }
     ' "$ci" >"$mutated"
     if upload_step_has_main_push_condition "$mutated"; then
@@ -304,7 +304,7 @@ fi
 if find packaging -type f \( -name 'sdc.json' -o -name 'credentials.env' \) -print -quit | grep -q .; then
     fail 'live config or credentials are present in packaging inputs'
 fi
-if ! grep -Fq 's#/var/lib/sdcmcp/changeset-state.json#/var/lib/rustsdcmcp/changeset-state.json#' scripts/build-lab-package.sh; then
+if ! grep -Fq 's#/var/lib/sdcmcp/changeset-state.json#/var/lib/rustsdcmcp/changeset-state.json#' scripts/build-package.sh; then
     fail 'builder does not package the canonical state path'
 fi
 # The builder derives this from Cargo.toml rather than repeating a literal, so
@@ -315,7 +315,7 @@ mapfile -t builder_mecmcp_refs < <(grep -oP 'tag = "\K[^"]+' Cargo.toml | sort -
 [[ ${#builder_mecmcp_refs[@]} -eq 1 && ${builder_mecmcp_refs[0]} == 'v0.21.0' ]] \
     || fail "Cargo.toml must pin exactly one approved mecmcp tag, found: ${builder_mecmcp_refs[*]-none}"
 # shellcheck disable=SC2016  # literal source fragment, not an expansion
-grep -Fq 'mecmcp_ref=$mecmcp_ref' scripts/build-lab-package.sh \
+grep -Fq 'mecmcp_ref=$mecmcp_ref' scripts/build-package.sh \
     || fail 'builder must emit the derived mecmcp BUILD-INFO key'
 require_logical_line \
     "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.21.0' \"\$build_info\" || die 'BUILD-INFO mecmcp ref is invalid'" \
@@ -336,7 +336,7 @@ require_logical_line \
     "printf '%s\n' \"\$build_info\" | awk -F= -v expected='mecmcp_ref=v0.21.0' '\$1 == \"mecmcp_ref\" { count += 1; matches += (\$0 == expected) } END { exit !(count == 1 && matches == 1) }'" \
     "$ci"
 sbom_validators=(
-    scripts/build-lab-package.sh
+    scripts/build-package.sh
     packaging/tests/package-smoke.sh
     "$ci"
 )
@@ -372,16 +372,16 @@ assert_builder_preserves_unsafe_output_entries() {
     fixture=$(mktemp -d)
     fake_bin="$fixture/fake-bin"
     mkdir -p "$fixture/scripts" "$fake_bin"
-    cp scripts/build-lab-package.sh "$fixture/scripts/build-lab-package.sh"
-    chmod 0755 "$fixture/scripts/build-lab-package.sh"
+    cp scripts/build-package.sh "$fixture/scripts/build-package.sh"
+    chmod 0755 "$fixture/scripts/build-package.sh"
     printf '%s\n' 'dist/' 'fake-bin/' 'outside/' >"$fixture/.gitignore"
     git -C "$fixture" init -q
     git -C "$fixture" config user.email packaging-test@example.invalid
     git -C "$fixture" config user.name packaging-test
-    git -C "$fixture" add .gitignore scripts/build-lab-package.sh
+    git -C "$fixture" add .gitignore scripts/build-package.sh
     git -C "$fixture" commit -qm 'test fixture'
     commit=$(git -C "$fixture" rev-parse HEAD)
-    archive="$fixture/dist/$commit/rustsdcmcp_0.1.0-lab.$(date -u -d "@$(git -C "$fixture" show -s --format=%ct HEAD)" +%Y%m%d).${commit:0:12}_amd64.tar.gz"
+    archive="$fixture/dist/$commit/rustsdcmcp_0.0.1.$(date -u -d "@$(git -C "$fixture" show -s --format=%ct HEAD)" +%Y%m%d).${commit:0:12}_amd64.tar.gz"
     checksum="${archive}.sha256"
     cat >"$fake_bin/trivy" <<'EOF'
 #!/usr/bin/env bash
@@ -398,7 +398,7 @@ EOF
     printf '%s\n' sentinel-archive >"$outside/$(basename -- "$archive")"
     printf '%s\n' sentinel-checksum >"$outside/$(basename -- "$checksum")"
     ln -s "$outside" "$fixture/dist/$commit"
-    if (cd "$fixture" && PATH="$fake_bin:$PATH" scripts/build-lab-package.sh) >/dev/null 2>&1; then
+    if (cd "$fixture" && PATH="$fake_bin:$PATH" scripts/build-package.sh) >/dev/null 2>&1; then
         fail 'builder accepted a symlinked commit artifact directory'
     fi
     [[ -f "$outside/$(basename -- "$archive")" && -f "$outside/$(basename -- "$checksum")" ]] \
@@ -410,7 +410,7 @@ EOF
     printf '%s\n' sentinel-checksum >"$checksum"
     extra="$fixture/dist/$commit/unexpected-artifact"
     printf '%s\n' sentinel-extra >"$extra"
-    if (cd "$fixture" && PATH="$fake_bin:$PATH" scripts/build-lab-package.sh) >/dev/null 2>&1; then
+    if (cd "$fixture" && PATH="$fake_bin:$PATH" scripts/build-package.sh) >/dev/null 2>&1; then
         fail 'builder accepted an artifact directory with an extra entry'
     fi
     [[ -f "$archive" && -f "$checksum" && -f "$extra" ]] \
@@ -431,7 +431,7 @@ systemd-analyze --root="$verification_root" verify /etc/systemd/system/rustsdcmc
 
 git_commit=$(git rev-parse HEAD)
 package_date=$(date -u -d "@$(git show -s --format=%ct HEAD)" +%Y%m%d)
-archive="dist/$git_commit/rustsdcmcp_0.1.0-lab.${package_date}.${git_commit:0:12}_amd64.tar.gz"
+archive="dist/$git_commit/rustsdcmcp_0.0.1.${package_date}.${git_commit:0:12}_amd64.tar.gz"
 if [[ -f "$archive" ]]; then
     packaging/tests/package-smoke.sh "$archive"
 fi

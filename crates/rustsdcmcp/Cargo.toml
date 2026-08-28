@@ -22,7 +22,7 @@ tokio-util.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 thiserror.workspace = true
-rustsdcmcp-core = { version = "0.1.0", path = "../rustsdcmcp-core" }
+rustsdcmcp-core = { version = "0.0.1", path = "../rustsdcmcp-core" }
 mecmcp-audit.workspace = true
 mecmcp-auth.workspace = true
 mecmcp-changeset.workspace = true
