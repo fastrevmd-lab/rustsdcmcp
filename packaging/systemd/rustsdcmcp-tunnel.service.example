@@ -1,0 +1,157 @@
+# A durable SSH tunnel to the rustsdcmcp listener, for an operator workstation.
+#
+# The server binds 127.0.0.1:30032 and is not exposed directly, so reaching it
+# means forwarding a local port. Running that by hand is fine; making it durable
+# is where it goes wrong, and this template exists because it did.
+#
+# Install as a *user* unit, not a system one -- it authenticates as you:
+#
+# Run these from the repository or extracted package root -- the path below is
+# where this file actually ships, and a bare filename fails from anywhere except
+# this directory:
+#
+#   mkdir -p ~/.config/systemd/user
+#   sed 's/@DEPLOYMENT_HOST@/your-host.example/' \
+#     packaging/systemd/rustsdcmcp-tunnel.service.example \
+#     > ~/.config/systemd/user/rustsdcmcp-tunnel.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now rustsdcmcp-tunnel.service
+#
+# Then point the MCP client at http://127.0.0.1:30032/mcp.
+
+[Unit]
+Description=SSH tunnel to the rustsdcmcp MCP listener
+Documentation=https://github.com/fastrevmd-lab/rustsdcmcp/blob/main/docs/operations.md
+# Deliberately no `Wants=network-online.target`. This is a *user* unit, and the
+# user manager has its own unit namespace -- that target lives in the system
+# manager, so the dependency resolves to nothing and delays nothing. Naming it
+# would look like readiness handling while providing none, which is the failure
+# mode this whole file exists to avoid. Offline starts are handled by the
+# budget below instead.
+
+# The reason this file exists.
+#
+# systemd's default start limit is 5 starts in 10 seconds. With RestartSec=5s a
+# unit restarts at most twice in that window, so the limit never trips and a
+# tunnel pointed at a host that no longer resolves retries every five seconds
+# forever, reporting `activating (auto-restart)` rather than a failure. One
+# built from a documented snippet did exactly that for about thirty days.
+#
+# The budget also has to survive being started offline. A user manager can come
+# up before the network does, and with no usable readiness dependency (see
+# above) those first attempts fail on DNS in milliseconds. A tight budget would
+# be spent in under a minute, leaving the tunnel `failed` for the rest of the
+# session -- permanently broken by a transient condition, which is the opposite
+# of the intent.
+#
+# 20 attempts at RestartSec=30s spans roughly ten minutes even when every
+# attempt fails instantly, and longer once ConnectTimeout is actually reached.
+# That rides out a boot-before-network or a suspend, and still makes a name that
+# has genuinely stopped resolving terminal within the hour rather than retrying
+# for thirty days.
+#
+# These numbers are one design. Raising ConnectTimeout or RestartSec without
+# raising the interval puts the limit back out of reach; shrinking the interval
+# reintroduces the offline-start failure.
+#
+# These are [Unit] keys, not [Service] ones -- they moved in systemd 229, and
+# in [Service] they are parsed, reported as "Unknown key ... ignoring", and do
+# nothing. An inert guard here would reproduce the exact bug this file exists
+# to prevent.
+StartLimitIntervalSec=3600
+StartLimitBurst=20
+
+[Service]
+Type=exec
+
+# Every option this unit depends on is set here, and `-F /dev/null` stops
+# `~/.ssh/config` supplying the rest.
+#
+# That is the point, not belt-and-braces. A matching stanza in the user's config
+# can defeat each guarantee below individually and silently:
+#
+#   ClearAllForwardings yes    -- drops even a command-line `-L`. The connection
+#                                 stays up, systemd reports the unit active, and
+#                                 nothing is listening on 30032.
+#   ForkAfterAuthentication yes -- ssh backgrounds itself after auth. systemd
+#                                 tracks the parent, which exits 0, so the unit
+#                                 is unsupervised and unrestartable despite
+#                                 `Type=exec`.
+#   ConnectionAttempts <n>     -- `ConnectTimeout` then bounds each internal try
+#                                 rather than the process, so attempts stretch
+#                                 past the rate the start limit below needs and
+#                                 the indefinite retry comes back.
+#   GatewayPorts yes           -- the forward binds a wildcard address instead of
+#                                 loopback, publishing this endpoint to the
+#                                 workstation's network.
+#
+# None of those announce themselves. `-F /dev/null` plus explicit options means
+# the unit behaves the same on every workstation, which is the only version of
+# this worth documenting. The cost is that the identity and known_hosts paths
+# must be named rather than inherited -- adjust them if yours differ.
+#
+# `IdentitiesOnly=yes` alongside `IdentityFile`, because `IdentityFile` on its
+# own only *adds* a key. On a workstation whose agent holds several, ssh offers
+# them all first and can hit the server's `MaxAuthTries` before reaching this
+# one -- an authentication failure that looks like a credential problem, and
+# that spends the restart budget below on a key that would have worked.
+#
+# `StrictHostKeyChecking=yes` because a durable tunnel to a known deployment
+# should refuse a changed host key rather than ask; with `BatchMode=yes` an
+# unknown host fails either way, so this only makes the refusal explicit.
+#
+# `-N` runs no remote command, `-T` asks for no TTY. `ExitOnForwardFailure`
+# makes ssh fail loudly when the local port is already bound instead of
+# connecting and quietly forwarding nothing.
+#
+# The forward names `127.0.0.1` explicitly, and `GatewayPorts=no` is set, rather
+# than relying on the default. An operator with `GatewayPorts yes` in
+# `~/.ssh/config` -- globally or for this host -- turns a bare
+# `-L 30032:...` into a wildcard listener, which would publish this MCP endpoint
+# to the workstation's network. The server binds loopback precisely so that
+# cannot happen; a tunnel that undoes it is worse than no tunnel, and it would
+# be silent.
+#
+# `ServerAliveInterval`/`ServerAliveCountMax` are what turn a silently dead TCP
+# connection into an exit: without them a tunnel across a dropped link stays
+# "running" while forwarding nothing, which is the failure this unit is least
+# able to notice on its own.
+#
+# `BatchMode=yes` is what makes the rest of the bounding meaningful. Without it
+# ssh may fall back to a password prompt or invoke an askpass helper from the
+# graphical session, then wait for an answer that never comes. `ConnectTimeout`
+# does not bound authentication, so an unanswered prompt hangs past every limit
+# in this file: the unit stays `activating`, the restart policy never fires, and
+# the start limit is never reached. The key must be pre-provisioned and either
+# unencrypted or already loaded into an agent the unit can reach.
+#
+# `ConnectTimeout` bounds the attempt itself. Without it a blackholed TCP
+# connect falls back to the system timeout, which can exceed two minutes -- ten
+# such attempts do not fit in the 600s window below, so the start limit would
+# never trip and the unit would retry forever. That is the same failure this
+# file exists to prevent, arrived at from the other direction: a rate limit only
+# works if attempts are faster than the window.
+ExecStart=/usr/bin/ssh -N -T \
+    -F /dev/null \
+    -o BatchMode=yes \
+    -o ExitOnForwardFailure=yes \
+    -o ClearAllForwardings=no \
+    -o ForkAfterAuthentication=no \
+    -o GatewayPorts=no \
+    -o StrictHostKeyChecking=yes \
+    -o UserKnownHostsFile=%h/.ssh/known_hosts \
+    -o IdentityFile=%h/.ssh/id_ed25519 \
+    -o IdentitiesOnly=yes \
+    -o ConnectionAttempts=1 \
+    -o ConnectTimeout=30 \
+    -o ServerAliveInterval=30 \
+    -o ServerAliveCountMax=3 \
+    -L 127.0.0.1:30032:127.0.0.1:30032 \
+    root@@DEPLOYMENT_HOST@
+
+Restart=on-failure
+RestartSec=30s
+
+
+[Install]
+WantedBy=default.target

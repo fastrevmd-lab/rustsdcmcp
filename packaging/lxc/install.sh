@@ -53,6 +53,7 @@ required_files=(
     bin/rustsdcmcp config/sdc.json.example packaging/lxc/install.sh
     packaging/systemd/rustsdcmcp.service packaging/systemd/rustsdcmcp.sysusers
     packaging/systemd/rustsdcmcp.tmpfiles
+    packaging/systemd/rustsdcmcp-tunnel.service.example
     BUILD-INFO SBOM.cdx.json README.md LICENSE SECURITY.md docs/operations.md
 )
 required_dirs=(bin config packaging packaging/lxc packaging/systemd docs)

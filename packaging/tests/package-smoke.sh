@@ -85,6 +85,7 @@ expected=(
     "$package_root/packaging/systemd/rustsdcmcp.service"
     "$package_root/packaging/systemd/rustsdcmcp.sysusers"
     "$package_root/packaging/systemd/rustsdcmcp.tmpfiles"
+    "$package_root/packaging/systemd/rustsdcmcp-tunnel.service.example"
     "$package_root/BUILD-INFO"
     "$package_root/SBOM.cdx.json"
     "$package_root/README.md"

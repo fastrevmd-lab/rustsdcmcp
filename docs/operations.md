@@ -50,16 +50,28 @@ the credential into JSON or record it in command history.
 ## Listener and lab access
 
 The systemd unit binds the Streamable HTTP endpoint only to
-`http://127.0.0.1:30032/mcp`. Do not expose this listener directly. The lab DNS
-name is exactly `rustsdcmcp.mechub.org`; access it through an authenticated SSH
-tunnel from an authorized workstation:
+`http://127.0.0.1:30032/mcp`. Do not expose this listener directly. Reach it
+through an authenticated SSH tunnel from an authorized workstation:
 
 ```console
-ssh -N -L 30032:127.0.0.1:30032 root@rustsdcmcp.mechub.org
+ssh -N -L 30032:127.0.0.1:30032 root@your-deployment-host
 ```
+
+`your-deployment-host` is supplied by whoever runs the deployment; it is not a
+constant. Earlier revisions of this document named one, and that name stopped
+resolving when the host behind it was decommissioned -- which reads like a
+local DNS fault rather than a stale document, and sends people debugging the
+wrong layer. Ask for the current address rather than copying one from a doc.
 
 Point the local MCP client at `http://127.0.0.1:30032/mcp` while the tunnel is
 open.
+
+If you make the tunnel durable, use the template in
+[`packaging/systemd/rustsdcmcp-tunnel.service.example`](../packaging/systemd/rustsdcmcp-tunnel.service.example)
+rather than hand-rolling a unit from the command above. A unit with
+`Restart=on-failure` and `RestartSec=5s` never trips systemd's default start
+limit, so a tunnel pointed at a name that no longer resolves retries every five
+seconds indefinitely and reports no failure anyone notices.
 
 ## Egress policy
 
