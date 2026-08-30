@@ -103,6 +103,9 @@ install -m 0755 packaging/lxc/install.sh "$stage_dir/packaging/lxc/install.sh"
 install -m 0644 packaging/systemd/rustsdcmcp.service "$stage_dir/packaging/systemd/rustsdcmcp.service"
 install -m 0644 packaging/systemd/rustsdcmcp.sysusers "$stage_dir/packaging/systemd/rustsdcmcp.sysusers"
 install -m 0644 packaging/systemd/rustsdcmcp.tmpfiles "$stage_dir/packaging/systemd/rustsdcmcp.tmpfiles"
+# `docs/operations.md` links to this from inside the archive, so a tarball
+# without it ships a dead link at the one place an operator is told to look.
+install -m 0644 packaging/systemd/rustsdcmcp-tunnel.service.example "$stage_dir/packaging/systemd/rustsdcmcp-tunnel.service.example"
 install -m 0644 LICENSE SECURITY.md "$stage_dir/"
 install -m 0644 docs/operations.md "$stage_dir/docs/operations.md"
 
@@ -214,7 +217,7 @@ in place first. See \`docs/operations.md\`.
 |---|---|
 | \`bin/rustsdcmcp\` | the server binary |
 | \`packaging/lxc/install.sh\` | installer; run as root |
-| \`packaging/systemd/\` | unit, sysusers, tmpfiles |
+| \`packaging/systemd/\` | unit, sysusers, tmpfiles, tunnel example |
 | \`config/sdc.json.example\` | configuration template |
 | \`docs/operations.md\` | **start here** — install layout, tokens, egress, deployment |
 | \`BUILD-INFO\`, \`SBOM.cdx.json\` | provenance |

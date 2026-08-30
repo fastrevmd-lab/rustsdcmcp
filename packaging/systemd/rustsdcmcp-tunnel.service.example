@@ -30,7 +30,10 @@ Wants=network-online.target
 #
 # A 10-minute window makes the same cadence terminal after ~10 attempts: a
 # transient network drop still recovers, a name that stopped resolving stops
-# and shows up as `failed`.
+# and shows up as `failed`. This holds only because `ConnectTimeout` bounds each
+# attempt -- 10 x (30s connect + 5s hold-off) fits inside 600s with room to
+# spare. Raising ConnectTimeout without raising this window puts the guard back
+# out of reach.
 #
 # These are [Unit] keys, not [Service] ones -- they moved in systemd 229, and
 # in [Service] they are parsed, reported as "Unknown key ... ignoring", and do
@@ -46,15 +49,32 @@ Type=exec
 # makes ssh fail loudly when the local port is already bound instead of
 # connecting and quietly forwarding nothing.
 #
+# The forward names `127.0.0.1` explicitly, and `GatewayPorts=no` is set, rather
+# than relying on the default. An operator with `GatewayPorts yes` in
+# `~/.ssh/config` -- globally or for this host -- turns a bare
+# `-L 30032:...` into a wildcard listener, which would publish this MCP endpoint
+# to the workstation's network. The server binds loopback precisely so that
+# cannot happen; a tunnel that undoes it is worse than no tunnel, and it would
+# be silent.
+#
 # `ServerAliveInterval`/`ServerAliveCountMax` are what turn a silently dead TCP
 # connection into an exit: without them a tunnel across a dropped link stays
 # "running" while forwarding nothing, which is the failure this unit is least
 # able to notice on its own.
+#
+# `ConnectTimeout` bounds the attempt itself. Without it a blackholed TCP
+# connect falls back to the system timeout, which can exceed two minutes -- ten
+# such attempts do not fit in the 600s window below, so the start limit would
+# never trip and the unit would retry forever. That is the same failure this
+# file exists to prevent, arrived at from the other direction: a rate limit only
+# works if attempts are faster than the window.
 ExecStart=/usr/bin/ssh -N -T \
     -o ExitOnForwardFailure=yes \
+    -o GatewayPorts=no \
+    -o ConnectTimeout=30 \
     -o ServerAliveInterval=30 \
     -o ServerAliveCountMax=3 \
-    -L 30032:127.0.0.1:30032 \
+    -L 127.0.0.1:30032:127.0.0.1:30032 \
     root@@DEPLOYMENT_HOST@
 
 Restart=on-failure
