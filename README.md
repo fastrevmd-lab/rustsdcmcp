@@ -344,7 +344,7 @@ already adopted (#54). What remains:
 foundation shared by the mechub MCP server family. This repository consumes it,
 rather than forking it. `v0.0.1` pins all six shared crates — `mecmcp-audit`,
 `mecmcp-auth`, `mecmcp-changeset`, `mecmcp-runtime`, `mecmcp-server`, and
-`mecmcp-transport` — to `v0.21.0`.
+`mecmcp-transport` — to `v0.23.0`.
 
 **The compatibility blocker is cleared.** Earlier revisions of this section
 said a release was blocked until 59 temporary compatibility declarations were
