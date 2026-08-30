@@ -6,9 +6,14 @@
 #
 # Install as a *user* unit, not a system one -- it authenticates as you:
 #
+# Run these from the repository or extracted package root -- the path below is
+# where this file actually ships, and a bare filename fails from anywhere except
+# this directory:
+#
 #   mkdir -p ~/.config/systemd/user
 #   sed 's/@DEPLOYMENT_HOST@/your-host.example/' \
-#     rustsdcmcp-tunnel.service.example > ~/.config/systemd/user/rustsdcmcp-tunnel.service
+#     packaging/systemd/rustsdcmcp-tunnel.service.example \
+#     > ~/.config/systemd/user/rustsdcmcp-tunnel.service
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now rustsdcmcp-tunnel.service
 #
