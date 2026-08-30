@@ -17,8 +17,12 @@
 [Unit]
 Description=SSH tunnel to the rustsdcmcp MCP listener
 Documentation=https://github.com/fastrevmd-lab/rustsdcmcp/blob/main/docs/operations.md
-After=network-online.target
-Wants=network-online.target
+# Deliberately no `Wants=network-online.target`. This is a *user* unit, and the
+# user manager has its own unit namespace -- that target lives in the system
+# manager, so the dependency resolves to nothing and delays nothing. Naming it
+# would look like readiness handling while providing none, which is the failure
+# mode this whole file exists to avoid. Offline starts are handled by the
+# budget below instead.
 
 # The reason this file exists.
 #
@@ -28,19 +32,29 @@ Wants=network-online.target
 # forever, reporting `activating (auto-restart)` rather than a failure. One
 # built from a documented snippet did exactly that for about thirty days.
 #
-# A 10-minute window makes the same cadence terminal after ~10 attempts: a
-# transient network drop still recovers, a name that stopped resolving stops
-# and shows up as `failed`. This holds only because `ConnectTimeout` bounds each
-# attempt -- 10 x (30s connect + 5s hold-off) fits inside 600s with room to
-# spare. Raising ConnectTimeout without raising this window puts the guard back
-# out of reach.
+# The budget also has to survive being started offline. A user manager can come
+# up before the network does, and with no usable readiness dependency (see
+# above) those first attempts fail on DNS in milliseconds. A tight budget would
+# be spent in under a minute, leaving the tunnel `failed` for the rest of the
+# session -- permanently broken by a transient condition, which is the opposite
+# of the intent.
+#
+# 20 attempts at RestartSec=30s spans roughly ten minutes even when every
+# attempt fails instantly, and longer once ConnectTimeout is actually reached.
+# That rides out a boot-before-network or a suspend, and still makes a name that
+# has genuinely stopped resolving terminal within the hour rather than retrying
+# for thirty days.
+#
+# These numbers are one design. Raising ConnectTimeout or RestartSec without
+# raising the interval puts the limit back out of reach; shrinking the interval
+# reintroduces the offline-start failure.
 #
 # These are [Unit] keys, not [Service] ones -- they moved in systemd 229, and
 # in [Service] they are parsed, reported as "Unknown key ... ignoring", and do
 # nothing. An inert guard here would reproduce the exact bug this file exists
 # to prevent.
-StartLimitIntervalSec=600
-StartLimitBurst=10
+StartLimitIntervalSec=3600
+StartLimitBurst=20
 
 [Service]
 Type=exec
@@ -62,6 +76,14 @@ Type=exec
 # "running" while forwarding nothing, which is the failure this unit is least
 # able to notice on its own.
 #
+# `BatchMode=yes` is what makes the rest of the bounding meaningful. Without it
+# ssh may fall back to a password prompt or invoke an askpass helper from the
+# graphical session, then wait for an answer that never comes. `ConnectTimeout`
+# does not bound authentication, so an unanswered prompt hangs past every limit
+# in this file: the unit stays `activating`, the restart policy never fires, and
+# the start limit is never reached. The key must be pre-provisioned and either
+# unencrypted or already loaded into an agent the unit can reach.
+#
 # `ConnectTimeout` bounds the attempt itself. Without it a blackholed TCP
 # connect falls back to the system timeout, which can exceed two minutes -- ten
 # such attempts do not fit in the 600s window below, so the start limit would
@@ -69,6 +91,7 @@ Type=exec
 # file exists to prevent, arrived at from the other direction: a rate limit only
 # works if attempts are faster than the window.
 ExecStart=/usr/bin/ssh -N -T \
+    -o BatchMode=yes \
     -o ExitOnForwardFailure=yes \
     -o GatewayPorts=no \
     -o ConnectTimeout=30 \
@@ -78,7 +101,7 @@ ExecStart=/usr/bin/ssh -N -T \
     root@@DEPLOYMENT_HOST@
 
 Restart=on-failure
-RestartSec=5s
+RestartSec=30s
 
 
 [Install]
