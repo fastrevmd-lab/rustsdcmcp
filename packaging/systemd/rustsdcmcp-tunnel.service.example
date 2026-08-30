@@ -59,6 +59,36 @@ StartLimitBurst=20
 [Service]
 Type=exec
 
+# Every option this unit depends on is set here, and `-F /dev/null` stops
+# `~/.ssh/config` supplying the rest.
+#
+# That is the point, not belt-and-braces. A matching stanza in the user's config
+# can defeat each guarantee below individually and silently:
+#
+#   ClearAllForwardings yes    -- drops even a command-line `-L`. The connection
+#                                 stays up, systemd reports the unit active, and
+#                                 nothing is listening on 30032.
+#   ForkAfterAuthentication yes -- ssh backgrounds itself after auth. systemd
+#                                 tracks the parent, which exits 0, so the unit
+#                                 is unsupervised and unrestartable despite
+#                                 `Type=exec`.
+#   ConnectionAttempts <n>     -- `ConnectTimeout` then bounds each internal try
+#                                 rather than the process, so attempts stretch
+#                                 past the rate the start limit below needs and
+#                                 the indefinite retry comes back.
+#   GatewayPorts yes           -- the forward binds a wildcard address instead of
+#                                 loopback, publishing this endpoint to the
+#                                 workstation's network.
+#
+# None of those announce themselves. `-F /dev/null` plus explicit options means
+# the unit behaves the same on every workstation, which is the only version of
+# this worth documenting. The cost is that the identity and known_hosts paths
+# must be named rather than inherited -- adjust them if yours differ.
+#
+# `StrictHostKeyChecking=yes` because a durable tunnel to a known deployment
+# should refuse a changed host key rather than ask; with `BatchMode=yes` an
+# unknown host fails either way, so this only makes the refusal explicit.
+#
 # `-N` runs no remote command, `-T` asks for no TTY. `ExitOnForwardFailure`
 # makes ssh fail loudly when the local port is already bound instead of
 # connecting and quietly forwarding nothing.
@@ -91,9 +121,16 @@ Type=exec
 # file exists to prevent, arrived at from the other direction: a rate limit only
 # works if attempts are faster than the window.
 ExecStart=/usr/bin/ssh -N -T \
+    -F /dev/null \
     -o BatchMode=yes \
     -o ExitOnForwardFailure=yes \
+    -o ClearAllForwardings=no \
+    -o ForkAfterAuthentication=no \
     -o GatewayPorts=no \
+    -o StrictHostKeyChecking=yes \
+    -o UserKnownHostsFile=%h/.ssh/known_hosts \
+    -o IdentityFile=%h/.ssh/id_ed25519 \
+    -o ConnectionAttempts=1 \
     -o ConnectTimeout=30 \
     -o ServerAliveInterval=30 \
     -o ServerAliveCountMax=3 \
