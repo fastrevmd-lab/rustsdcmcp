@@ -9,6 +9,18 @@ entries awaiting one coherent `mecmcp` release — **is cleared**. The `compat/`
 layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
 `369f9bb` on the move to 0.8.0.
 
+## Unreleased
+
+### Changed
+
+- **`mecmcp` 0.21.0 -> 0.23.0**, in every file that pins it exactly, plus the
+  pinned upstream commit in the dependency-contract test. 0.23.0 binds a change
+  set's preview digest into its approval digest, so an approval vouches for the
+  exact preview a reviewer saw, and the coordinator refuses any write that swaps
+  or drops a preview once an approval exists. No source change was needed here:
+  this repository does not construct `ApprovalRecord` and does not call the
+  renamed digest helpers.
+
 ## `v0.0.1` — 2026-08-28
 
 The first release not marked as a prerelease, cut from the surface that
