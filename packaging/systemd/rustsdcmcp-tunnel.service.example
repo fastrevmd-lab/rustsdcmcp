@@ -1,0 +1,65 @@
+# A durable SSH tunnel to the rustsdcmcp listener, for an operator workstation.
+#
+# The server binds 127.0.0.1:30032 and is not exposed directly, so reaching it
+# means forwarding a local port. Running that by hand is fine; making it durable
+# is where it goes wrong, and this template exists because it did.
+#
+# Install as a *user* unit, not a system one -- it authenticates as you:
+#
+#   mkdir -p ~/.config/systemd/user
+#   sed 's/@DEPLOYMENT_HOST@/your-host.example/' \
+#     rustsdcmcp-tunnel.service.example > ~/.config/systemd/user/rustsdcmcp-tunnel.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now rustsdcmcp-tunnel.service
+#
+# Then point the MCP client at http://127.0.0.1:30032/mcp.
+
+[Unit]
+Description=SSH tunnel to the rustsdcmcp MCP listener
+Documentation=https://github.com/fastrevmd-lab/rustsdcmcp/blob/main/docs/operations.md
+After=network-online.target
+Wants=network-online.target
+
+# The reason this file exists.
+#
+# systemd's default start limit is 5 starts in 10 seconds. With RestartSec=5s a
+# unit restarts at most twice in that window, so the limit never trips and a
+# tunnel pointed at a host that no longer resolves retries every five seconds
+# forever, reporting `activating (auto-restart)` rather than a failure. One
+# built from a documented snippet did exactly that for about thirty days.
+#
+# A 10-minute window makes the same cadence terminal after ~10 attempts: a
+# transient network drop still recovers, a name that stopped resolving stops
+# and shows up as `failed`.
+#
+# These are [Unit] keys, not [Service] ones -- they moved in systemd 229, and
+# in [Service] they are parsed, reported as "Unknown key ... ignoring", and do
+# nothing. An inert guard here would reproduce the exact bug this file exists
+# to prevent.
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+Type=exec
+
+# `-N` runs no remote command, `-T` asks for no TTY. `ExitOnForwardFailure`
+# makes ssh fail loudly when the local port is already bound instead of
+# connecting and quietly forwarding nothing.
+#
+# `ServerAliveInterval`/`ServerAliveCountMax` are what turn a silently dead TCP
+# connection into an exit: without them a tunnel across a dropped link stays
+# "running" while forwarding nothing, which is the failure this unit is least
+# able to notice on its own.
+ExecStart=/usr/bin/ssh -N -T \
+    -o ExitOnForwardFailure=yes \
+    -o ServerAliveInterval=30 \
+    -o ServerAliveCountMax=3 \
+    -L 30032:127.0.0.1:30032 \
+    root@@DEPLOYMENT_HOST@
+
+Restart=on-failure
+RestartSec=5s
+
+
+[Install]
+WantedBy=default.target

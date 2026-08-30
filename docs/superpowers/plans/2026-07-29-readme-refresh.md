@@ -1,5 +1,11 @@
 # README Refresh Implementation Plan
 
+> **Superseded — dated record.** Host names and deployment addresses in this
+> plan were accurate on 2026-07-29 and are not now; the lab host it names was
+> decommissioned on 2026-08-12. Kept as a record of the work, not as
+> instructions. See [`docs/operations.md`](../../operations.md) for current
+> operator guidance.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the stale project README with an accurate collaborator guide for the current private lab prerelease, source builds, and Debian 13 LXC deployment.

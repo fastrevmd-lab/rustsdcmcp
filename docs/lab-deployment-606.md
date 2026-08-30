@@ -1,5 +1,11 @@
 # VMID 606 Lab Deployment
 
+> **Historical record — this deployment no longer exists.** LXC 606 was
+> destroyed during the 2026-08-12 VMID renumber, and the DNS name recorded
+> below stopped resolving with it. Nothing here describes current state; it is
+> kept as the record of what was deployed on 2026-07-29. For how to reach a
+> running deployment, see [`operations.md`](operations.md).
+
 ## Deployment identity
 
 - Date: 2026-07-29
