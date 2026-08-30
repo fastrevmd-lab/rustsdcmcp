@@ -90,6 +90,12 @@ Type=exec
 # this worth documenting. The cost is that the identity and known_hosts paths
 # must be named rather than inherited -- adjust them if yours differ.
 #
+# `IdentitiesOnly=yes` alongside `IdentityFile`, because `IdentityFile` on its
+# own only *adds* a key. On a workstation whose agent holds several, ssh offers
+# them all first and can hit the server's `MaxAuthTries` before reaching this
+# one -- an authentication failure that looks like a credential problem, and
+# that spends the restart budget below on a key that would have worked.
+#
 # `StrictHostKeyChecking=yes` because a durable tunnel to a known deployment
 # should refuse a changed host key rather than ask; with `BatchMode=yes` an
 # unknown host fails either way, so this only makes the refusal explicit.
@@ -135,6 +141,7 @@ ExecStart=/usr/bin/ssh -N -T \
     -o StrictHostKeyChecking=yes \
     -o UserKnownHostsFile=%h/.ssh/known_hosts \
     -o IdentityFile=%h/.ssh/id_ed25519 \
+    -o IdentitiesOnly=yes \
     -o ConnectionAttempts=1 \
     -o ConnectTimeout=30 \
     -o ServerAliveInterval=30 \

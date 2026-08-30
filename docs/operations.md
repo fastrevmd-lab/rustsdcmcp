@@ -54,10 +54,10 @@ The systemd unit binds the Streamable HTTP endpoint only to
 through an authenticated SSH tunnel from an authorized workstation:
 
 ```console
-ssh -N -L 30032:127.0.0.1:30032 root@<deployment-host>
+ssh -N -L 30032:127.0.0.1:30032 root@your-deployment-host
 ```
 
-`<deployment-host>` is supplied by whoever runs the deployment; it is not a
+`your-deployment-host` is supplied by whoever runs the deployment; it is not a
 constant. Earlier revisions of this document named one, and that name stopped
 resolving when the host behind it was decommissioned -- which reads like a
 local DNS fault rather than a stale document, and sends people debugging the
