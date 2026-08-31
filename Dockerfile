@@ -10,7 +10,7 @@
 
 # Builder stage: Debian 13 slim with Rust 1.98
 # Pinned to the amd64 digest resolved on 2026-08-25.
-FROM rust:1.98-slim-trixie@sha256:90fd7674d9f6c35662cbf59ec39c32175511a1b7f49e39adcbe91b7420e5e972 AS builder
+FROM rust:1.98-slim-trixie@sha256:17d1ba895198f9934c6314ec5346a0d5115372f3243390c3d731e242f35c2f27 AS builder
 
 WORKDIR /build
 
