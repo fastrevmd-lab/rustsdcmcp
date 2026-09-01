@@ -33,7 +33,7 @@ git_commit=$(git rev-parse HEAD)
 git_sha12=${git_commit:0:12}
 source_date_epoch=$(git show -s --format=%ct HEAD)
 package_date=$(date -u -d "@$source_date_epoch" +%Y%m%d)
-package_root="rustsdcmcp_0.0.1.${package_date}.${git_sha12}_amd64"
+package_root="rustsdcmcp_0.0.2.${package_date}.${git_sha12}_amd64"
 repo_dist="$repo_root/dist"
 if [[ -e "$repo_dist" || -L "$repo_dist" ]]; then
     [[ -d "$repo_dist" && ! -L "$repo_dist" ]] || fail "artifact root is not a real directory: $repo_dist"
@@ -126,7 +126,7 @@ mapfile -t mecmcp_refs < <(grep -oP 'tag = "\K[^"]+' Cargo.toml | sort -u)
 mecmcp_ref=${mecmcp_refs[0]}
 cat >"$stage_dir/BUILD-INFO" <<EOF
 release_status=release
-version=0.0.1
+version=0.0.2
 git_commit=$git_commit
 source_date_epoch=$source_date_epoch
 target=x86_64-unknown-linux-gnu

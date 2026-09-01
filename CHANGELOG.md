@@ -11,15 +11,40 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
 
 ## Unreleased
 
+## `v0.0.2` — 2026-09-01
+
 ### Changed
 
-- **`mecmcp` 0.21.0 -> 0.23.0**, in every file that pins it exactly, plus the
-  pinned upstream commit in the dependency-contract test. 0.23.0 binds a change
-  set's preview digest into its approval digest, so an approval vouches for the
-  exact preview a reviewer saw, and the coordinator refuses any write that swaps
-  or drops a preview once an approval exists. No source change was needed here:
-  this repository does not construct `ApprovalRecord` and does not call the
-  renamed digest helpers.
+- **`mecmcp` 0.21.0 -> 0.23.0** (#124), in every file that pins it exactly,
+  plus the pinned upstream commit in the dependency-contract test. 0.23.0 binds
+  a change set's preview digest into its approval digest, so an approval
+  vouches for the exact preview a reviewer saw, and the coordinator refuses any
+  write that swaps or drops a preview once an approval exists. No source change
+  was needed here: this repository does not construct `ApprovalRecord` and does
+  not call the renamed digest helpers.
+- Dependabot weekly workflow no longer attempts to bump the git-pinned `mecmcp`
+  crates (#129), which failed every week because a registry crate cannot depend
+  on a git source.
+
+### Fixed
+
+- **The operations doc no longer names a specific deployment host** (#123),
+  which was decommissioned in the 2026-08-12 VMID renumber. Instructions now
+  use `your-deployment-host` as an operator-supplied placeholder.
+- **SSH tunnel systemd unit template that fails closed** (#123). The new
+  `packaging/systemd/rustsdcmcp-tunnel.service.example` sets start-limit keys
+  in the correct `[Unit]` section (not `[Service]`, where they are parsed but
+  ignored), uses explicit `ConnectTimeout` and restart counts that actually
+  trip the limit instead of retrying forever, binds loopback explicitly,
+  disables `~/.ssh/config` inheritance via `-F /dev/null`, and is verified by
+  `systemd-analyze verify --user` to prevent silent regressions.
+
+### Dependencies
+
+- `uuid` 1.25.0 -> 1.26.0 (#128)
+- `syn` 3.0.3 -> 3.0.4 (#127)
+- `distroless/cc-debian13` base image updated (#126)
+- `rust` toolchain image updated (#125)
 
 ## `v0.0.1` — 2026-08-28
 
