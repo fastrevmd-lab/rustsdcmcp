@@ -31,7 +31,7 @@ I/O therefore protect the management plane rather than merely decorate it.
 
 ## Current status
 
-`rustsdcmcp` **v0.0.1** exposes **54 MCP tools**: 40 bounded read tools and 14
+`rustsdcmcp` **v0.0.2** exposes **54 MCP tools**: 40 bounded read tools and 14
 change-control tools. The surface covers the part of the SDC API that manages
 SRX devices and their policy; the rest of the product's API is deliberately out
 of scope.
@@ -69,14 +69,14 @@ Observed response shapes and the remaining endpoint questions are tracked in
 ## Download
 
 Assets for the current release are on the
-[`v0.0.1` release page](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.0.1).
+[`v0.0.2` release page](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.0.2).
 The Debian archive is commit-addressed and ships with a sibling `.sha256`:
 
 ```console
-gh release download v0.0.1 \
+gh release download v0.0.2 \
   --repo fastrevmd-lab/rustsdcmcp \
-  --pattern 'rustsdcmcp_0.0.1.*_amd64.tar.gz*'
-sha256sum -c rustsdcmcp_0.0.1.*_amd64.tar.gz.sha256
+  --pattern 'rustsdcmcp_0.0.2.*_amd64.tar.gz*'
+sha256sum -c rustsdcmcp_0.0.2.*_amd64.tar.gz.sha256
 ```
 
 Take the expected checksum from the release page over an authenticated
@@ -84,7 +84,7 @@ connection. A `.sha256` carried alongside the tarball only proves that the two
 files agree, so it is not independent evidence of either.
 
 A `linux/amd64` container image is published for the same tag to
-`ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.1`.
+`ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.2`.
 
 ## Build from approved source
 
@@ -94,7 +94,7 @@ intend to ship before building, testing, or packaging — the release tag is the
 usual choice:
 
 ```console
-approved_commit=$(git rev-parse v0.0.1^{commit})
+approved_commit=$(git rev-parse v0.0.2^{commit})
 git checkout --detach "$approved_commit"
 test "$(git rev-parse HEAD)" = "$approved_commit"
 cargo build --release --locked
@@ -134,7 +134,7 @@ After downloading the release assets, install the verified package:
 
 ```bash
 set -euo pipefail
-mapfile -t archives < <(find . -maxdepth 1 -type f -name 'rustsdcmcp_0.0.1.*_amd64.tar.gz' -print)
+mapfile -t archives < <(find . -maxdepth 1 -type f -name 'rustsdcmcp_0.0.2.*_amd64.tar.gz' -print)
 test "${#archives[@]}" -eq 1
 archive="${archives[0]}"
 sha256sum -c "$archive.sha256"

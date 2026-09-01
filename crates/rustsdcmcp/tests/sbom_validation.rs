@@ -56,7 +56,7 @@ fn sbom_with_extra(extra: &str) -> String {
     }
     format!(
         r#"{{"bomFormat":"CycloneDX","specVersion":"1.5",
-"metadata":{{"component":{{"name":"rustsdcmcp","version":"0.0.1"}}}},
+"metadata":{{"component":{{"name":"rustsdcmcp","version":"0.0.2"}}}},
 "components":[{components}]}}"#
     )
 }
