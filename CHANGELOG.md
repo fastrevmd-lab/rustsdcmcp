@@ -11,6 +11,25 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
 
 ## Unreleased
 
+## `v0.0.3` — 2026-09-05
+
+### Changed
+
+- **`mecmcp` 0.23.0 -> 0.23.1** (mecmcp#351), pinned across all eleven files.
+  Currency update: removes an unnecessary `chown` syscall from the change-set
+  state write path by skipping it entirely when the replacement file's
+  ownership already matches the destination's. When the owners genuinely differ
+  the call still happens, so the fix is conditional rather than universal.
+  
+  rustsdcmcp itself was unaffected: LXC 951 (`prod-sdcmcp`) runs
+  `SystemCallFilter=~@privileged` with `SystemCallErrorNumber=EPERM`, so the
+  denied `chown` returns an error the `let _ =` swallows rather than killing
+  the process. Verified live: the 0.0.2 production binary (mecmcp v0.23.0) was
+  driven through `prepare_sdc_object_write` on LXC 615 `test-labmode-sdc`
+  (identical unit) against an already-existing `changeset-state.json` — the
+  exact branch that takes the `chown` — and the write landed without restart or
+  `status=31/SYS`.
+
 ## `v0.0.2` — 2026-09-01
 
 ### Changed

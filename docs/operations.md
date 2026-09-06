@@ -3,7 +3,7 @@
 ## Artifact boundary
 
 Every archive is commit-addressed. It is named
-`rustsdcmcp_0.0.2.YYYYMMDD.<source-commit-12>_amd64.tar.gz` and is paired
+`rustsdcmcp_0.0.3.YYYYMMDD.<source-commit-12>_amd64.tar.gz` and is paired
 with a sibling `.sha256` file under `dist/<full-source-commit>/`. Select the
 approved full source commit explicitly; never glob across `dist/`. The checksum
 contains the archive basename, so verify it from that commit directory:
@@ -18,7 +18,7 @@ test "${#archives[@]}" -eq 1
 
 Current source pins all six shared `mecmcp` crates — `mecmcp-audit`,
 `mecmcp-auth`, `mecmcp-changeset`, `mecmcp-runtime`, `mecmcp-server`, and
-`mecmcp-transport` — to `v0.23.0`. The immutable acceptance record for the
+`mecmcp-transport` — to `v0.23.1`. The immutable acceptance record for the
 original lab deployment, built before any of the tagged releases, is
 [`lab-deployment-606.md`](lab-deployment-606.md).
 

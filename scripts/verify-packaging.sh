@@ -74,11 +74,11 @@ source_has_single_exact_key() {
 assert_build_info_key_contract() {
     local fixture
     fixture=$(mktemp)
-    printf '%s\n' 'mecmcp_ref=v0.23.0' >"$fixture"
-    has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.23.0' "$fixture" \
+    printf '%s\n' 'mecmcp_ref=v0.23.1' >"$fixture"
+    has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.23.1' "$fixture" \
         || fail 'singular expected BUILD-INFO mecmcp key was rejected'
     printf '%s\n' 'mecmcp_ref=v0.7.3' >>"$fixture"
-    if has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.23.0' "$fixture"; then
+    if has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.23.1' "$fixture"; then
         fail 'conflicting BUILD-INFO mecmcp key was accepted'
     fi
     rm -f -- "$fixture"
@@ -140,13 +140,13 @@ assert_exact_mecmcp_sbom_set() {
         metadata: {component: {name: "rustsdcmcp"}},
         components: [
             {name: "serde", version: "1.0.0"},
-            {name: "mecmcp-audit", version: "0.23.0"},
-            {name: "mecmcp-auth", version: "0.23.0"},
-            {name: "mecmcp-changeset", version: "0.23.0"},
-            {name: "mecmcp-runtime", version: "0.23.0"},
-            {name: "mecmcp-secret", version: "0.23.0"},
-            {name: "mecmcp-server", version: "0.23.0"},
-            {name: "mecmcp-transport", version: "0.23.0"}
+            {name: "mecmcp-audit", version: "0.23.1"},
+            {name: "mecmcp-auth", version: "0.23.1"},
+            {name: "mecmcp-changeset", version: "0.23.1"},
+            {name: "mecmcp-runtime", version: "0.23.1"},
+            {name: "mecmcp-secret", version: "0.23.1"},
+            {name: "mecmcp-server", version: "0.23.1"},
+            {name: "mecmcp-transport", version: "0.23.1"}
         ]
     }')
     jq -e "$filter" <<<"$valid" >/dev/null \
@@ -312,16 +312,22 @@ fi
 # a source-text match would pass while the manifest said something else, and it
 # would forbid single-sourcing the ref into the generated package README.
 mapfile -t builder_mecmcp_refs < <(grep -oP 'tag = "\K[^"]+' Cargo.toml | sort -u)
-[[ ${#builder_mecmcp_refs[@]} -eq 1 && ${builder_mecmcp_refs[0]} == 'v0.23.0' ]] \
+[[ ${#builder_mecmcp_refs[@]} -eq 1 && ${builder_mecmcp_refs[0]} == 'v0.23.1' ]] \
     || fail "Cargo.toml must pin exactly one approved mecmcp tag, found: ${builder_mecmcp_refs[*]-none}"
+# The operations guide is packaged by build-package.sh:110 and must stay
+# consistent with the manifest and the package provenance. This is the eleventh
+# file that pins the mecmcp tag exactly.
+# shellcheck disable=SC2016  # backticks are literal grep pattern, not expansion
+grep -Fq '— to `v0.23.1`.' docs/operations.md \
+    || fail 'docs/operations.md must document the pinned mecmcp tag'
 # shellcheck disable=SC2016  # literal source fragment, not an expansion
 grep -Fq 'mecmcp_ref=$mecmcp_ref' scripts/build-package.sh \
     || fail 'builder must emit the derived mecmcp BUILD-INFO key'
 require_logical_line \
-    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.23.0' \"\$build_info\" || die 'BUILD-INFO mecmcp ref is invalid'" \
+    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.23.1' \"\$build_info\" || die 'BUILD-INFO mecmcp ref is invalid'" \
     "$installer"
 require_logical_line \
-    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.23.0' \"\$build_info\" || {" \
+    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.23.1' \"\$build_info\" || {" \
     packaging/tests/package-smoke.sh
 for build_info_consumer in "$installer" packaging/tests/package-smoke.sh; do
     # shellcheck disable=SC2016
@@ -333,7 +339,7 @@ for build_info_consumer in "$installer" packaging/tests/package-smoke.sh; do
         "$build_info_consumer"
 done
 require_logical_line \
-    "printf '%s\n' \"\$build_info\" | awk -F= -v expected='mecmcp_ref=v0.23.0' '\$1 == \"mecmcp_ref\" { count += 1; matches += (\$0 == expected) } END { exit !(count == 1 && matches == 1) }'" \
+    "printf '%s\n' \"\$build_info\" | awk -F= -v expected='mecmcp_ref=v0.23.1' '\$1 == \"mecmcp_ref\" { count += 1; matches += (\$0 == expected) } END { exit !(count == 1 && matches == 1) }'" \
     "$ci"
 sbom_validators=(
     scripts/build-package.sh
@@ -341,13 +347,13 @@ sbom_validators=(
     "$ci"
 )
 required_mecmcp_pairs=(
-    '["mecmcp-audit", "0.23.0"],'
-    '["mecmcp-auth", "0.23.0"],'
-    '["mecmcp-changeset", "0.23.0"],'
-    '["mecmcp-runtime", "0.23.0"],'
-    '["mecmcp-secret", "0.23.0"],'
-    '["mecmcp-server", "0.23.0"],'
-    '["mecmcp-transport", "0.23.0"]'
+    '["mecmcp-audit", "0.23.1"],'
+    '["mecmcp-auth", "0.23.1"],'
+    '["mecmcp-changeset", "0.23.1"],'
+    '["mecmcp-runtime", "0.23.1"],'
+    '["mecmcp-secret", "0.23.1"],'
+    '["mecmcp-server", "0.23.1"],'
+    '["mecmcp-transport", "0.23.1"]'
 )
 for validator in "${sbom_validators[@]}"; do
     require_logical_line \
@@ -381,7 +387,7 @@ assert_builder_preserves_unsafe_output_entries() {
     git -C "$fixture" add .gitignore scripts/build-package.sh
     git -C "$fixture" commit -qm 'test fixture'
     commit=$(git -C "$fixture" rev-parse HEAD)
-    archive="$fixture/dist/$commit/rustsdcmcp_0.0.2.$(date -u -d "@$(git -C "$fixture" show -s --format=%ct HEAD)" +%Y%m%d).${commit:0:12}_amd64.tar.gz"
+    archive="$fixture/dist/$commit/rustsdcmcp_0.0.3.$(date -u -d "@$(git -C "$fixture" show -s --format=%ct HEAD)" +%Y%m%d).${commit:0:12}_amd64.tar.gz"
     checksum="${archive}.sha256"
     cat >"$fake_bin/trivy" <<'EOF'
 #!/usr/bin/env bash
@@ -431,7 +437,7 @@ systemd-analyze --root="$verification_root" verify /etc/systemd/system/rustsdcmc
 
 git_commit=$(git rev-parse HEAD)
 package_date=$(date -u -d "@$(git show -s --format=%ct HEAD)" +%Y%m%d)
-archive="dist/$git_commit/rustsdcmcp_0.0.2.${package_date}.${git_commit:0:12}_amd64.tar.gz"
+archive="dist/$git_commit/rustsdcmcp_0.0.3.${package_date}.${git_commit:0:12}_amd64.tar.gz"
 if [[ -f "$archive" ]]; then
     packaging/tests/package-smoke.sh "$archive"
 fi

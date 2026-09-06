@@ -41,7 +41,7 @@ fn mecmcp_components() -> String {
         "mecmcp-transport",
     ]
     .iter()
-    .map(|n| format!(r#"{{"name":"{n}","version":"0.23.0"}}"#))
+    .map(|n| format!(r#"{{"name":"{n}","version":"0.23.1"}}"#))
     .collect::<Vec<_>>()
     .join(",")
 }
@@ -56,7 +56,7 @@ fn sbom_with_extra(extra: &str) -> String {
     }
     format!(
         r#"{{"bomFormat":"CycloneDX","specVersion":"1.5",
-"metadata":{{"component":{{"name":"rustsdcmcp","version":"0.0.2"}}}},
+"metadata":{{"component":{{"name":"rustsdcmcp","version":"0.0.3"}}}},
 "components":[{components}]}}"#
     )
 }
