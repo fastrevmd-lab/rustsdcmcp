@@ -11,6 +11,19 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
 
 ## Unreleased
 
+## `v0.0.4` — 2026-09-06
+
+### Changed
+
+- **Shipped systemd unit now documents the fleet seccomp posture** agreed in
+  mecmcp#354. Added a comment explaining why `SystemCallErrorNumber=EPERM` must
+  not be removed: without it systemd's default raises SIGSYS and kills the
+  process mid-request, which is what happened to rustunifimcp during a
+  change-set state write (mecmcp#351). This server was not affected precisely
+  because it already sets EPERM, and that is why the line must stay. The comment
+  also notes that an EPERM denial is silent at the systemd layer; the only place
+  it can become visible is the application, which must stop discarding the errno.
+
 ## `v0.0.3` — 2026-09-05
 
 ### Changed
