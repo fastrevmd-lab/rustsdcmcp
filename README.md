@@ -122,6 +122,8 @@ tar -xOf "$archive" "$package_root/BUILD-INFO" | grep -Fx "git_commit=$approved_
 
 ## Debian 13 LXC quick start
 
+For building an LXC from scratch, see [HOW-TO-SETUP-LXC.md](docs/HOW-TO-SETUP-LXC.md).
+
 Prerequisites:
 
 - Debian 13 AMD64; an unprivileged LXC is recommended.

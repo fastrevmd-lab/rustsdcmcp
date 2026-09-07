@@ -86,7 +86,28 @@ cleanup() {
     fi
 }
 
-cargo build --release -p rustsdcmcp --locked
+# Build unless the caller supplied a binary. Rebuilding a released version on a
+# workstation is usually the wrong thing: glibc is forward-incompatible, so a
+# binary linked against a newer glibc than the target container will not start
+# there — and it fails at service start, after the old binary has been replaced.
+# Packaging a release therefore means packaging the binary CI built, extracted
+# from the release image, which this flag allows.
+#
+# rust-junosmcp spells the same thing JMCP_PACKAGE_SKIP_BUILD=1.
+if [[ ${SDCMCP_PACKAGE_SKIP_BUILD:-0} == 1 ]]; then
+    [[ -x target/release/rustsdcmcp ]] || {
+        printf '%s\n' \
+            'SDCMCP_PACKAGE_SKIP_BUILD=1 but target/release/rustsdcmcp is missing or not executable.' \
+            'Place the binary there first, e.g. from the release image:' \
+            '  docker create --name sx ghcr.io/fastrevmd-lab/rustsdcmcp:<version>' \
+            '  docker cp sx:/usr/local/bin/rustsdcmcp target/release/rustsdcmcp' \
+            '  docker rm sx' >&2
+        exit 1
+    }
+    printf '%s\n' 'skipping cargo build: packaging the existing target/release/rustsdcmcp'
+else
+    cargo build --release -p rustsdcmcp --locked
+fi
 
 build_dir=$(mktemp -d)
 trap cleanup EXIT
