@@ -120,6 +120,10 @@ test -n "$package_root"
 tar -xOf "$archive" "$package_root/BUILD-INFO" | grep -Fx "git_commit=$approved_commit"
 ```
 
+## Docker quick start
+
+For running the published container image, see [HOW-TO-SETUP-DOCKER.md](docs/HOW-TO-SETUP-DOCKER.md).
+
 ## Debian 13 LXC quick start
 
 For building an LXC from scratch, see [HOW-TO-SETUP-LXC.md](docs/HOW-TO-SETUP-LXC.md).
