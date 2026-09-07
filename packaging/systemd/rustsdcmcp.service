@@ -85,6 +85,12 @@ IPAddressDeny=169.254.0.0/16 fe80::/10 fd00:ec2::254/128
 # the BPF program actually attached. `[no data]` means the filters are inert.
 IPAccounting=yes
 SystemCallArchitectures=native
+# Without SystemCallErrorNumber=EPERM systemd's default raises SIGSYS and kills
+# the process mid-request, which is what happened to rustunifimcp during a
+# change-set state write (mecmcp#351). This server was NOT affected precisely
+# because it already sets EPERM. An EPERM denial is silent at the systemd layer;
+# the only place it can become visible is the application, which must stop
+# discarding the errno.
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @obsolete @mount @swap @reboot @module
 SystemCallErrorNumber=EPERM
