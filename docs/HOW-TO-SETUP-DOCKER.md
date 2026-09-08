@@ -177,7 +177,7 @@ docker run -d --name sdc-twoperson \
   --tokens-file /etc/rustsdcmcp/tokens.json \
   --allow-insecure-bind \
   --allowed-host 127.0.0.1:30032 --allowed-host localhost:30032 \
-  --allowed-origin https://console.example.org
+  --allowed-origin http://console.example.org
 ```
 
 **Port binding**: `-p 127.0.0.1:30032:30032` binds the published port to
@@ -217,7 +217,7 @@ docker run -d --name sdc-labmode \
   --tokens-file /etc/rustsdcmcp/tokens.json \
   --allow-insecure-bind \
   --allowed-host 127.0.0.1:30042 --allowed-host localhost:30042 \
-  --allowed-origin https://console.example.org \
+  --allowed-origin http://console.example.org \
   --lab-mode
 ```
 
