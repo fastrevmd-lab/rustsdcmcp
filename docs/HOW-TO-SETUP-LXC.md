@@ -187,7 +187,7 @@ ExecStart=/usr/local/bin/rustsdcmcp \
     --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key \
     --allowed-host 192.0.2.10 \
     --allowed-host 192.0.2.10:30032 \
-    --allowed-origin http://192.0.2.10:30032
+    --allowed-origin https://console.example.org
 ```
 
 The empty `ExecStart=` is required: it clears the shipped one before setting a
@@ -195,12 +195,16 @@ new one. Why site config belongs in a drop-in: the shipped unit carries the
 seccomp posture, and replacing it wholesale silently loses that.
 
 **Two-person mode is the same file with no additional flag.** Lab mode adds
-`--lab-mode` to the end. That single flag is the whole difference. Point
-`--allowed-host` and `--allowed-origin` at that rig's own address — both must
-track whatever clients actually dial. A non-loopback `--host` requires at least
-one `--allowed-origin`, and both must move in lockstep with `--allowed-host`, or
-requests are refused with 421 (wrong Host header) or startup fails (missing
-origin for off-loopback bind).
+`--lab-mode` to the end. That single flag is the whole difference.
+
+`--allowed-host` lists the server authorities clients dial — the HTTP Host
+header, here `192.0.2.10` or `192.0.2.10:30032`. `--allowed-origin` lists the
+trusted browser application origins that call this server — the Origin header,
+such as `https://console.example.org` for a browser console or management UI.
+These are configured independently and are usually different values. Clients
+sending no Origin header (curl, non-browser MCP clients) are unaffected by the
+origin allowlist. A non-loopback `--host` requires at least one
+`--allowed-origin` to be present, or the service refuses to start.
 
 Then:
 
@@ -210,12 +214,23 @@ pct exec 614 -- systemctl enable rustsdcmcp.service
 pct exec 614 -- systemctl start rustsdcmcp.service
 ```
 
-**Troubleshooting**: If `systemctl start` fails with `non-loopback bind
-'0.0.0.0' requires at least one --allowed-origin`, add at least one
-`--allowed-origin` line to the drop-in matching the scheme, host and port
-clients actually dial (e.g. `--allowed-origin http://192.0.2.10:30032` for
-plaintext on port 30032). This is a runtime-validated requirement from
-`mecmcp-runtime`.
+**Troubleshooting**:
+
+- **Startup fails with `non-loopback bind '0.0.0.0' requires at least one --allowed-origin`**:
+  Add at least one `--allowed-origin` line to the drop-in. Use a documentation
+  origin such as `https://console.example.org` if no real browser client exists
+  yet. This is a runtime-validated requirement from `mecmcp-runtime`.
+
+- **Request fails with 421 and `Host '<address>' is not allowed`**:
+  The HTTP Host header does not match any `--allowed-host`. Add the address the
+  client dialed to the `--allowed-host` list.
+
+- **Request fails with 403 and `Origin '<origin>' is not allowed`**:
+  The request's Origin header does not match any `--allowed-origin`. Add the
+  calling browser application's origin (scheme + host + port, e.g.
+  `https://console.example.org`) to the `--allowed-origin` list. This affects
+  only browser clients that send an Origin header; curl and non-browser MCP
+  clients are unaffected.
 
 ## 7. Mint a token
 
