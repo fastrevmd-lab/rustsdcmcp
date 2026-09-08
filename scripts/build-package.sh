@@ -28,10 +28,66 @@ trivy_version=$(trivy --version | sed -n 's/^Version: //p' | head -n 1)
     exit 1
 }
 
-git_commit=$(git rev-parse HEAD)
-[[ "$git_commit" =~ ^[0-9a-f]{40}$ ]] || fail 'HEAD must resolve to a full lowercase Git commit'
+# Extract and validate version from Cargo.toml to prevent silent version staleness.
+# The packager and installer both hardcode the version literal, so a bump that updates
+# only one would ship a mislabeled package that passes validation. This assertion
+# fails loudly if they diverge.
+cargo_version=$(awk '
+    /^\[workspace\.package\]$/ { in_workspace_package = 1; next }
+    /^\[/ { in_workspace_package = 0 }
+    in_workspace_package && /^version = / {
+        gsub(/"/, "", $3); print $3; exit
+    }
+' Cargo.toml)
+[[ -n $cargo_version ]] || fail 'could not extract version from Cargo.toml [workspace.package]'
+[[ $cargo_version == 0.0.4 ]] || fail "version mismatch: Cargo.toml has $cargo_version, packager expects 0.0.4 (update both)"
+
+# Resolve the effective source commit BEFORE deriving package_root and dist_dir.
+# When packaging a pre-built binary (SDCMCP_PACKAGE_SKIP_BUILD=1), the caller MUST
+# supply the true source commit that built the binary, or the package will be
+# uninstallable (install.sh requires a 40-char hex commit in BUILD-INFO).
+if [[ ${SDCMCP_PACKAGE_SKIP_BUILD:-0} == 1 ]]; then
+    [[ -n ${SDCMCP_BINARY_SOURCE_COMMIT:-} ]] || fail "$(cat <<'EOF'
+SDCMCP_PACKAGE_SKIP_BUILD=1 requires SDCMCP_BINARY_SOURCE_COMMIT to be set.
+Packaging a pre-built binary without recording its true source commit produces a
+package that fails installation with 'BUILD-INFO commit is invalid'.
+
+Obtain the commit from the release image's OCI label or the release tag:
+  docker inspect ghcr.io/fastrevmd-lab/rustsdcmcp:<version> --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+or (peel annotated tags to the commit):
+  git rev-parse v<version>^{commit}
+
+Then set SDCMCP_BINARY_SOURCE_COMMIT to that commit before packaging.
+EOF
+)"
+    [[ "$SDCMCP_BINARY_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] \
+        || fail 'SDCMCP_BINARY_SOURCE_COMMIT must be a full lowercase Git commit (40 hex chars)'
+    # Canonicalize: peel annotated tags to commits so a tag SHA can never be recorded
+    git_commit=$(git rev-parse "${SDCMCP_BINARY_SOURCE_COMMIT}^{commit}" 2>/dev/null) || fail "$(cat <<EOF
+commit $SDCMCP_BINARY_SOURCE_COMMIT is not present in this clone.
+This can happen with unfetched release tags, shallow clones, or commits from a
+differently-cloned fork. Fetch the commit first:
+  git fetch --tags
+or:
+  git fetch origin $SDCMCP_BINARY_SOURCE_COMMIT
+EOF
+)"
+    printf '%s\n' "using supplied binary source commit: $git_commit"
+else
+    git_commit=$(git rev-parse HEAD)
+    [[ "$git_commit" =~ ^[0-9a-f]{40}$ ]] || fail 'HEAD must resolve to a full lowercase Git commit'
+fi
+
+# The payload (config, installer, mecmcp_ref, SBOM) comes from the working tree.
+# Record both the binary's source commit and the payload commit so a reader can see
+# when they differ. When skip-build is used from a normal working checkout, the SBOM
+# describes the packaging checkout's dependency graph, not the binary's — this is
+# honest provenance, and BUILD-INFO records both.
+payload_commit=$(git rev-parse HEAD)
+[[ "$payload_commit" =~ ^[0-9a-f]{40}$ ]] || fail 'HEAD must resolve to a full lowercase Git commit'
+
 git_sha12=${git_commit:0:12}
-source_date_epoch=$(git show -s --format=%ct HEAD)
+source_date_epoch=$(git show -s --format=%ct "$git_commit")
 package_date=$(date -u -d "@$source_date_epoch" +%Y%m%d)
 package_root="rustsdcmcp_0.0.4.${package_date}.${git_sha12}_amd64"
 repo_dist="$repo_root/dist"
@@ -69,7 +125,7 @@ validate_output_entries() {
     done < <(find -P "$dist_dir" -mindepth 1 -maxdepth 1 -printf '%f\t%y\n')
     if [[ ${1:-allow-stale} == exact ]]; then
         [[ $count -eq 2 && -f "$archive" && ! -L "$archive" && -f "$checksum" && ! -L "$checksum" ]] \
-            || fail "commit artifact directory must contain exactly the archive and checksum: $dist_dir"
+            || fail "commit artifact directory must contain exactly the archive and checksum (DOT after version): $dist_dir"
     fi
 }
 validate_output_entries
@@ -86,7 +142,28 @@ cleanup() {
     fi
 }
 
-cargo build --release -p rustsdcmcp --locked
+# Build unless the caller supplied a binary. Rebuilding a released version on a
+# workstation is usually the wrong thing: glibc is forward-incompatible, so a
+# binary linked against a newer glibc than the target container will not start
+# there — and it fails at service start, after the old binary has been replaced.
+# Packaging a release therefore means packaging the binary CI built, extracted
+# from the release image, which this flag allows.
+#
+# rust-junosmcp spells the same thing JMCP_PACKAGE_SKIP_BUILD=1.
+if [[ ${SDCMCP_PACKAGE_SKIP_BUILD:-0} == 1 ]]; then
+    [[ -x target/release/rustsdcmcp ]] || {
+        printf '%s\n' \
+            'SDCMCP_PACKAGE_SKIP_BUILD=1 but target/release/rustsdcmcp is missing or not executable.' \
+            'Place the binary there first, e.g. from the release image:' \
+            '  docker create --name sx ghcr.io/fastrevmd-lab/rustsdcmcp:<version>' \
+            '  docker cp sx:/usr/local/bin/rustsdcmcp target/release/rustsdcmcp' \
+            '  docker rm sx' >&2
+        exit 1
+    }
+    printf '%s\n' 'skipping cargo build: packaging the existing target/release/rustsdcmcp'
+else
+    cargo build --release -p rustsdcmcp --locked
+fi
 
 build_dir=$(mktemp -d)
 trap cleanup EXIT
@@ -116,7 +193,25 @@ glibc_floor=$(objdump -T "$stage_dir/bin/rustsdcmcp" \
     printf '%s\n' 'could not determine GLIBC floor' >&2
     exit 1
 }
-rustc_metadata=$(rustc -vV | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+
+# Under skip-build, the local rustc -vV would record the workstation's toolchain
+# for a binary it did not compile — the same false provenance just fixed for commit.
+# Extract the authoritative toolchain from rust-toolchain.toml at the effective
+# source commit instead.
+if [[ ${SDCMCP_PACKAGE_SKIP_BUILD:-0} == 1 ]]; then
+    toolchain_channel=$(git show "${git_commit}:rust-toolchain.toml" 2>/dev/null \
+        | awk -F= '/^[[:space:]]*channel[[:space:]]*=/ {
+            gsub(/^[[:space:]]*|[[:space:]]*$|"/, "", $2); print $2; exit
+        }')
+    [[ -n $toolchain_channel ]] || fail "$(cat <<EOF
+could not extract toolchain channel from rust-toolchain.toml at commit $git_commit.
+The file may be missing at that commit or the channel field cannot be parsed.
+EOF
+)"
+    rustc_metadata="rustc $toolchain_channel (pinned by rust-toolchain.toml at ${git_commit:0:12}; binary supplied prebuilt, not compiled by this script)"
+else
+    rustc_metadata=$(rustc -vV | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+fi
 # Single-sourced from the manifest that actually pins it. Hardcoding this in
 # both generated files is how stale package documentation comes back: the next
 # mecmcp bump updates one literal and silently leaves the other behind.
@@ -128,6 +223,7 @@ cat >"$stage_dir/BUILD-INFO" <<EOF
 release_status=release
 version=0.0.4
 git_commit=$git_commit
+payload_commit=$payload_commit
 source_date_epoch=$source_date_epoch
 target=x86_64-unknown-linux-gnu
 mecmcp_ref=$mecmcp_ref
