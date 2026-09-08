@@ -73,28 +73,18 @@ or:
 EOF
 )"
     printf '%s\n' "using supplied binary source commit: $git_commit"
-
-    # Skip-build mixes two sources unless the checkout matches the binary. The config
-    # files, installer, mecmcp_ref and SBOM scan come from the working tree, while the
-    # binary came from elsewhere. Require the checkout to BE at that commit so payload,
-    # SBOM and label describe one thing.
-    current_head=$(git rev-parse HEAD)
-    [[ "$current_head" == "$git_commit" ]] || fail "$(cat <<EOF
-skip-build requires the working tree to be checked out at the binary's source commit.
-Current HEAD is $current_head, but the binary was built from $git_commit.
-
-Check out the release commit first:
-  git checkout $git_commit
-or:
-  git checkout v<version>
-
-Then package with SDCMCP_PACKAGE_SKIP_BUILD=1 and SDCMCP_BINARY_SOURCE_COMMIT=$git_commit.
-EOF
-)"
 else
     git_commit=$(git rev-parse HEAD)
     [[ "$git_commit" =~ ^[0-9a-f]{40}$ ]] || fail 'HEAD must resolve to a full lowercase Git commit'
 fi
+
+# The payload (config, installer, mecmcp_ref, SBOM) comes from the working tree.
+# Record both the binary's source commit and the payload commit so a reader can see
+# when they differ. When skip-build is used from a normal working checkout, the SBOM
+# describes the packaging checkout's dependency graph, not the binary's — this is
+# honest provenance, and BUILD-INFO records both.
+payload_commit=$(git rev-parse HEAD)
+[[ "$payload_commit" =~ ^[0-9a-f]{40}$ ]] || fail 'HEAD must resolve to a full lowercase Git commit'
 
 git_sha12=${git_commit:0:12}
 source_date_epoch=$(git show -s --format=%ct "$git_commit")
@@ -233,6 +223,7 @@ cat >"$stage_dir/BUILD-INFO" <<EOF
 release_status=release
 version=0.0.4
 git_commit=$git_commit
+payload_commit=$payload_commit
 source_date_epoch=$source_date_epoch
 target=x86_64-unknown-linux-gnu
 mecmcp_ref=$mecmcp_ref

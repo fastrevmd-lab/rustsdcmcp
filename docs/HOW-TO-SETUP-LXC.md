@@ -48,19 +48,19 @@ extracted rather than letting it compile one:
 
 ```bash
 cd /path/to/rustsdcmcp
-# Obtain the source commit from the release image's OCI label
+mkdir -p target/release
+
+# Pull and extract the binary from the release image
+docker pull ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.4
+docker create --name sx ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.4
+docker cp sx:/usr/local/bin/rustsdcmcp target/release/rustsdcmcp
+docker rm sx
+
+# Obtain the binary's source commit from the image OCI label
 source_commit=$(docker inspect ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.4 \
     --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
 # Or from the release tag if the image label is unavailable (peel annotated tags):
 # source_commit=$(git rev-parse v0.0.4^{commit})
-
-# Check out that commit so the SBOM, config files and installer match the binary
-git checkout "$source_commit"
-
-mkdir -p target/release
-docker create --name sx ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.4
-docker cp sx:/usr/local/bin/rustsdcmcp target/release/rustsdcmcp
-docker rm sx
 
 SDCMCP_PACKAGE_SKIP_BUILD=1 SDCMCP_BINARY_SOURCE_COMMIT="$source_commit" \
     scripts/build-package.sh
@@ -72,6 +72,12 @@ BUILD-INFO, and `install.sh` rejects any BUILD-INFO whose `git_commit` is not a
 40-character hex value. Supplying the wrong commit produces a package labeled
 with false provenance; omitting it entirely fails at package time with a clear
 error.
+
+**When the binary's commit differs from the packaging checkout**: BUILD-INFO
+records both as `git_commit` (the binary) and `payload_commit` (the config,
+installer, and SBOM). The SBOM describes the packaging checkout's dependency
+graph, not the binary's. A release built and packaged by CI avoids this split —
+it is the preferred path.
 
 **This repo has the strictest installer in the family.** `packaging/lxc/install.sh`
 validates a complete payload — `bin/rustsdcmcp`, `config/sdc.json.example`, four

@@ -60,12 +60,20 @@ nothing is preset and nothing can be silently lost.
 ## 1. Prepare host paths
 
 ```bash
-mkdir -p sdc-docker/state-twoperson sdc-docker/state-labmode
+mkdir -p sdc-docker/state-twoperson sdc-docker/state-labmode \
+         sdc-docker/audit-twoperson sdc-docker/audit-labmode
 cd sdc-docker
 ```
 
 Two state directories — one per mode — because running both modes against the
 same tenant with a shared state file creates uncoordinated writers (see step 4).
+Two audit directories keep the audit trails separate. Generate an HMAC key for
+redacted device names:
+
+```bash
+openssl rand -hex 32 > audit-hmac.key
+chmod 0600 audit-hmac.key
+```
 
 `sdc.json` — based on `examples/sdc.example.json`. The credential is **not** in
 this file — it names an environment variable via `credential_env` (default
@@ -113,7 +121,8 @@ rustsdcmcp token add --tokens-file ./tokens.json --name my-client \
     --devices '*' --tools '*' -f ./sdc.json
 
 # Or via the container image (no host binary needed):
-docker run --rm -v "$PWD:/workspace" -w /workspace \
+docker run --rm --user "$(id -u):$(id -g)" \
+    -v "$PWD:/workspace" -w /workspace \
     ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.4 \
     token add --tokens-file ./tokens.json --name my-client \
     --devices '*' --tools '*' -f ./sdc.json
@@ -143,8 +152,8 @@ directory. Choose one of two ownership strategies:
 and give it file ownership:
 
 ```bash
-sudo chown -R 65532:65532 sdc.json credentials.env tokens.json state
-sudo chmod 0700 state
+sudo chown -R 65532:65532 sdc.json credentials.env tokens.json state-twoperson state-labmode
+sudo chmod 0700 state-twoperson state-labmode
 ```
 
 Then omit `--user` from `docker run` — the container runs as 65532 and can read
@@ -171,13 +180,19 @@ docker run -d --name sdc-twoperson \
   -v "$PWD/sdc.json:/etc/rustsdcmcp/sdc.json:ro" \
   -v "$PWD/tokens.json:/etc/rustsdcmcp/tokens.json:ro" \
   -v "$PWD/state-twoperson:/var/lib/sdcmcp" \
+  -v "$PWD/audit-hmac.key:/etc/rustsdcmcp/audit-hmac.key:ro" \
+  -v "$PWD/audit-twoperson:/var/lib/rustsdcmcp/audit" \
   ghcr.io/fastrevmd-lab/rustsdcmcp@sha256:c8b463c962bae51530f54694f59bc9cb4fee72ded4e8234bbb4fd3227010f877 `# :0.0.4` \
   --device-mapping /etc/rustsdcmcp/sdc.json \
   --transport streamable-http --host 0.0.0.0 --port 30032 \
   --tokens-file /etc/rustsdcmcp/tokens.json \
   --allow-insecure-bind \
   --allowed-host 127.0.0.1:30032 --allowed-host localhost:30032 \
-  --allowed-origin http://console.example.org
+  --allowed-origin http://console.example.org \
+  --audit-format json \
+  --audit-log-file /var/lib/rustsdcmcp/audit/audit.jsonl \
+  --audit-redact devices=hmac \
+  --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key
 ```
 
 **Port binding**: `-p 127.0.0.1:30032:30032` binds the published port to
@@ -211,6 +226,8 @@ docker run -d --name sdc-labmode \
   -v "$PWD/sdc.json:/etc/rustsdcmcp/sdc.json:ro" \
   -v "$PWD/tokens.json:/etc/rustsdcmcp/tokens.json:ro" \
   -v "$PWD/state-labmode:/var/lib/sdcmcp" \
+  -v "$PWD/audit-hmac.key:/etc/rustsdcmcp/audit-hmac.key:ro" \
+  -v "$PWD/audit-labmode:/var/lib/rustsdcmcp/audit" \
   ghcr.io/fastrevmd-lab/rustsdcmcp@sha256:c8b463c962bae51530f54694f59bc9cb4fee72ded4e8234bbb4fd3227010f877 `# :0.0.4` \
   --device-mapping /etc/rustsdcmcp/sdc.json \
   --transport streamable-http --host 0.0.0.0 --port 30032 \
@@ -218,6 +235,10 @@ docker run -d --name sdc-labmode \
   --allow-insecure-bind \
   --allowed-host 127.0.0.1:30042 --allowed-host localhost:30042 \
   --allowed-origin http://console.example.org \
+  --audit-format json \
+  --audit-log-file /var/lib/rustsdcmcp/audit/audit.jsonl \
+  --audit-redact devices=hmac \
+  --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key \
   --lab-mode
 ```
 
@@ -229,12 +250,14 @@ carries the *published* port, not the internal one. Get this wrong and the
 server starts cleanly and then refuses every request with `421`.
 
 **Each mode requires its own state directory** (`state-twoperson` vs
-`state-labmode` above). Running both modes against the same tenant with the same
-state file gives two uncoordinated writers. Each process keeps its own in-memory
-coordinator and process-local locks and persists a full snapshot, so concurrent
-updates can overwrite each other and neither enforces the other's in-flight
-guard. Use separate directories, or use distinct tenants (different `sdc.json`
-files pointing to different tenant configurations).
+`state-labmode` above) and audit directory. **Only ONE writer per tenant may be
+active**: separate state directories prevent snapshot clobbering, but each
+process has its own coordinator and process-local locks, so neither sees the
+other's in-flight mutation and both can submit conflicting SDC policy changes.
+Run only one mode at a time against the same tenant, or use distinct tenants
+(different `sdc.json` files pointing to different tenant configurations). If you
+must run both modes simultaneously, serialize their access externally or use
+completely separate tenant credentials.
 the change-set lifecycle state is shared, and two servers pointed at one state
 directory are two servers that can disagree about who owns a change set.
 
