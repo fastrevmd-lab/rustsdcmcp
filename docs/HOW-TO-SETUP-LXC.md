@@ -224,8 +224,9 @@ pct exec 614 -- systemctl start rustsdcmcp.service
 
 - **Startup fails with `non-loopback bind '0.0.0.0' requires at least one --allowed-origin`**:
   Add at least one `--allowed-origin` line to the drop-in. Use a documentation
-  origin such as `https://console.example.org` if no real browser client exists
-  yet. This is a runtime-validated requirement from `mecmcp-runtime`.
+  origin such as `http://console.example.org` if no real browser client exists
+  yet (http:// for this plaintext lab rig; https:// would require --tls-cert
+  and --tls-key). This is a runtime-validated requirement from `mecmcp-runtime`.
 
 - **Request fails with 421 and `Host '<address>' is not allowed`**:
   The HTTP Host header does not match any `--allowed-host`. Add the address the
@@ -234,9 +235,11 @@ pct exec 614 -- systemctl start rustsdcmcp.service
 - **Request fails with 403 and `Origin '<origin>' is not allowed`**:
   The request's Origin header does not match any `--allowed-origin`. Add the
   calling browser application's origin (scheme + host + port, e.g.
-  `https://console.example.org`) to the `--allowed-origin` list. This affects
-  only browser clients that send an Origin header; curl and non-browser MCP
-  clients are unaffected.
+  `http://console.example.org` for a plaintext setup, or
+  `https://console.example.org:8443` with TLS) to the `--allowed-origin` list.
+  The scheme must match the server's TLS configuration. This affects only
+  browser clients that send an Origin header; curl and non-browser MCP clients
+  are unaffected.
 
 ## 7. Mint a token
 
