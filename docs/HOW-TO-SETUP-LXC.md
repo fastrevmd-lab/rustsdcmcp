@@ -37,16 +37,9 @@ glibc is forward-incompatible: a binary linked against a newer glibc will not
 start on an older one, and it fails at service start with a loader error *after*
 the old binary has been replaced — an outage, not a build failure.
 
-Take the binary from the release image, which CI builds against the right glibc:
-
-```bash
-docker create --name sx ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.4
-docker cp sx:/usr/local/bin/rustsdcmcp target/release/rustsdcmcp
-docker rm sx
-```
-
-No docker? `skopeo copy docker://ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.4 dir:/tmp/img`
-then find the layer containing `usr/local/bin/rustsdcmcp` and untar it.
+Take the binary from the release image, which CI builds against the right glibc.
+The extraction happens in step 2 alongside the commit checkout, so the SBOM,
+config files, and installer match the binary.
 
 ## 2. Assemble the install package
 
@@ -58,8 +51,16 @@ cd /path/to/rustsdcmcp
 # Obtain the source commit from the release image's OCI label
 source_commit=$(docker inspect ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.4 \
     --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
-# Or from the release tag if the image label is unavailable:
-# source_commit=$(git rev-parse v0.0.4)
+# Or from the release tag if the image label is unavailable (peel annotated tags):
+# source_commit=$(git rev-parse v0.0.4^{commit})
+
+# Check out that commit so the SBOM, config files and installer match the binary
+git checkout "$source_commit"
+
+mkdir -p target/release
+docker create --name sx ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.4
+docker cp sx:/usr/local/bin/rustsdcmcp target/release/rustsdcmcp
+docker rm sx
 
 SDCMCP_PACKAGE_SKIP_BUILD=1 SDCMCP_BINARY_SOURCE_COMMIT="$source_commit" \
     scripts/build-package.sh
@@ -179,6 +180,7 @@ ExecStart=/usr/local/bin/rustsdcmcp \
     --transport streamable-http \
     --host 0.0.0.0 \
     --port 30032 \
+    --allow-insecure-bind \
     --tokens-file /var/lib/rustsdcmcp/tokens.json \
     --audit-format json \
     --audit-journald \
@@ -196,6 +198,10 @@ seccomp posture, and replacing it wholesale silently loses that.
 
 **Two-person mode is the same file with no additional flag.** Lab mode adds
 `--lab-mode` to the end. That single flag is the whole difference.
+
+`--allow-insecure-bind` permits the plaintext listener on a non-loopback
+address. A lab rig accepts this; a real deployment should use `--tls-cert` and
+`--tls-key` instead and omit the insecure flag.
 
 `--allowed-host` lists the server authorities clients dial — the HTTP Host
 header, here `192.0.2.10` or `192.0.2.10:30032`. `--allowed-origin` lists the

@@ -54,33 +54,47 @@ package that fails installation with 'BUILD-INFO commit is invalid'.
 
 Obtain the commit from the release image's OCI label or the release tag:
   docker inspect ghcr.io/fastrevmd-lab/rustsdcmcp:<version> --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
-or:
-  git rev-parse v<version>
+or (peel annotated tags to the commit):
+  git rev-parse v<version>^{commit}
 
 Then set SDCMCP_BINARY_SOURCE_COMMIT to that commit before packaging.
 EOF
 )"
     [[ "$SDCMCP_BINARY_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] \
         || fail 'SDCMCP_BINARY_SOURCE_COMMIT must be a full lowercase Git commit (40 hex chars)'
-    git_commit="$SDCMCP_BINARY_SOURCE_COMMIT"
-    printf '%s\n' "using supplied binary source commit: $git_commit"
-else
-    git_commit=$(git rev-parse HEAD)
-    [[ "$git_commit" =~ ^[0-9a-f]{40}$ ]] || fail 'HEAD must resolve to a full lowercase Git commit'
-fi
-
-# Verify the effective commit exists in this clone. A valid-looking 40-hex commit
-# that is not present locally (unfetched tag, shallow clone, commit from a fork)
-# would fail later at `git show` with a cryptic error.
-git cat-file -e "${git_commit}^{commit}" 2>/dev/null || fail "$(cat <<EOF
-commit $git_commit is not present in this clone.
+    # Canonicalize: peel annotated tags to commits so a tag SHA can never be recorded
+    git_commit=$(git rev-parse "${SDCMCP_BINARY_SOURCE_COMMIT}^{commit}" 2>/dev/null) || fail "$(cat <<EOF
+commit $SDCMCP_BINARY_SOURCE_COMMIT is not present in this clone.
 This can happen with unfetched release tags, shallow clones, or commits from a
 differently-cloned fork. Fetch the commit first:
   git fetch --tags
 or:
-  git fetch origin $git_commit
+  git fetch origin $SDCMCP_BINARY_SOURCE_COMMIT
 EOF
 )"
+    printf '%s\n' "using supplied binary source commit: $git_commit"
+
+    # Skip-build mixes two sources unless the checkout matches the binary. The config
+    # files, installer, mecmcp_ref and SBOM scan come from the working tree, while the
+    # binary came from elsewhere. Require the checkout to BE at that commit so payload,
+    # SBOM and label describe one thing.
+    current_head=$(git rev-parse HEAD)
+    [[ "$current_head" == "$git_commit" ]] || fail "$(cat <<EOF
+skip-build requires the working tree to be checked out at the binary's source commit.
+Current HEAD is $current_head, but the binary was built from $git_commit.
+
+Check out the release commit first:
+  git checkout $git_commit
+or:
+  git checkout v<version>
+
+Then package with SDCMCP_PACKAGE_SKIP_BUILD=1 and SDCMCP_BINARY_SOURCE_COMMIT=$git_commit.
+EOF
+)"
+else
+    git_commit=$(git rev-parse HEAD)
+    [[ "$git_commit" =~ ^[0-9a-f]{40}$ ]] || fail 'HEAD must resolve to a full lowercase Git commit'
+fi
 
 git_sha12=${git_commit:0:12}
 source_date_epoch=$(git show -s --format=%ct "$git_commit")

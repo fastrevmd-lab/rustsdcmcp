@@ -60,9 +60,12 @@ nothing is preset and nothing can be silently lost.
 ## 1. Prepare host paths
 
 ```bash
-mkdir -p sdc-docker/state
+mkdir -p sdc-docker/state-twoperson sdc-docker/state-labmode
 cd sdc-docker
 ```
+
+Two state directories — one per mode — because running both modes against the
+same tenant with a shared state file creates uncoordinated writers (see step 4).
 
 `sdc.json` — based on `examples/sdc.example.json`. The credential is **not** in
 this file — it names an environment variable via `credential_env` (default
@@ -101,15 +104,24 @@ SDC_API_TOKEN=your-actual-api-token-here
 
 Never put a real credential in this README or in the JSON.
 
-Mint a bearer token. The binary can do this on the host — no container needed.
-**The papercut worth documenting**: `token add` defaults `--device-mapping` to
-`devices.json`, but this server's inventory is `sdc.json`, so it fails with
-`Error: loading devices.json` until you pass `-f`:
+Mint a bearer token. If you have the host binary, run `token add` directly.
+Otherwise, run it through the container image with a writable bind mount:
 
 ```bash
+# With host binary (requires rustsdcmcp installed locally):
 rustsdcmcp token add --tokens-file ./tokens.json --name my-client \
     --devices '*' --tools '*' -f ./sdc.json
+
+# Or via the container image (no host binary needed):
+docker run --rm -v "$PWD:/workspace" -w /workspace \
+    ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.4 \
+    token add --tokens-file ./tokens.json --name my-client \
+    --devices '*' --tools '*' -f ./sdc.json
 ```
+
+**The papercut worth documenting**: `token add` defaults `--device-mapping` to
+`devices.json`, but this server's inventory is `sdc.json`, so it fails with
+`Error: loading devices.json` until you pass `-f`.
 
 The secret prints **once** and is stored hashed. `--tools '*'` resolves to
 read-only tools only; write tools must be named explicitly, so a wildcard token
@@ -125,41 +137,61 @@ chmod 0600 credentials.env tokens.json  # 0600 — these hold secrets
 ## 2. Ownership: two options
 
 The container process is UID 65532 and must read the config and write the state
-directory.
+directory. Choose one of two ownership strategies:
 
-**For a real deployment**, give it ownership:
+**Option A — For a real deployment**: Run as UID 65532 (the image's default)
+and give it file ownership:
 
 ```bash
 sudo chown -R 65532:65532 sdc.json credentials.env tokens.json state
 sudo chmod 0700 state
 ```
 
-**For local testing without root**, run the container as yourself instead. The
-files stay owned by you and nothing needs `sudo`:
+Then omit `--user` from `docker run` — the container runs as 65532 and can read
+its config and write state.
+
+**Option B — For local testing without root**: Run the container as your own
+UID and leave files owned by you:
 
 ```bash
---user "$(id -u):$(id -g)"
+# Keep files owned by yourself
+# Add --user "$(id -u):$(id -g)" to docker run
 ```
 
-Both are shown below. The second is what the examples here were verified with.
+The examples below show **Option B** (verified setup). For Option A, omit the
+`--user` line and chown files to 65532 first.
 
 ## 3. Run it — two-person mode
 
 ```bash
 docker run -d --name sdc-twoperson \
   --user "$(id -u):$(id -g)" \
-  -p 30032:30032 \
+  -p 127.0.0.1:30032:30032 \
   --env-file ./credentials.env \
   -v "$PWD/sdc.json:/etc/rustsdcmcp/sdc.json:ro" \
   -v "$PWD/tokens.json:/etc/rustsdcmcp/tokens.json:ro" \
-  -v "$PWD/state:/var/lib/sdcmcp" \
-  ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.4 \
+  -v "$PWD/state-twoperson:/var/lib/sdcmcp" \
+  ghcr.io/fastrevmd-lab/rustsdcmcp@sha256:c8b463c962bae51530f54694f59bc9cb4fee72ded4e8234bbb4fd3227010f877 `# :0.0.4` \
   --device-mapping /etc/rustsdcmcp/sdc.json \
   --transport streamable-http --host 0.0.0.0 --port 30032 \
   --tokens-file /etc/rustsdcmcp/tokens.json \
   --allow-insecure-bind \
   --allowed-host 127.0.0.1:30032 --allowed-host localhost:30032 \
-  --allowed-origin http://127.0.0.1:30032 --allowed-origin http://localhost:30032
+  --allowed-origin https://console.example.org
+```
+
+**Port binding**: `-p 127.0.0.1:30032:30032` binds the published port to
+loopback only. Reaching this server from another host requires TLS (via
+`--tls-cert` and `--tls-key`), not a wider publish — Host and Origin are header
+checks, not a network boundary.
+
+**Image pinning**: The image is referenced by immutable digest
+(`@sha256:c8b4...`). The version tag (`:0.0.4`) is kept as a comment for
+readability. Obtain the digest with:
+
+```bash
+docker inspect ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.4 \
+    --format '{{index .RepoDigests 0}}'
 ```
 
 Configuration and credentials are mounted read-only; only the state directory is
@@ -168,36 +200,41 @@ while a server is running.
 
 ## 4. Run it — lab mode
 
-Identical but for `--lab-mode`, and a different published port so both can run
-side by side:
+Identical but for `--lab-mode`, a different published port, and **a separate
+state directory**:
 
 ```bash
 docker run -d --name sdc-labmode \
   --user "$(id -u):$(id -g)" \
-  -p 30042:30032 \
+  -p 127.0.0.1:30042:30032 \
   --env-file ./credentials.env \
   -v "$PWD/sdc.json:/etc/rustsdcmcp/sdc.json:ro" \
   -v "$PWD/tokens.json:/etc/rustsdcmcp/tokens.json:ro" \
-  -v "$PWD/state:/var/lib/sdcmcp" \
-  ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.4 \
+  -v "$PWD/state-labmode:/var/lib/sdcmcp" \
+  ghcr.io/fastrevmd-lab/rustsdcmcp@sha256:c8b463c962bae51530f54694f59bc9cb4fee72ded4e8234bbb4fd3227010f877 `# :0.0.4` \
   --device-mapping /etc/rustsdcmcp/sdc.json \
   --transport streamable-http --host 0.0.0.0 --port 30032 \
   --tokens-file /etc/rustsdcmcp/tokens.json \
   --allow-insecure-bind \
   --allowed-host 127.0.0.1:30042 --allowed-host localhost:30042 \
-  --allowed-origin http://127.0.0.1:30042 --allowed-origin http://localhost:30042 \
+  --allowed-origin https://console.example.org \
   --lab-mode
 ```
 
 **Note the port asymmetry, because it catches people.** The server always
-listens on `30032` *inside* the container; `-p 30042:30032` publishes it as
-30042 on the host. But `--allowed-host` and `--allowed-origin` are matched
-against the `Host` and `Origin` headers the **client** sends, and the client is
-talking to 30042. So those flags carry the *published* port, not the internal
-one. Get this wrong and the server starts cleanly and then refuses every request
-with `421`.
+listens on `30032` *inside* the container; `-p 127.0.0.1:30042:30032` publishes
+it as 30042 on the host. But `--allowed-host` are matched against the `Host`
+header the **client** sends, and the client is talking to 30042. So that flag
+carries the *published* port, not the internal one. Get this wrong and the
+server starts cleanly and then refuses every request with `421`.
 
-Give each mode its own state directory if you run them against the same tenant;
+**Each mode requires its own state directory** (`state-twoperson` vs
+`state-labmode` above). Running both modes against the same tenant with the same
+state file gives two uncoordinated writers. Each process keeps its own in-memory
+coordinator and process-local locks and persists a full snapshot, so concurrent
+updates can overwrite each other and neither enforces the other's in-flight
+guard. Use separate directories, or use distinct tenants (different `sdc.json`
+files pointing to different tenant configurations).
 the change-set lifecycle state is shared, and two servers pointed at one state
 directory are two servers that can disagree about who owns a change set.
 

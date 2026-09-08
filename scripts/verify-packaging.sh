@@ -374,17 +374,23 @@ for validator in "${sbom_validators[@]}"; do
 done
 
 assert_builder_preserves_unsafe_output_entries() {
-    local fixture fake_bin commit archive checksum outside extra
+    local fixture fake_bin commit archive checksum outside extra rejection
     fixture=$(mktemp -d)
     fake_bin="$fixture/fake-bin"
     mkdir -p "$fixture/scripts" "$fake_bin"
     cp scripts/build-package.sh "$fixture/scripts/build-package.sh"
     chmod 0755 "$fixture/scripts/build-package.sh"
     printf '%s\n' 'dist/' 'fake-bin/' 'outside/' >"$fixture/.gitignore"
+    # Add a valid Cargo.toml so the version extraction passes and the test reaches
+    # the symlink/unexpected-entry checks it exists to cover.
+    cat >"$fixture/Cargo.toml" <<'EOF'
+[workspace.package]
+version = "0.0.4"
+EOF
     git -C "$fixture" init -q
     git -C "$fixture" config user.email packaging-test@example.invalid
     git -C "$fixture" config user.name packaging-test
-    git -C "$fixture" add .gitignore scripts/build-package.sh
+    git -C "$fixture" add .gitignore scripts/build-package.sh Cargo.toml
     git -C "$fixture" commit -qm 'test fixture'
     commit=$(git -C "$fixture" rev-parse HEAD)
     archive="$fixture/dist/$commit/rustsdcmcp_0.0.4.$(date -u -d "@$(git -C "$fixture" show -s --format=%ct HEAD)" +%Y%m%d).${commit:0:12}_amd64.tar.gz"
@@ -404,9 +410,10 @@ EOF
     printf '%s\n' sentinel-archive >"$outside/$(basename -- "$archive")"
     printf '%s\n' sentinel-checksum >"$outside/$(basename -- "$checksum")"
     ln -s "$outside" "$fixture/dist/$commit"
-    if (cd "$fixture" && PATH="$fake_bin:$PATH" scripts/build-package.sh) >/dev/null 2>&1; then
+    rejection=$(cd "$fixture" && PATH="$fake_bin:$PATH" scripts/build-package.sh 2>&1) && \
         fail 'builder accepted a symlinked commit artifact directory'
-    fi
+    [[ "$rejection" == *"commit artifact directory is not a real directory"* ]] \
+        || fail "builder rejected symlink with wrong reason: $rejection"
     [[ -f "$outside/$(basename -- "$archive")" && -f "$outside/$(basename -- "$checksum")" ]] \
         || fail 'builder removed artifacts through a symlinked commit directory'
 
@@ -416,9 +423,10 @@ EOF
     printf '%s\n' sentinel-checksum >"$checksum"
     extra="$fixture/dist/$commit/unexpected-artifact"
     printf '%s\n' sentinel-extra >"$extra"
-    if (cd "$fixture" && PATH="$fake_bin:$PATH" scripts/build-package.sh) >/dev/null 2>&1; then
+    rejection=$(cd "$fixture" && PATH="$fake_bin:$PATH" scripts/build-package.sh 2>&1) && \
         fail 'builder accepted an artifact directory with an extra entry'
-    fi
+    [[ "$rejection" == *"contains an unsafe or unexpected entry"* ]] \
+        || fail "builder rejected extra entry with wrong reason: $rejection"
     [[ -f "$archive" && -f "$checksum" && -f "$extra" ]] \
         || fail 'builder removed stale artifacts before rejecting an extra entry'
     rm -rf -- "$fixture"
