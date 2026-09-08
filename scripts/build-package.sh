@@ -28,10 +28,49 @@ trivy_version=$(trivy --version | sed -n 's/^Version: //p' | head -n 1)
     exit 1
 }
 
-git_commit=$(git rev-parse HEAD)
-[[ "$git_commit" =~ ^[0-9a-f]{40}$ ]] || fail 'HEAD must resolve to a full lowercase Git commit'
+# Extract and validate version from Cargo.toml to prevent silent version staleness.
+# The packager and installer both hardcode the version literal, so a bump that updates
+# only one would ship a mislabeled package that passes validation. This assertion
+# fails loudly if they diverge.
+cargo_version=$(awk '
+    /^\[workspace\.package\]$/ { in_workspace_package = 1; next }
+    /^\[/ { in_workspace_package = 0 }
+    in_workspace_package && /^version = / {
+        gsub(/"/, "", $3); print $3; exit
+    }
+' Cargo.toml)
+[[ -n $cargo_version ]] || fail 'could not extract version from Cargo.toml [workspace.package]'
+[[ $cargo_version == 0.0.4 ]] || fail "version mismatch: Cargo.toml has $cargo_version, packager expects 0.0.4 (update both)"
+
+# Resolve the effective source commit BEFORE deriving package_root and dist_dir.
+# When packaging a pre-built binary (SDCMCP_PACKAGE_SKIP_BUILD=1), the caller MUST
+# supply the true source commit that built the binary, or the package will be
+# uninstallable (install.sh requires a 40-char hex commit in BUILD-INFO).
+if [[ ${SDCMCP_PACKAGE_SKIP_BUILD:-0} == 1 ]]; then
+    [[ -n ${SDCMCP_BINARY_SOURCE_COMMIT:-} ]] || fail "$(cat <<'EOF'
+SDCMCP_PACKAGE_SKIP_BUILD=1 requires SDCMCP_BINARY_SOURCE_COMMIT to be set.
+Packaging a pre-built binary without recording its true source commit produces a
+package that fails installation with 'BUILD-INFO commit is invalid'.
+
+Obtain the commit from the release image's OCI label or the release tag:
+  docker inspect ghcr.io/fastrevmd-lab/rustsdcmcp:<version> --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+or:
+  git rev-parse v<version>
+
+Then set SDCMCP_BINARY_SOURCE_COMMIT to that commit before packaging.
+EOF
+)"
+    [[ "$SDCMCP_BINARY_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] \
+        || fail 'SDCMCP_BINARY_SOURCE_COMMIT must be a full lowercase Git commit (40 hex chars)'
+    git_commit="$SDCMCP_BINARY_SOURCE_COMMIT"
+    printf '%s\n' "using supplied binary source commit: $git_commit"
+else
+    git_commit=$(git rev-parse HEAD)
+    [[ "$git_commit" =~ ^[0-9a-f]{40}$ ]] || fail 'HEAD must resolve to a full lowercase Git commit'
+fi
+
 git_sha12=${git_commit:0:12}
-source_date_epoch=$(git show -s --format=%ct HEAD)
+source_date_epoch=$(git show -s --format=%ct "$git_commit")
 package_date=$(date -u -d "@$source_date_epoch" +%Y%m%d)
 package_root="rustsdcmcp_0.0.4.${package_date}.${git_sha12}_amd64"
 repo_dist="$repo_root/dist"
@@ -105,20 +144,6 @@ if [[ ${SDCMCP_PACKAGE_SKIP_BUILD:-0} == 1 ]]; then
         exit 1
     }
     printf '%s\n' 'skipping cargo build: packaging the existing target/release/rustsdcmcp'
-    # When packaging a pre-built binary from a different commit (e.g. a release
-    # image), the caller must supply the true source commit via
-    # SDCMCP_BINARY_SOURCE_COMMIT or accept that BUILD-INFO will record it as
-    # unknown. This prevents false provenance: labeling a 0.0.4 image binary with
-    # this branch's commit would claim the binary came from code it did not.
-    if [[ -n ${SDCMCP_BINARY_SOURCE_COMMIT:-} ]]; then
-        [[ "$SDCMCP_BINARY_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] \
-            || fail 'SDCMCP_BINARY_SOURCE_COMMIT must be a full lowercase Git commit'
-        git_commit="$SDCMCP_BINARY_SOURCE_COMMIT"
-        printf '%s\n' "using supplied binary source commit: $git_commit"
-    else
-        git_commit="unknown"
-        printf '%s\n' 'warning: binary source commit unknown; set SDCMCP_BINARY_SOURCE_COMMIT to record provenance'
-    fi
 else
     cargo build --release -p rustsdcmcp --locked
 fi
