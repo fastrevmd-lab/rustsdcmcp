@@ -55,9 +55,22 @@ extracted rather than letting it compile one:
 
 ```bash
 cd /path/to/rustsdcmcp
-SDCMCP_PACKAGE_SKIP_BUILD=1 scripts/build-package.sh
+# Obtain the source commit from the release image's OCI label
+source_commit=$(docker inspect ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.4 \
+    --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+# Or from the release tag if the image label is unavailable:
+# source_commit=$(git rev-parse v0.0.4)
+
+SDCMCP_PACKAGE_SKIP_BUILD=1 SDCMCP_BINARY_SOURCE_COMMIT="$source_commit" \
+    scripts/build-package.sh
 # >> Wrote dist/<commit>/rustsdcmcp_0.0.4.<date>.<commit>_amd64.tar.gz
 ```
+
+**The source commit is required**: the package records it as provenance in
+BUILD-INFO, and `install.sh` rejects any BUILD-INFO whose `git_commit` is not a
+40-character hex value. Supplying the wrong commit produces a package labeled
+with false provenance; omitting it entirely fails at package time with a clear
+error.
 
 **This repo has the strictest installer in the family.** `packaging/lxc/install.sh`
 validates a complete payload — `bin/rustsdcmcp`, `config/sdc.json.example`, four

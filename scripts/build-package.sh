@@ -69,6 +69,19 @@ else
     [[ "$git_commit" =~ ^[0-9a-f]{40}$ ]] || fail 'HEAD must resolve to a full lowercase Git commit'
 fi
 
+# Verify the effective commit exists in this clone. A valid-looking 40-hex commit
+# that is not present locally (unfetched tag, shallow clone, commit from a fork)
+# would fail later at `git show` with a cryptic error.
+git cat-file -e "${git_commit}^{commit}" 2>/dev/null || fail "$(cat <<EOF
+commit $git_commit is not present in this clone.
+This can happen with unfetched release tags, shallow clones, or commits from a
+differently-cloned fork. Fetch the commit first:
+  git fetch --tags
+or:
+  git fetch origin $git_commit
+EOF
+)"
+
 git_sha12=${git_commit:0:12}
 source_date_epoch=$(git show -s --format=%ct "$git_commit")
 package_date=$(date -u -d "@$source_date_epoch" +%Y%m%d)
