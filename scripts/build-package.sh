@@ -189,7 +189,25 @@ glibc_floor=$(objdump -T "$stage_dir/bin/rustsdcmcp" \
     printf '%s\n' 'could not determine GLIBC floor' >&2
     exit 1
 }
-rustc_metadata=$(rustc -vV | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+
+# Under skip-build, the local rustc -vV would record the workstation's toolchain
+# for a binary it did not compile — the same false provenance just fixed for commit.
+# Extract the authoritative toolchain from rust-toolchain.toml at the effective
+# source commit instead.
+if [[ ${SDCMCP_PACKAGE_SKIP_BUILD:-0} == 1 ]]; then
+    toolchain_channel=$(git show "${git_commit}:rust-toolchain.toml" 2>/dev/null \
+        | awk -F= '/^[[:space:]]*channel[[:space:]]*=/ {
+            gsub(/^[[:space:]]*|[[:space:]]*$|"/, "", $2); print $2; exit
+        }')
+    [[ -n $toolchain_channel ]] || fail "$(cat <<EOF
+could not extract toolchain channel from rust-toolchain.toml at commit $git_commit.
+The file may be missing at that commit or the channel field cannot be parsed.
+EOF
+)"
+    rustc_metadata="rustc $toolchain_channel (pinned by rust-toolchain.toml at ${git_commit:0:12}; binary supplied prebuilt, not compiled by this script)"
+else
+    rustc_metadata=$(rustc -vV | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+fi
 # Single-sourced from the manifest that actually pins it. Hardcoding this in
 # both generated files is how stale package documentation comes back: the next
 # mecmcp bump updates one literal and silently leaves the other behind.
