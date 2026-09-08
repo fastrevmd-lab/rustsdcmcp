@@ -189,7 +189,7 @@ ExecStart=/usr/local/bin/rustsdcmcp \
     --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key \
     --allowed-host 192.0.2.10 \
     --allowed-host 192.0.2.10:30032 \
-    --allowed-origin https://console.example.org
+    --allowed-origin http://console.example.org
 ```
 
 The empty `ExecStart=` is required: it clears the shipped one before setting a
@@ -206,11 +206,14 @@ address. A lab rig accepts this; a real deployment should use `--tls-cert` and
 `--allowed-host` lists the server authorities clients dial — the HTTP Host
 header, here `192.0.2.10` or `192.0.2.10:30032`. `--allowed-origin` lists the
 trusted browser application origins that call this server — the Origin header,
-such as `https://console.example.org` for a browser console or management UI.
-These are configured independently and are usually different values. Clients
-sending no Origin header (curl, non-browser MCP clients) are unaffected by the
-origin allowlist. A non-loopback `--host` requires at least one
-`--allowed-origin` to be present, or the service refuses to start.
+such as `http://console.example.org` for a browser console or management UI.
+These are configured independently and are usually different values. The origin
+scheme must match the server's TLS configuration: this plaintext lab rig takes
+`http://` origins, and an HTTPS console origin (`https://...`) requires
+`--tls-cert` and `--tls-key` (browsers block HTTP calls from HTTPS pages as
+mixed content). Clients sending no Origin header (curl, non-browser MCP clients)
+are unaffected by the origin allowlist. A non-loopback `--host` requires at
+least one `--allowed-origin` to be present, or the service refuses to start.
 
 Then:
 
