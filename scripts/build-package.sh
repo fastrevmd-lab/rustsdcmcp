@@ -69,7 +69,7 @@ validate_output_entries() {
     done < <(find -P "$dist_dir" -mindepth 1 -maxdepth 1 -printf '%f\t%y\n')
     if [[ ${1:-allow-stale} == exact ]]; then
         [[ $count -eq 2 && -f "$archive" && ! -L "$archive" && -f "$checksum" && ! -L "$checksum" ]] \
-            || fail "commit artifact directory must contain exactly the archive and checksum: $dist_dir"
+            || fail "commit artifact directory must contain exactly the archive and checksum (DOT after version): $dist_dir"
     fi
 }
 validate_output_entries
@@ -105,6 +105,20 @@ if [[ ${SDCMCP_PACKAGE_SKIP_BUILD:-0} == 1 ]]; then
         exit 1
     }
     printf '%s\n' 'skipping cargo build: packaging the existing target/release/rustsdcmcp'
+    # When packaging a pre-built binary from a different commit (e.g. a release
+    # image), the caller must supply the true source commit via
+    # SDCMCP_BINARY_SOURCE_COMMIT or accept that BUILD-INFO will record it as
+    # unknown. This prevents false provenance: labeling a 0.0.4 image binary with
+    # this branch's commit would claim the binary came from code it did not.
+    if [[ -n ${SDCMCP_BINARY_SOURCE_COMMIT:-} ]]; then
+        [[ "$SDCMCP_BINARY_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] \
+            || fail 'SDCMCP_BINARY_SOURCE_COMMIT must be a full lowercase Git commit'
+        git_commit="$SDCMCP_BINARY_SOURCE_COMMIT"
+        printf '%s\n' "using supplied binary source commit: $git_commit"
+    else
+        git_commit="unknown"
+        printf '%s\n' 'warning: binary source commit unknown; set SDCMCP_BINARY_SOURCE_COMMIT to record provenance'
+    fi
 else
     cargo build --release -p rustsdcmcp --locked
 fi

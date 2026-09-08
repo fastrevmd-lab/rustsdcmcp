@@ -55,10 +55,8 @@ extracted rather than letting it compile one:
 
 ```bash
 cd /path/to/rustsdcmcp
-mkdir -p target/release
-install -m 0755 ./rustsdcmcp target/release/rustsdcmcp
 SDCMCP_PACKAGE_SKIP_BUILD=1 scripts/build-package.sh
-# >> Wrote dist/<commit>/rustsdcmcp_0.0.4_<date>.<commit>_amd64.tar.gz
+# >> Wrote dist/<commit>/rustsdcmcp_0.0.4.<date>.<commit>_amd64.tar.gz
 ```
 
 **This repo has the strictest installer in the family.** `packaging/lxc/install.sh`
@@ -96,12 +94,9 @@ For lab mode, use VMID 615 with IP `.235`, hostname `test-labmode-sdc`, and tag
 ## 4. Install
 
 ```bash
-pct push 614 dist/<commit>/rustsdcmcp_0.0.4_*_amd64.tar.gz /tmp/pkg.tar.gz
-pct exec 614 -- bash -lc 'cd /tmp && tar xzf pkg.tar.gz && cd rustsdcmcp_*/ && bash ./install.sh'
+pct push 614 dist/<commit>/rustsdcmcp_0.0.4.*_amd64.tar.gz /tmp/pkg.tar.gz
+pct exec 614 -- bash -lc 'cd /tmp && tar xzf pkg.tar.gz && cd rustsdcmcp_*/ && bash packaging/lxc/install.sh'
 ```
-
-Invoke the installer as `bash ./packaging/lxc/install.sh` — it may not be
-executable in the archive.
 
 `install.sh` creates the `rustsdcmcp` service user, installs the binary and the
 unit, and stops there. **The service will not start yet** — it has no
@@ -120,14 +115,20 @@ pct push 614 credentials.env  /etc/rustsdcmcp/credentials.env
 ```
 
 Then fix ownership and modes. **Do this for every credential file at once.** The
-server refuses to start if a credential file is group- or world-readable, and it
-checks them one at a time — so getting this wrong costs you one restart per file.
-The error names the file and the required mode:
+token-command mode checks (`rustsdcmcp token add` and similar) verify their
+target file is not group- or world-readable and fail one at a time if wrong —
+getting this wrong costs one command retry per file. The error names the file
+and the required mode:
 
 ```
 mode 0644 is group- or world-accessible (owner uid 999, this process uid 999);
-run: chmod 600 /etc/rustsdcmcp/credentials.env
+run: chmod 600 /var/lib/rustsdcmcp/tokens.json
 ```
+
+`credentials.env` is read via systemd `EnvironmentFile` and never inspected for
+mode by the service itself — the `chmod 0600` below is an operator-enforced
+requirement, not a runtime-validated one. Apply it anyway to limit credential
+exposure.
 
 Set the correct mode per file:
 
@@ -136,8 +137,8 @@ pct exec 614 -- bash -lc '
     chown -R rustsdcmcp:rustsdcmcp /etc/rustsdcmcp
     chmod 0640 /etc/rustsdcmcp/sdc.json
     chmod 0600 /etc/rustsdcmcp/credentials.env
-    chmod 0600 /etc/rustsdcmcp/tokens.json
     install -d -o rustsdcmcp -g rustsdcmcp -m 0700 /var/lib/rustsdcmcp
+    chmod 0600 /var/lib/rustsdcmcp/tokens.json
 '
 ```
 
@@ -172,7 +173,8 @@ ExecStart=/usr/local/bin/rustsdcmcp \
     --audit-redact devices=hmac \
     --audit-hmac-key-file /etc/rustsdcmcp/audit-hmac.key \
     --allowed-host 192.0.2.10 \
-    --allowed-host 192.0.2.10:30032
+    --allowed-host 192.0.2.10:30032 \
+    --allowed-origin http://192.0.2.10:30032
 ```
 
 The empty `ExecStart=` is required: it clears the shipped one before setting a
@@ -181,8 +183,11 @@ seccomp posture, and replacing it wholesale silently loses that.
 
 **Two-person mode is the same file with no additional flag.** Lab mode adds
 `--lab-mode` to the end. That single flag is the whole difference. Point
-`--allowed-host` at that rig's own address — it must track whatever clients
-actually dial, or requests are refused with 421.
+`--allowed-host` and `--allowed-origin` at that rig's own address — both must
+track whatever clients actually dial. A non-loopback `--host` requires at least
+one `--allowed-origin`, and both must move in lockstep with `--allowed-host`, or
+requests are refused with 421 (wrong Host header) or startup fails (missing
+origin for off-loopback bind).
 
 Then:
 
@@ -191,6 +196,13 @@ pct exec 614 -- systemctl daemon-reload
 pct exec 614 -- systemctl enable rustsdcmcp.service
 pct exec 614 -- systemctl start rustsdcmcp.service
 ```
+
+**Troubleshooting**: If `systemctl start` fails with `non-loopback bind
+'0.0.0.0' requires at least one --allowed-origin`, add at least one
+`--allowed-origin` line to the drop-in matching the scheme, host and port
+clients actually dial (e.g. `--allowed-origin http://192.0.2.10:30032` for
+plaintext on port 30032). This is a runtime-validated requirement from
+`mecmcp-runtime`.
 
 ## 7. Mint a token
 
