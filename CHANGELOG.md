@@ -11,6 +11,33 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
 
 ## Unreleased
 
+## `v0.0.5` — 2026-09-16
+
+### Changed
+
+- **`rustls` 0.23.44 -> 0.23.45**, closing **RUSTSEC-2026-0285** (#146). TLS 1.3
+  handshake messages accepted across encryption-level boundaries, CVSS 5.3.
+  This is the reason this release exists.
+- **`rmcp` 3.2.0 -> 3.4.0** (#147), incorporating the `ServerInfo` to
+  `ServerConfig` rename. No source change was required; the server does not
+  construct or inspect these types.
+
+### Documentation
+
+- **HOW-TO-SETUP-LXC now documents how to build a rustsdcmcp container** (#138),
+  and lets the packager use a CI-built binary instead of requiring a local build.
+
+### Dependencies
+
+- `reqwest` 0.13.4 -> 0.13.5 (#143)
+- `uuid` 1.26.0 -> 1.26.1 (#144)
+- `toml` 1.1.5+spec-1.1.0 -> 1.1.6+spec-1.1.0 (#141)
+- `futures` 0.3.33 -> 0.3.34 (#134)
+- `distroless/cc-debian13` base image updated (#139)
+- `rust` toolchain image updated (#140)
+
+**This release contains no behavior change beyond the dependency updates.**
+
 ## `v0.0.4` — 2026-09-06
 
 ### Changed
