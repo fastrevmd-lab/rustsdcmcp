@@ -123,7 +123,7 @@ rustsdcmcp token add --tokens-file ./tokens.json --name my-client \
 # Or via the container image (no host binary needed):
 docker run --rm --user "$(id -u):$(id -g)" \
     -v "$PWD:/workspace" -w /workspace \
-    ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.4 \
+    ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.5 \
     token add --tokens-file ./tokens.json --name my-client \
     --devices '*' --tools '*' -f ./sdc.json
 ```
@@ -182,7 +182,7 @@ docker run -d --name sdc-twoperson \
   -v "$PWD/state-twoperson:/var/lib/sdcmcp" \
   -v "$PWD/audit-hmac.key:/etc/rustsdcmcp/audit-hmac.key:ro" \
   -v "$PWD/audit-twoperson:/var/lib/rustsdcmcp/audit" \
-  ghcr.io/fastrevmd-lab/rustsdcmcp@sha256:c8b463c962bae51530f54694f59bc9cb4fee72ded4e8234bbb4fd3227010f877 `# :0.0.4` \
+  ghcr.io/fastrevmd-lab/rustsdcmcp@sha256:c8b463c962bae51530f54694f59bc9cb4fee72ded4e8234bbb4fd3227010f877 `# :0.0.5` \
   --device-mapping /etc/rustsdcmcp/sdc.json \
   --transport streamable-http --host 0.0.0.0 --port 30032 \
   --tokens-file /etc/rustsdcmcp/tokens.json \
@@ -201,11 +201,11 @@ loopback only. Reaching this server from another host requires TLS (via
 checks, not a network boundary.
 
 **Image pinning**: The image is referenced by immutable digest
-(`@sha256:c8b4...`). The version tag (`:0.0.4`) is kept as a comment for
+(`@sha256:c8b4...`). The version tag (`:0.0.5`) is kept as a comment for
 readability. Obtain the digest with:
 
 ```bash
-docker inspect ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.4 \
+docker inspect ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.5 \
     --format '{{index .RepoDigests 0}}'
 ```
 
@@ -228,7 +228,7 @@ docker run -d --name sdc-labmode \
   -v "$PWD/state-labmode:/var/lib/sdcmcp" \
   -v "$PWD/audit-hmac.key:/etc/rustsdcmcp/audit-hmac.key:ro" \
   -v "$PWD/audit-labmode:/var/lib/rustsdcmcp/audit" \
-  ghcr.io/fastrevmd-lab/rustsdcmcp@sha256:c8b463c962bae51530f54694f59bc9cb4fee72ded4e8234bbb4fd3227010f877 `# :0.0.4` \
+  ghcr.io/fastrevmd-lab/rustsdcmcp@sha256:c8b463c962bae51530f54694f59bc9cb4fee72ded4e8234bbb4fd3227010f877 `# :0.0.5` \
   --device-mapping /etc/rustsdcmcp/sdc.json \
   --transport streamable-http --host 0.0.0.0 --port 30032 \
   --tokens-file /etc/rustsdcmcp/tokens.json \
