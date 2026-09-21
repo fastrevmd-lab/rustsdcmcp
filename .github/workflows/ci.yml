@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   rust:
-    name: Rust 1.98
+    name: Build, lint, and test
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -34,7 +34,7 @@ jobs:
       - run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 
   msrv:
-    name: MSRV 1.89
+    name: MSRV
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
