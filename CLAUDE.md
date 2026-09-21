@@ -115,7 +115,7 @@ tenant — do not close them by inference.
 
 ## Conventions inherited from the family
 
-- Rust edition 2024, MSRV 1.88, build toolchain pinned in `rust-toolchain.toml`.
+- Rust edition 2024, MSRV 1.89, build toolchain pinned in `rust-toolchain.toml`.
 - Workspace lints: `missing_docs = "warn"`, `unsafe_code = "forbid"`,
   `clippy::all` warn, `dbg_macro`/`todo` deny, `unwrap_used` warn.
 - Single MIT license (not dual). Repo name is lowercase, no dashes — mechub

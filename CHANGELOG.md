@@ -11,6 +11,8 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
 
 ## Unreleased
 
+- Raised MSRV from 1.88 to 1.89.
+
 ## `v0.0.5` — 2026-09-16
 
 ### Changed

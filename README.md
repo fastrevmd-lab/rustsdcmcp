@@ -89,7 +89,7 @@ A `linux/amd64` container image is published for the same tag to
 ## Build from approved source
 
 `rust-toolchain.toml` pins the build toolchain at 1.98.0; the declared MSRV in
-`Cargo.toml` is 1.88. Operators must bind their checkout to the commit they
+`Cargo.toml` is 1.89. Operators must bind their checkout to the commit they
 intend to ship before building, testing, or packaging — the release tag is the
 usual choice:
 

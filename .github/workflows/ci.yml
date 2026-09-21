@@ -34,14 +34,14 @@ jobs:
       - run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 
   msrv:
-    name: MSRV 1.88
+    name: MSRV 1.89
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-      - uses: dtolnay/rust-toolchain@39b0b3842c7e8bbf6904c0bfc3d9006fdd4dc4e0 # 1.88.0
-      - run: cargo +1.88 check --workspace --all-targets --locked
+      - uses: dtolnay/rust-toolchain@b4f984c1e7daae8e175614de3e73a8411a20333c # 1.89.0
+      - run: cargo +1.89 check --workspace --all-targets --locked
 
   docker-build:
     name: Docker image build
