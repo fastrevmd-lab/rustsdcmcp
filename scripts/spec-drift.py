@@ -94,6 +94,8 @@ def _param_identity(param, param_components):
             resolved = param_components.get(name)
             if resolved:
                 return (resolved.get("name"), resolved.get("in"))
+        # Unresolvable ref: make identity unique to the ref string
+        return ("$ref", ref)
     return (param.get("name"), param.get("in"))
 
 

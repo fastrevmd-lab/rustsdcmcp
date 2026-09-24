@@ -190,6 +190,75 @@ class Diff(unittest.TestCase):
         self.assertTrue(drifted2, "Changing operation-level param should be drift")
         self.assertIn("GET /api/v1/devices", report2)
 
+    def test_ref_parameter_identity_resolves_to_name_and_in(self):
+        # Operation uses $ref to Limit (resolves to name=limit, in=query)
+        # Path declares limit directly with same name/in
+        old_spec = {
+            "openapi": "3.0.0",
+            "info": {"title": "t", "version": "1.0.0"},
+            "paths": {
+                "/api/v1/devices": {
+                    "parameters": [{"name": "limit", "in": "query", "description": "path-level"}],
+                    "get": {
+                        "parameters": [{"$ref": "#/components/parameters/Limit"}],
+                        "responses": {},
+                    },
+                }
+            },
+            "components": {
+                "schemas": {},
+                "parameters": {
+                    "Limit": {"name": "limit", "in": "query", "description": "component-level"}
+                },
+            },
+        }
+        new_spec_path_changed = {
+            "openapi": "3.0.0",
+            "info": {"title": "t", "version": "1.0.0"},
+            "paths": {
+                "/api/v1/devices": {
+                    "parameters": [{"name": "limit", "in": "query", "description": "CHANGED path-level"}],
+                    "get": {
+                        "parameters": [{"$ref": "#/components/parameters/Limit"}],
+                        "responses": {},
+                    },
+                }
+            },
+            "components": {
+                "schemas": {},
+                "parameters": {
+                    "Limit": {"name": "limit", "in": "query", "description": "component-level"}
+                },
+            },
+        }
+        # Changing only the overridden path-level parameter is NOT drift
+        report, drifted = drift.diff(old_spec, new_spec_path_changed, self.CALLED)
+        self.assertFalse(drifted, "Changing overridden path-level param should not be drift even when op param is a $ref")
+
+    def test_unresolvable_refs_are_distinct(self):
+        # Operation has unresolvable $ref A, path has unresolvable $ref B
+        old_paths = {
+            "/api/v1/devices": {
+                "parameters": [{"$ref": "#/components/parameters/B"}],
+                "get": {
+                    "parameters": [{"$ref": "#/components/parameters/A"}],
+                    "responses": {},
+                },
+            }
+        }
+        new_paths = {
+            "/api/v1/devices": {
+                "parameters": [{"$ref": "#/components/parameters/C"}],  # B -> C
+                "get": {
+                    "parameters": [{"$ref": "#/components/parameters/A"}],
+                    "responses": {},
+                },
+            }
+        }
+        # Changing the path-level unresolvable ref IS drift (A and B are different)
+        report, drifted = drift.diff(spec(old_paths), spec(new_paths), self.CALLED)
+        self.assertTrue(drifted, "Changing path-level unresolvable $ref should be drift")
+
 
 if __name__ == "__main__":
     unittest.main()
