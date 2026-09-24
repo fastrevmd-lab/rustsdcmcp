@@ -767,6 +767,30 @@ impl SdcClient {
         .await
     }
 
+    /// List sites with bounded pagination (`/api/v2/`, `spec.from`/`spec.size`).
+    ///
+    /// Site objects embed CPE interfaces carrying IKE pre-shared keys. The
+    /// client returns them verbatim; the tool boundary redacts.
+    pub async fn list_sites(
+        &self,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        self.list_v2(&["api", "v2", "sites"], page, cancellation)
+            .await
+    }
+
+    /// Fetch one site by name (`/api/v2/site/{site_name}`).
+    pub async fn get_site(
+        &self,
+        site_name: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("site_name", site_name)?;
+        self.get(&["api", "v2", "site", site_name], &[], cancellation)
+            .await
+    }
+
     /// List CA certificates across all devices with bounded pagination.
     pub async fn list_ca_certificates(
         &self,
@@ -3006,6 +3030,47 @@ mod tests {
             .await
             .expect("list succeeds");
         assert_eq!(result["total"], 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn list_sites_uses_the_v2_page_parameters() {
+        let app = Router::new().route(
+            "/api/v2/sites",
+            get(|Query(query): Query<HashMap<String, String>>| async move {
+                assert_eq!(query.get("spec.from").map(String::as_str), Some("0"));
+                assert_eq!(query.get("spec.size").map(String::as_str), Some("3"));
+                Json(serde_json::json!({"sites": [], "total": 0}))
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        let result = client(base_url, 4096)
+            .list_sites(
+                ListRequest::new(0, 3, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("list succeeds");
+        assert_eq!(result["total"], 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn get_site_addresses_the_site_by_one_encoded_name_segment() {
+        let app = Router::new().route(
+            "/api/v2/site/{site_name}",
+            get(
+                |axum::extract::Path(site_name): axum::extract::Path<String>| async move {
+                    Json(serde_json::json!({"site": {"site_name": site_name}}))
+                },
+            ),
+        );
+        let (base_url, server) = serve(app).await;
+        let result = client(base_url, 4096)
+            .get_site("branch/../1", &CancellationToken::new())
+            .await
+            .expect("get succeeds");
+        assert_eq!(result["site"]["site_name"], "branch/../1");
         server.abort();
     }
 }

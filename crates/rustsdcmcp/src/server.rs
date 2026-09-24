@@ -61,6 +61,8 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "list_sdc_tunnels",
     "get_sdc_tunnel",
     "get_sdc_tunnel_count",
+    "list_sdc_sites",
+    "get_sdc_site",
     "list_sdc_ca_certificates",
     "list_sdc_local_certificates",
     "list_sdc_device_ca_certificates",
@@ -627,6 +629,16 @@ pub struct TunnelArgs {
     pub tenant: String,
     /// Tunnel ID.
     pub tunnel_id: String,
+}
+
+/// Arguments for one site.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SiteArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Site name; sites are addressed by name, not UUID.
+    pub site_name: String,
 }
 
 /// Arguments for one asynchronous job.
@@ -2042,6 +2054,53 @@ impl SdcHandler {
             return Ok(tool_error(error));
         }
         Ok(finish(audit, self.client.tunnel_count(&cancellation).await))
+    }
+
+    #[tool(
+        name = "list_sdc_sites",
+        description = "List sites with bounded pagination. Pre-shared keys and rendered site config are redacted."
+    )]
+    async fn list_sdc_sites(
+        &self,
+        Parameters(args): Parameters<ListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(caller, "list_sdc_sites", "read", vec![args.tenant.clone()]);
+        if let Err(error) = self.authorize(caller, "list_sdc_sites", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
+            .map_err(SdcError::from);
+        let result = match result {
+            Ok(page) => self.client.list_sites(page, &cancellation).await,
+            Err(error) => Err(error),
+        };
+        Ok(finish_redacted(audit, result))
+    }
+
+    #[tool(
+        name = "get_sdc_site",
+        description = "Get one site by name. Pre-shared keys and rendered site config are redacted."
+    )]
+    async fn get_sdc_site(
+        &self,
+        Parameters(args): Parameters<SiteArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(caller, "get_sdc_site", "read", vec![args.tenant.clone()]);
+        if let Err(error) = self.authorize(caller, "get_sdc_site", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish_redacted(
+            audit,
+            self.client.get_site(&args.site_name, &cancellation).await,
+        ))
     }
 
     #[tool(
