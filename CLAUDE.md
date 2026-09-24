@@ -95,6 +95,7 @@ Do not try to scrape the HTML reference — the portal is client-rendered
 someone will otherwise rediscover. The spec comes from the portal's export
 route; `docs/sdc-api/fetch-spec.sh` refreshes it and
 `scripts/gen-endpoint-inventory.py` regenerates `docs/sdc-api/endpoints.md`.
+`scripts/spec-drift.py self-check` runs on every PR and fails if the client calls a path the vendored spec lacks (matches paths only, not HTTP methods). `.github/workflows/spec-drift.yml` compares against the live export weekly and files a `spec-drift` issue. It never commits.
 `endpoints.md` is generated — never hand-edit it.
 
 Load-bearing facts, all verified in the spec:
