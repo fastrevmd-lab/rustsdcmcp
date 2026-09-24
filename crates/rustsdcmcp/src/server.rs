@@ -60,6 +60,8 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "get_sdc_ips_rule",
     "list_sdc_ips_exempt_rules",
     "get_sdc_ips_exempt_rule",
+    "list_sdc_ecf_rule_sets",
+    "list_sdc_ecf_rules",
     "list_sdc_ipsec_profiles",
     "get_sdc_ipsec_profile",
     "list_sdc_tunnels",
@@ -614,6 +616,38 @@ pub struct IpsRuleArgs {
     pub profile_uuid: String,
     /// Rule UUID.
     pub rule_uuid: String,
+}
+
+/// Arguments for listing the rule sets of one enhanced content-filtering profile.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EcfRuleSetListArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Parent enhanced content-filtering profile UUID.
+    pub profile_uuid: String,
+    /// Zero-based offset.
+    #[serde(default)]
+    pub from: u64,
+    /// Explicit positive page size.
+    pub size: u32,
+}
+
+/// Arguments for listing the rules of one rule set.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EcfRuleListArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Parent enhanced content-filtering profile UUID.
+    pub profile_uuid: String,
+    /// Parent rule-set UUID.
+    pub rule_set_uuid: String,
+    /// Zero-based offset.
+    #[serde(default)]
+    pub from: u64,
+    /// Explicit positive page size.
+    pub size: u32,
 }
 
 /// Arguments for listing IPsec profiles.
@@ -2076,6 +2110,74 @@ impl SdcHandler {
                 .get_ips_exempt_rule(&args.profile_uuid, &args.rule_uuid, &cancellation)
                 .await,
         ))
+    }
+
+    #[tool(
+        name = "list_sdc_ecf_rule_sets",
+        description = "List the rule sets of one enhanced content-filtering profile with bounded pagination."
+    )]
+    async fn list_sdc_ecf_rule_sets(
+        &self,
+        Parameters(args): Parameters<EcfRuleSetListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_sdc_ecf_rule_sets",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "list_sdc_ecf_rule_sets", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
+            .map_err(SdcError::from);
+        let result = match result {
+            Ok(page) => {
+                self.client
+                    .list_ecf_rule_sets(&args.profile_uuid, page, &cancellation)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        Ok(finish(audit, result))
+    }
+
+    #[tool(
+        name = "list_sdc_ecf_rules",
+        description = "List the rules of one enhanced content-filtering rule set with bounded pagination."
+    )]
+    async fn list_sdc_ecf_rules(
+        &self,
+        Parameters(args): Parameters<EcfRuleListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_sdc_ecf_rules",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "list_sdc_ecf_rules", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
+            .map_err(SdcError::from);
+        let result = match result {
+            Ok(page) => {
+                self.client
+                    .list_ecf_rules(&args.profile_uuid, &args.rule_set_uuid, page, &cancellation)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        Ok(finish(audit, result))
     }
 
     #[tool(

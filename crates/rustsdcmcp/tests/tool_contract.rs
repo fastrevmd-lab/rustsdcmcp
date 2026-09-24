@@ -11,7 +11,8 @@ fn tool_registry_has_expected_unique_surface() {
     // scope cannot reach it; #21 added list_sdc_config_versions (read) and the
     // device-sync prepare/apply pair. #156 added list/get_sdc_sites (redacted).
     // #156 added IPS rule and exempt-rule reads.
-    assert_eq!(KNOWN_TOOLS.len(), 60);
+    // #156 added ECF rule-set and rule reads.
+    assert_eq!(KNOWN_TOOLS.len(), 62);
     assert_eq!(
         KNOWN_TOOLS.iter().copied().collect::<BTreeSet<_>>().len(),
         KNOWN_TOOLS.len()

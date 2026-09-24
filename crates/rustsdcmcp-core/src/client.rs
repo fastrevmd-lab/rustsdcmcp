@@ -708,6 +708,54 @@ impl SdcClient {
         .await
     }
 
+    /// List the rule sets of one enhanced content-filtering profile.
+    pub async fn list_ecf_rule_sets(
+        &self,
+        profile_uuid: &str,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("profile_uuid", profile_uuid)?;
+        self.list(
+            &[
+                "api",
+                "v1",
+                "enhanced_content_filtering_profiles",
+                profile_uuid,
+                "rule_sets",
+            ],
+            page,
+            cancellation,
+        )
+        .await
+    }
+
+    /// List the rules of one rule set of one enhanced content-filtering profile.
+    pub async fn list_ecf_rules(
+        &self,
+        profile_uuid: &str,
+        rule_set_uuid: &str,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("profile_uuid", profile_uuid)?;
+        validate_atom("rule_set_uuid", rule_set_uuid)?;
+        self.list(
+            &[
+                "api",
+                "v1",
+                "enhanced_content_filtering_profiles",
+                profile_uuid,
+                "rule_sets",
+                rule_set_uuid,
+                "rules",
+            ],
+            page,
+            cancellation,
+        )
+        .await
+    }
+
     /// Create one object in an allowlisted generic resource family.
     ///
     /// Takes [`WritableResource`], not [`ResourceKind`]: adding a family to the
@@ -3219,5 +3267,47 @@ mod tests {
             sdc.get_ips_exempt_rule("p1", "", &ct).await,
             Err(SdcError::InvalidIdentifier { field: "rule_uuid" })
         ));
+    }
+
+    #[tokio::test]
+    async fn ecf_reads_nest_rule_sets_under_the_profile_and_rules_under_the_set() {
+        let app = Router::new()
+            .route(
+                "/api/v1/enhanced_content_filtering_profiles/{p}/rule_sets",
+                get(
+                    |axum::extract::Path(p): axum::extract::Path<String>| async move {
+                        Json(serde_json::json!({"items": [], "count": 0, "profile": p}))
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/enhanced_content_filtering_profiles/{p}/rule_sets/{s}/rules",
+                get(
+                    |axum::extract::Path((p, s)): axum::extract::Path<(String, String)>,
+                     Query(query): Query<HashMap<String, String>>| async move {
+                        assert_eq!(query.get("size").map(String::as_str), Some("4"));
+                        Json(serde_json::json!({"items": [], "count": 0, "profile": p, "set": s}))
+                    },
+                ),
+            );
+        let (base_url, server) = serve(app).await;
+        let sdc = client(base_url, 4096);
+        let ct = CancellationToken::new();
+        let page = || ListRequest::new(0, 4, 100).expect("test page");
+        assert_eq!(
+            sdc.list_ecf_rule_sets("p1", page(), &ct)
+                .await
+                .expect("sets")["profile"],
+            "p1"
+        );
+        let rules = sdc
+            .list_ecf_rules("p1", "s1", page(), &ct)
+            .await
+            .expect("rules");
+        assert_eq!(
+            (rules["profile"].as_str(), rules["set"].as_str()),
+            (Some("p1"), Some("s1"))
+        );
+        server.abort();
     }
 }
