@@ -11,6 +11,27 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
 
 ## Unreleased
 
+### Security
+- ICAP server passwords (`password_ascii`, `password_base64`) are redacted from
+  `list_sdc_resources` / `get_sdc_resource`. The spec declares them; the lab
+  tenant has not been checked for them.
+- Site PSKs (`psk`, `pre_shared_key`) and rendered device-config bodies
+  (`site_config`, `cpe_config`) are redacted from `list_sdc_sites` /
+  `get_sdc_site`. SDC-generated IPsec config embeds the IKE PSK, so both config
+  bodies are withheld as a whole.
+
+### Fixed
+- `list_sdc_tunnels` now sends `spec.from`/`spec.size`. The unprefixed
+  parameters were ignored, so `size` did not bound the response.
+
+### Added (#156)
+- 12 read tools: `list/get_sdc_sites` (PSKs redacted), IPS rule and exempt-rule
+  list/get, ECF rule-set and rule lists, three global-settings singletons, and
+  `list_sdc_device_global_settings`.
+- **Operators:** tokens minted with explicit tool lists do not gain these tools.
+  Re-mint or widen scopes to use them.
+
+### Changed
 - Raised MSRV from 1.88 to 1.89.
 
 ## `v0.0.5` — 2026-09-16

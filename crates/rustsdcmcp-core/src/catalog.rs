@@ -10,22 +10,23 @@
 //! Families deliberately absent, and why — so an absence is not rediscovered as
 //! an oversight. Two reasons recur, and everything below is one of them.
 //!
-//! **Not expressible as a flat collection path.** A `&'static [&'static str]`
-//! addresses `/api/v1/<collection>` and nothing deeper.
+//! **Not expressible as a flat collection path** — served by bespoke tools:
 //!
-//! - `IPSRule`, `IPSExemptRule` — `/api/v1/ips_profiles/{profile_uuid}/…`
-//! - `EnhancedContentFilteringProfileSet` —
-//!   `/api/v1/enhanced_content_filtering_profiles/{profile_uuid}/rule_sets`,
-//!   and its rules are two levels deeper again
+//! - `IPSRule`, `IPSExemptRule` — `/api/v1/ips_profiles/{profile_uuid}/ips_rules`
+//!   and `…/exempt_rules`: `list_sdc_ips_rules`, `list_sdc_ips_exempt_rules`
+//!   and their `get_` pairs
+//! - `EnhancedContentFilteringProfileSet` — `…/{profile_uuid}/rule_sets` and
+//!   `…/rule_sets/{rule_set_uuid}/rules`: `list_sdc_ecf_rule_sets`,
+//!   `list_sdc_ecf_rules` (no single-rule-set tool; spec has no single-rule-set GET)
 //!
-//! **Not boundable.** The collection GET accepts neither `from` nor `fields`,
-//! so a response cannot be limited, and bounding is not optional here.
+//! **Not pageable** — served by bespoke tools bounded by `max_response_bytes`,
+//! which refuses rather than truncates:
 //!
-//! - `DeviceGlobalSettings` — `/api/v1/firewall_device_global_settings`
-//! - `GlobalProfile` — `/api/v1/firewall_global_profiles`, a singleton `GET`
-//! - `GlobalSettings` — `/api/v1/firewall_global_settings`, a singleton `GET`
-//! - `ContentSecuritySettings` — `/api/v1/content_security_settings`, a
-//!   singleton `GET` rather than a list
+//! - `GlobalProfile`, `GlobalSettings`, `ContentSecuritySettings` — singletons:
+//!   `get_sdc_firewall_global_profile`, `get_sdc_firewall_global_settings`,
+//!   `get_sdc_content_security_settings`
+//! - `DeviceGlobalSettings` — pages with `offset`/`limit`, not `from`/`size`:
+//!   `list_sdc_device_global_settings`
 //!
 //! **Bespoke tools instead.** `NAT Pools` is keyed by `pool_id`; `Device
 //! Groups` needs membership, which the generic shape cannot return.
