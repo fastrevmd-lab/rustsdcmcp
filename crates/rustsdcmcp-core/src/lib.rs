@@ -38,9 +38,10 @@ pub use license_write::{
     SdcLicenseTransaction, SdcPreparedLicenseWrite,
 };
 pub use models::{
-    DeployRequest, DeploymentStatus, DeviceDeploymentStatus, DeviceStatusEntry, JobStatus,
-    ListRequest, ListRequestError, NatWriteOperation, PolicyEntry, PolicyOperation, PolicyType,
-    PreviewRequest, Target, TargetType, TenantScope, validate_deploy_targets,
+    DeployRequest, DeploymentStatus, DeviceConfigSection, DeviceDeploymentStatus,
+    DeviceStatusEntry, JobStatus, ListRequest, ListRequestError, NatWriteOperation, PolicyEntry,
+    PolicyOperation, PolicyType, PreviewRequest, Target, TargetType, TenantScope,
+    validate_deploy_targets,
 };
 pub use nat_write::{NatValidationReport, SdcNatTransaction, SdcPreparedNatWrite};
 pub use object_write::{

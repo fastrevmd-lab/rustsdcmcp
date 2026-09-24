@@ -4,9 +4,9 @@
 //! its reusable foundations are tracked in mecmcp issue #90.
 
 use crate::{
-    DeployRequest, DeploymentStatus, JobStatus, ListRequest, ListRequestError, PolicyOperation,
-    PreviewRequest, ResourceKind, SdcConfig, SdcPreparedChange, SdcPreparedTarget, TenantScope,
-    WritableResource,
+    DeployRequest, DeploymentStatus, DeviceConfigSection, JobStatus, ListRequest, ListRequestError,
+    PolicyOperation, PreviewRequest, ResourceKind, SdcConfig, SdcPreparedChange, SdcPreparedTarget,
+    TenantScope, WritableResource,
     models::{DeployResponse, PreviewResponse},
 };
 use futures::StreamExt as _;
@@ -364,6 +364,80 @@ impl SdcClient {
         validate_atom("device_uuid", device_uuid)?;
         self.get(
             &["api", "v1", "devices", device_uuid, "config", "versions"],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// List one section of a device's configuration as SDC models it.
+    ///
+    /// `interface_name` narrows `Subinterfaces` to one parent interface and is
+    /// refused for any other section rather than silently ignored.
+    pub async fn list_device_config(
+        &self,
+        device_uuid: &str,
+        section: DeviceConfigSection,
+        interface_name: Option<&str>,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("device_uuid", device_uuid)?;
+        let Some(interface_name) = interface_name else {
+            return self
+                .list(
+                    &[
+                        "api",
+                        "v1",
+                        "devices",
+                        device_uuid,
+                        "config",
+                        section.segment(),
+                    ],
+                    page,
+                    cancellation,
+                )
+                .await;
+        };
+        if section != DeviceConfigSection::Subinterfaces {
+            return Err(SdcError::InvalidInput(
+                "interface_name is only valid with section=subinterfaces",
+            ));
+        }
+        validate_atom("interface_name", interface_name)?;
+        self.list(
+            &[
+                "api",
+                "v1",
+                "devices",
+                device_uuid,
+                "config",
+                "interfaces",
+                interface_name,
+                "subinterfaces",
+            ],
+            page,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch the configuration revision status for one device.
+    pub async fn get_device_config_revision(
+        &self,
+        device_uuid: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("device_uuid", device_uuid)?;
+        self.get(
+            &[
+                "api",
+                "v1",
+                "devices",
+                device_uuid,
+                "config",
+                "latest_version",
+            ],
             &[],
             cancellation,
         )
@@ -3073,6 +3147,76 @@ mod tests {
             "path traversal must be percent-encoded, not literal: {path}"
         );
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn device_config_sections_map_to_their_config_paths() {
+        let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorder = seen.clone();
+        let app = Router::new().fallback(move |uri: axum::http::Uri| {
+            let recorder = recorder.clone();
+            async move {
+                recorder.lock().expect("record").push(uri.to_string());
+                Json(serde_json::json!({"items": [], "count": 0}))
+            }
+        });
+        let (base_url, server) = serve(app).await;
+        let sdc = client(base_url, 4096);
+        let ct = CancellationToken::new();
+        let page = || ListRequest::new(0, 3, 100).expect("test page");
+        for section in [
+            DeviceConfigSection::Interfaces,
+            DeviceConfigSection::Subinterfaces,
+            DeviceConfigSection::Zones,
+            DeviceConfigSection::RoutingInstances,
+            DeviceConfigSection::IdpSensors,
+        ] {
+            sdc.list_device_config("d1", section, None, page(), &ct)
+                .await
+                .expect("list");
+        }
+        sdc.list_device_config(
+            "d1",
+            DeviceConfigSection::Subinterfaces,
+            Some("ge-0/0/1"),
+            page(),
+            &ct,
+        )
+        .await
+        .expect("per-interface list");
+        sdc.get_device_config_revision("d1", &ct)
+            .await
+            .expect("revision");
+        let seen = seen.lock().expect("read").clone();
+        assert_eq!(
+            seen,
+            vec![
+                "/api/v1/devices/d1/config/interfaces?from=0&size=3",
+                "/api/v1/devices/d1/config/subinterfaces?from=0&size=3",
+                "/api/v1/devices/d1/config/zones?from=0&size=3",
+                "/api/v1/devices/d1/config/routing_instances?from=0&size=3",
+                "/api/v1/devices/d1/config/idp_sensors?from=0&size=3",
+                "/api/v1/devices/d1/config/interfaces/ge-0%2F0%2F1/subinterfaces?from=0&size=3",
+                "/api/v1/devices/d1/config/latest_version",
+            ]
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn interface_name_is_refused_outside_the_subinterfaces_section() {
+        let sdc = client(Url::parse("http://127.0.0.1:9/").expect("url"), 4096);
+        let error = sdc
+            .list_device_config(
+                "d1",
+                DeviceConfigSection::Zones,
+                Some("ge-0/0/1"),
+                ListRequest::new(0, 3, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect_err("interface_name only narrows subinterfaces");
+        assert!(matches!(error, SdcError::InvalidInput(_)));
     }
 
     #[tokio::test]

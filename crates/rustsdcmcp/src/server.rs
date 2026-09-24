@@ -17,9 +17,9 @@ use rmcp::{
     tool, tool_handler, tool_router,
 };
 use rustsdcmcp_core::{
-    ChangeManager, ListRequest, NatWriteOperation, ObjectWriteAction, PolicyOperation,
-    ResourceKind, SdcClient, SdcError, WritableResource, project_ca_certificates, project_license,
-    project_licenses, project_local_certificates, redact_secrets,
+    ChangeManager, DeviceConfigSection, ListRequest, NatWriteOperation, ObjectWriteAction,
+    PolicyOperation, ResourceKind, SdcClient, SdcError, WritableResource, project_ca_certificates,
+    project_license, project_licenses, project_local_certificates, redact_secrets,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -38,6 +38,8 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "list_sdc_devices",
     "get_sdc_device",
     "list_sdc_config_versions",
+    "list_sdc_device_config",
+    "get_sdc_device_config_revision",
     "list_sdc_firewall_policies",
     "get_sdc_firewall_policy",
     "list_sdc_firewall_rules",
@@ -382,6 +384,26 @@ pub struct DeviceArgs {
     pub tenant: String,
     /// Device UUID.
     pub device_uuid: String,
+}
+
+/// Arguments for listing one section of a device's configuration.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceConfigListArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Device UUID.
+    pub device_uuid: String,
+    /// Configuration section to list.
+    pub section: DeviceConfigSection,
+    /// Parent interface; valid only with `section=subinterfaces`.
+    #[serde(default)]
+    pub interface_name: Option<String>,
+    /// Zero-based offset.
+    #[serde(default)]
+    pub from: u64,
+    /// Explicit positive page size.
+    pub size: u32,
 }
 
 /// Arguments for device certificate list.
@@ -992,6 +1014,75 @@ impl SdcHandler {
             audit,
             self.client
                 .list_config_versions(&args.device_uuid, &cancellation)
+                .await,
+        ))
+    }
+
+    #[tool(
+        name = "list_sdc_device_config",
+        description = "List one section (interfaces, subinterfaces, zones, routing_instances, idp_sensors) of a device's configuration as SDC models it, with bounded pagination. Use to reconcile SDC's view against the device."
+    )]
+    async fn list_sdc_device_config(
+        &self,
+        Parameters(args): Parameters<DeviceConfigListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_sdc_device_config",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "list_sdc_device_config", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
+            .map_err(SdcError::from);
+        let result = match result {
+            Ok(page) => {
+                self.client
+                    .list_device_config(
+                        &args.device_uuid,
+                        args.section,
+                        args.interface_name.as_deref(),
+                        page,
+                        &cancellation,
+                    )
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        Ok(finish_redacted(audit, result))
+    }
+
+    #[tool(
+        name = "get_sdc_device_config_revision",
+        description = "Get the configuration revision status SDC holds for one device."
+    )]
+    async fn get_sdc_device_config_revision(
+        &self,
+        Parameters(args): Parameters<DeviceArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "get_sdc_device_config_revision",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "get_sdc_device_config_revision", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish_redacted(
+            audit,
+            self.client
+                .get_device_config_revision(&args.device_uuid, &cancellation)
                 .await,
         ))
     }
