@@ -13,7 +13,7 @@ set -euo pipefail
 
 BASE="https://www.juniper.net/documentation/us/en/software/sd-cloud/api"
 SPEC_URL="${BASE}/static/exports/security-director-cloud-apis-openapi3json.json"
-DEST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/security-director-cloud-apis-openapi3.json"
+DEST="${SDC_SPEC_DEST:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/security-director-cloud-apis-openapi3.json}"
 
 echo "fetching ${SPEC_URL}"
 curl -fsSL --max-time 120 "${SPEC_URL}" -o "${DEST}.tmp"
