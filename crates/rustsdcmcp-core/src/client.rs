@@ -738,7 +738,7 @@ impl SdcClient {
         page: ListRequest,
         cancellation: &CancellationToken,
     ) -> Result<Value, SdcError> {
-        self.list(&["api", "v2", "tunnels"], page, cancellation)
+        self.list_v2(&["api", "v2", "tunnels"], page, cancellation)
             .await
     }
 
@@ -1630,6 +1630,25 @@ impl SdcClient {
             .map(|(key, value)| (*key, value.as_str()))
             .collect::<Vec<_>>();
         self.get(segments, &borrowed, cancellation).await
+    }
+
+    /// Bounded list for `/api/v2/` collections, which prefix their page
+    /// parameters (`spec.from`, `spec.size`) and accept no `fields`.
+    async fn list_v2(
+        &self,
+        segments: &[&str],
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        let page = ListRequest::new(page.from, page.size, self.max_page_size)?;
+        let from = page.from.to_string();
+        let size = page.size.to_string();
+        self.get(
+            segments,
+            &[("spec.from", from.as_str()), ("spec.size", size.as_str())],
+            cancellation,
+        )
+        .await
     }
 
     async fn get<T: DeserializeOwned>(
@@ -2955,6 +2974,38 @@ mod tests {
             .preview_device_result("preview-123", "device-456", &CancellationToken::new())
             .await
             .expect("preview_device_result succeeds");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn v2_tunnel_list_sends_spec_prefixed_page_parameters() {
+        // ListTunnels declares `spec.from`/`spec.size`. Plain `from`/`size`
+        // are ignored upstream, leaving the list bounded only by bytes.
+        let app = Router::new().route(
+            "/api/v2/tunnels",
+            get(|Query(query): Query<HashMap<String, String>>| async move {
+                assert_eq!(query.get("spec.from").map(String::as_str), Some("5"));
+                assert_eq!(query.get("spec.size").map(String::as_str), Some("7"));
+                assert!(
+                    !query.contains_key("from"),
+                    "unprefixed from sent: {query:?}"
+                );
+                assert!(
+                    !query.contains_key("size"),
+                    "unprefixed size sent: {query:?}"
+                );
+                Json(serde_json::json!({"tunnels": [], "total": 0}))
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        let result = client(base_url, 4096)
+            .list_tunnels(
+                ListRequest::new(5, 7, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("list succeeds");
+        assert_eq!(result["total"], 0);
         server.abort();
     }
 }
