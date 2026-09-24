@@ -63,8 +63,13 @@ here so an absence reads as a decision rather than as work nobody got to.
   `config_contents`, a full bootstrap device configuration. A credential-bearing
   blob with no review value; the RMA state and reactivation-status reads cover
   the lifecycle question.
-- **Image stage/deploy, MNHA sync, RMA activate/reactivate** stay unbuilt as
-  writes. If needed, they go through prepare → approve → apply, never direct.
+
+**Deferred writes** — reads exist; writes need prepare → approve → apply.
+
+Image stage/deploy (`POST /api/v1/devices/{device_id}/image/stage` and
+`BulkDeployImage`), MNHA sync, RMA activate/reactivate, image-definition
+create/delete, and RMA `reactivation_preferences` stay unbuilt as writes. If
+needed, they go through prepare → approve → apply, never direct.
 
 IAM and subscriptions are tenant administration, not network management. An MCP
 client that can create users, alter roles or change entitlements holds a surface

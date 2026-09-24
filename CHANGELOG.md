@@ -36,7 +36,8 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
 ### Added (#155)
 - 7 read tools: device config section list and revision read, image definition
   list and job status read, MNHA sync status, and RMA state and reactivation
-  status reads.
+  status reads. `get_sdc_rma_state` redacts `missing_licenses` values (the count
+  is preserved).
 - **Operators:** tokens minted with explicit tool lists do not gain these tools.
   Re-mint or widen scopes to use them. Tokens with a wildcard read scope DO gain
   the new tools.

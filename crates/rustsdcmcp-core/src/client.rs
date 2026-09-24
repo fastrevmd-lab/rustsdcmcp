@@ -3352,9 +3352,7 @@ mod tests {
                 &CancellationToken::new(),
             )
             .await;
-        let path = captured_path
-            .lock()
-            .expect("lock should not be poisoned");
+        let path = captured_path.lock().expect("lock should not be poisoned");
         assert!(
             path.contains(".._x"),
             "path should contain .._x, got: {}",

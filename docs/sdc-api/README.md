@@ -185,6 +185,18 @@ are almost all a uniform 5-op CRUD shape. Full listing:
 5. **Tenant scoping is real.** Bearer tokens in this server must carry a tenant
    scope, validated against `GET /api/v2/tenant/tenant-id` at startup.
 
+### Device Resources (spec-derived; not yet live-observed)
+
+Five config sections are exposed through `list_sdc_device_config`:
+**interfaces**, **subinterfaces**, **zones**, **routing_instances**, and
+**idp_sensors**. A sixth path, **interfaces/{interface_name}/subinterfaces**,
+reads the subinterfaces of one interface by name. The `interface_name` parameter
+is given in Junos form (`ge-0/0/1`) and translated internally to the API's
+underscore form (`ge-0_0_1`), matching the behavior of
+`GetDeviceInterfaceSubinterfaces`.
+
+The spec's `filter` parameter is not exposed (YAGNI).
+
 ## Live-observed response shapes (2026-08-07)
 
 The OpenAPI spec's examples are placeholder `"string"` values, so actual field
@@ -681,19 +693,7 @@ active or unreconciled operation"*. `mecmcp-changeset` has
 `discard_operation`, but this server exposes no tool for it, so there is no
 supported way to clear it.
 
-### 12. Device Resources
-
-Five config sections are exposed through `list_sdc_device_config`:
-**interfaces**, **subinterfaces**, **zones**, **routing_instances**, and
-**idp_sensors**. A sixth path, **interfaces/{interface_name}/subinterfaces**,
-reads the subinterfaces of one interface by name. The `interface_name` parameter
-is given in Junos form (`ge-0/0/1`) and translated internally to the API's
-underscore form (`ge-0_0_1`), matching the behavior of
-`GetDeviceInterfaceSubinterfaces`.
-
-The spec's `filter` parameter is not exposed (YAGNI).
-
-### 13. Out-of-band resolution exists, but not on this API (2026-08-13)
+### 12. Out-of-band resolution exists, but not on this API (2026-08-13)
 
 `device_config_state: OUT_OF_BAND_CHANGED` is returned live by
 `GET /api/v1/devices`, and the string appears **zero times** in the vendored

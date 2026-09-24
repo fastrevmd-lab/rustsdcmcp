@@ -10,7 +10,7 @@ fn tool_registry_has_expected_unique_surface() {
     // added discard_sdc_operation, which must be a write tool so a wildcard
     // scope cannot reach it; #21 added list_sdc_config_versions (read) and the
     // device-sync prepare/apply pair. #156 added 12 reads: sites (redacted),
-    // IPS rules and exempt rules, ECF rule sets and rules, and global settings.
+    // IPS rules and exempt-rules, ECF rule-sets and rules, and global-settings.
     // #155 added 7 reads: device config sections and revision, image definitions
     // and job status, MNHA sync and RMA status.
     assert_eq!(KNOWN_TOOLS.len(), 73);
