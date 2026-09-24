@@ -178,6 +178,7 @@ fn redacted_tools_call_finish_redacted() {
 
     // Reverse check: every method that calls finish_redacted must be in REDACTED_TOOLS.
     let mut tools_calling_finish_redacted = BTreeSet::new();
+    let mut all_tool_methods = BTreeSet::new();
 
     for item in &file.items {
         if let syn::Item::Impl(impl_block) = item {
@@ -185,25 +186,40 @@ fn redacted_tools_call_finish_redacted() {
                 if let syn::ImplItem::Fn(method) = impl_item {
                     let method_str = quote::quote!(#method).to_string();
 
-                    // Find tool name from #[tool(name = "...")] attribute
+                    // Find tool name from #[tool(name = "...")] attribute, or fall back to fn ident
                     let mut tool_name = None;
                     for attr in &method.attrs {
                         let attr_str = quote::quote!(#attr).to_string();
-                        if attr_str.contains("name =") {
+                        // Check for #[tool(...)] or # [tool (...)] (quote may add spaces)
+                        if attr_str.contains("tool") && attr_str.contains("name =") {
                             // Extract name = "tool_name"
                             if let Some(start) = attr_str.find("name = \"") {
                                 let rest = &attr_str[start + 8..];
                                 if let Some(end) = rest.find('"') {
                                     tool_name = Some(rest[..end].to_owned());
+                                    break;
                                 }
                             }
                         }
                     }
 
-                    if method_str.contains("finish_redacted")
-                        && let Some(name) = tool_name
-                    {
-                        tools_calling_finish_redacted.insert(name);
+                    // If we didn't find explicit name but have a tool attr, fall back to fn ident
+                    if tool_name.is_none() {
+                        for attr in &method.attrs {
+                            let attr_str = quote::quote!(#attr).to_string();
+                            if attr_str.contains("tool") {
+                                tool_name = Some(method.sig.ident.to_string());
+                                break;
+                            }
+                        }
+                    }
+
+                    if let Some(name) = &tool_name {
+                        all_tool_methods.insert(name.clone());
+
+                        if method_str.contains("finish_redacted") {
+                            tools_calling_finish_redacted.insert(name.clone());
+                        }
                     }
                 }
             }
@@ -217,4 +233,13 @@ fn redacted_tools_call_finish_redacted() {
             "{tool} calls finish_redacted but is not in REDACTED_TOOLS"
         );
     }
+
+    // Sanity check: parser should find as many tool methods as KNOWN_TOOLS has entries
+    assert_eq!(
+        all_tool_methods.len(),
+        KNOWN_TOOLS.len(),
+        "tripwire parser found {} tool methods but KNOWN_TOOLS has {}",
+        all_tool_methods.len(),
+        KNOWN_TOOLS.len()
+    );
 }

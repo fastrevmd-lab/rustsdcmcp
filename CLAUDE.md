@@ -66,10 +66,12 @@ here so an absence reads as a decision rather than as work nobody got to.
 
 **Deferred writes** — reads exist; writes need prepare → approve → apply.
 
-Image stage/deploy (`POST /api/v1/devices/{device_id}/image/stage` and
-`BulkDeployImage`), MNHA sync, RMA activate/reactivate, image-definition
-create/delete, and RMA `reactivation_preferences` stay unbuilt as writes. If
-needed, they go through prepare → approve → apply, never direct.
+Image stage/deploy (`POST /api/v1/device_image_definitions/{image_uuid}/stage_image`,
+`POST /api/v1/device_image_definitions/{image_uuid}/deploy_image`, and
+`POST /api/v1/device_image_definitions/deploy_image` for bulk), MNHA sync,
+RMA activate/reactivate, image-definition create/delete, and RMA
+`reactivation_preferences` stay unbuilt as writes. If needed, they go through
+prepare → approve → apply, never direct.
 
 IAM and subscriptions are tenant administration, not network management. An MCP
 client that can create users, alter roles or change entitlements holds a surface

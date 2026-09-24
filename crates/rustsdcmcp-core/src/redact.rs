@@ -67,15 +67,22 @@ pub fn redact_secrets(mut value: Value) -> Value {
 /// spec describes `missing_licenses` as "Array of license keys that are missing",
 /// so the keys are the array VALUES, not object keys.
 ///
+/// Fails closed: if `missing_licenses` is present but not an array (API
+/// regression), the entire value is replaced with REDACTED. `null` stays `null`.
+///
 /// Other fields are left untouched.
 #[must_use]
 pub fn redact_rma_state(mut value: Value) -> Value {
     if let Some(obj) = value.as_object_mut()
         && let Some(licenses) = obj.get_mut("missing_licenses")
-        && let Some(arr) = licenses.as_array_mut()
     {
-        for item in arr.iter_mut() {
-            *item = Value::String(REDACTED.to_owned());
+        if let Some(arr) = licenses.as_array_mut() {
+            for item in arr.iter_mut() {
+                *item = Value::String(REDACTED.to_owned());
+            }
+        } else if !licenses.is_null() {
+            // Fail closed: non-array, non-null → replace wholesale
+            *licenses = Value::String(REDACTED.to_owned());
         }
     }
     value
@@ -215,5 +222,23 @@ mod tests {
                 .len(),
             0
         );
+    }
+
+    #[test]
+    fn rma_state_non_array_missing_licenses_is_redacted() {
+        // Fail closed: if missing_licenses is a string (API regression), redact it
+        let state = json!({"device_id": "dev1", "missing_licenses": "LIC-KEY-MALFORMED"});
+        let out = redact_rma_state(state);
+        assert_eq!(out["missing_licenses"], REDACTED);
+        assert_eq!(out["device_id"], "dev1");
+    }
+
+    #[test]
+    fn rma_state_null_missing_licenses_stays_null() {
+        // null carries no secret, so leave it alone
+        let state = json!({"device_id": "dev1", "missing_licenses": null});
+        let out = redact_rma_state(state);
+        assert!(out["missing_licenses"].is_null());
+        assert_eq!(out["device_id"], "dev1");
     }
 }
