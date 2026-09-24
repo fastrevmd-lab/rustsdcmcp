@@ -14,7 +14,8 @@ fn tool_registry_has_expected_unique_surface() {
     // #156 added ECF rule-set and rule reads.
     // #156 added three global-settings singletons and the device global-settings list.
     // #155 added device config section and revision reads.
-    assert_eq!(KNOWN_TOOLS.len(), 68);
+    // #155 added image definition and job-status reads.
+    assert_eq!(KNOWN_TOOLS.len(), 70);
     assert_eq!(
         KNOWN_TOOLS.iter().copied().collect::<BTreeSet<_>>().len(),
         KNOWN_TOOLS.len()

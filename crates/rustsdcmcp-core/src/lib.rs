@@ -39,8 +39,8 @@ pub use license_write::{
 };
 pub use models::{
     DeployRequest, DeploymentStatus, DeviceConfigSection, DeviceDeploymentStatus,
-    DeviceStatusEntry, JobStatus, ListRequest, ListRequestError, NatWriteOperation, PolicyEntry,
-    PolicyOperation, PolicyType, PreviewRequest, Target, TargetType, TenantScope,
+    DeviceStatusEntry, ImageJob, JobStatus, ListRequest, ListRequestError, NatWriteOperation,
+    PolicyEntry, PolicyOperation, PolicyType, PreviewRequest, Target, TargetType, TenantScope,
     validate_deploy_targets,
 };
 pub use nat_write::{NatValidationReport, SdcNatTransaction, SdcPreparedNatWrite};

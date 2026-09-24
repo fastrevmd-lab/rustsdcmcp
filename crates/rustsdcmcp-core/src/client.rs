@@ -4,9 +4,9 @@
 //! its reusable foundations are tracked in mecmcp issue #90.
 
 use crate::{
-    DeployRequest, DeploymentStatus, DeviceConfigSection, JobStatus, ListRequest, ListRequestError,
-    PolicyOperation, PreviewRequest, ResourceKind, SdcConfig, SdcPreparedChange, SdcPreparedTarget,
-    TenantScope, WritableResource,
+    DeployRequest, DeploymentStatus, DeviceConfigSection, ImageJob, JobStatus, ListRequest,
+    ListRequestError, PolicyOperation, PreviewRequest, ResourceKind, SdcConfig, SdcPreparedChange,
+    SdcPreparedTarget, TenantScope, WritableResource,
     models::{DeployResponse, PreviewResponse},
 };
 use futures::StreamExt as _;
@@ -440,6 +440,42 @@ impl SdcClient {
                 device_uuid,
                 "config",
                 "latest_version",
+            ],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// List device software image definitions with bounded pagination.
+    pub async fn list_image_definitions(
+        &self,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        self.list(
+            &["api", "v1", "device_image_definitions"],
+            page,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch the status of one image stage or deploy job.
+    pub async fn get_image_job_status(
+        &self,
+        job: ImageJob,
+        job_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("job_id", job_id)?;
+        self.get(
+            &[
+                "api",
+                "v1",
+                "device_image_definitions",
+                job.segment(),
+                job_id,
             ],
             &[],
             cancellation,
@@ -3593,6 +3629,40 @@ mod tests {
             )
             .await
             .expect("list succeeds");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn image_reads_use_the_definition_list_and_job_status_paths() {
+        let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorder = seen.clone();
+        let app = Router::new().fallback(move |uri: axum::http::Uri| {
+            let recorder = recorder.clone();
+            async move {
+                recorder.lock().expect("record").push(uri.to_string());
+                Json(serde_json::json!({}))
+            }
+        });
+        let (base_url, server) = serve(app).await;
+        let sdc = client(base_url, 4096);
+        let ct = CancellationToken::new();
+        sdc.list_image_definitions(ListRequest::new(0, 2, 100).expect("page"), &ct)
+            .await
+            .expect("list");
+        sdc.get_image_job_status(ImageJob::Stage, "s1", &ct)
+            .await
+            .expect("stage");
+        sdc.get_image_job_status(ImageJob::Deploy, "d1", &ct)
+            .await
+            .expect("deploy");
+        assert_eq!(
+            seen.lock().expect("read").clone(),
+            vec![
+                "/api/v1/device_image_definitions?from=0&size=2",
+                "/api/v1/device_image_definitions/stage_image/s1",
+                "/api/v1/device_image_definitions/deploy_image/d1",
+            ]
+        );
         server.abort();
     }
 }

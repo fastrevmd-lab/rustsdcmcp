@@ -17,9 +17,10 @@ use rmcp::{
     tool, tool_handler, tool_router,
 };
 use rustsdcmcp_core::{
-    ChangeManager, DeviceConfigSection, ListRequest, NatWriteOperation, ObjectWriteAction,
-    PolicyOperation, ResourceKind, SdcClient, SdcError, WritableResource, project_ca_certificates,
-    project_license, project_licenses, project_local_certificates, redact_secrets,
+    ChangeManager, DeviceConfigSection, ImageJob, ListRequest, NatWriteOperation,
+    ObjectWriteAction, PolicyOperation, ResourceKind, SdcClient, SdcError, WritableResource,
+    project_ca_certificates, project_license, project_licenses, project_local_certificates,
+    redact_secrets,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -40,6 +41,8 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "list_sdc_config_versions",
     "list_sdc_device_config",
     "get_sdc_device_config_revision",
+    "list_sdc_image_definitions",
+    "get_sdc_image_job_status",
     "list_sdc_firewall_policies",
     "get_sdc_firewall_policy",
     "list_sdc_firewall_rules",
@@ -405,6 +408,18 @@ pub struct DeviceConfigListArgs {
     pub from: u64,
     /// Explicit positive page size.
     pub size: u32,
+}
+
+/// Arguments for one device-image job.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImageJobArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Whether the job stages or deploys an image.
+    pub job: ImageJob,
+    /// Job ID returned when the stage or deploy was started.
+    pub job_id: String,
 }
 
 /// Arguments for device certificate list.
@@ -1084,6 +1099,69 @@ impl SdcHandler {
             audit,
             self.client
                 .get_device_config_revision(&args.device_uuid, &cancellation)
+                .await,
+        ))
+    }
+
+    #[tool(
+        name = "list_sdc_image_definitions",
+        description = "List device software image definitions with bounded pagination."
+    )]
+    async fn list_sdc_image_definitions(
+        &self,
+        Parameters(args): Parameters<ListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_sdc_image_definitions",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "list_sdc_image_definitions", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
+            .map_err(SdcError::from);
+        let result = match result {
+            Ok(page) => {
+                self.client
+                    .list_image_definitions(page, &cancellation)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        Ok(finish_redacted(audit, result))
+    }
+
+    #[tool(
+        name = "get_sdc_image_job_status",
+        description = "Get the status of one device-image stage or deploy job. Read-only; this server cannot start one."
+    )]
+    async fn get_sdc_image_job_status(
+        &self,
+        Parameters(args): Parameters<ImageJobArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "get_sdc_image_job_status",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "get_sdc_image_job_status", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish_redacted(
+            audit,
+            self.client
+                .get_image_job_status(args.job, &args.job_id, &cancellation)
                 .await,
         ))
     }
