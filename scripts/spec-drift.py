@@ -5,9 +5,10 @@ self-check  every API path the Rust source calls must exist in the vendored spec
 diff        semantic comparison of two specs; exit 3 when they differ
 
 Paths are extracted from `&["api", "vN", ...]` segment arrays in non-test Rust
-source. String literals are fixed segments; anything else (a variable, or a
-`.segment()` call) is a one-segment wildcard. A template from catalog.rs also
-implies its `/{uuid}` item path, which `get_resource` builds at runtime.
+source. String literals are fixed segments; a bare identifier (e.g. device_uuid)
+becomes PARAM (matches only spec `{x}` segments); a call expression (e.g.
+section.segment()) becomes ANY (matches a literal or `{x}`). A template from
+catalog.rs also implies its `/{uuid}` item path, which `get_resource` builds at runtime.
 """
 
 import argparse
@@ -70,65 +71,71 @@ def unmatched(templates, spec_paths):
     return sorted(t for t in templates if not any(_matches(t, p) for p in spec_paths))
 
 
-def _inline(node, schemas, stack):
+def _inline(node, components, stack):
     """Resolve local $refs recursively; a cycle becomes a named marker."""
     if isinstance(node, dict):
         ref = node.get("$ref")
-        if isinstance(ref, str) and ref.startswith("#/components/schemas/"):
-            name = ref.rsplit("/", 1)[-1]
-            if name in stack:
-                return {"$cycle": name}
-            return _inline(schemas.get(name, {"$missing": name}), schemas, stack | {name})
-        return {key: _inline(value, schemas, stack) for key, value in node.items()}
+        if isinstance(ref, str) and ref.startswith("#/components/"):
+            # Parse #/components/<kind>/<name>
+            parts = ref.split("/")
+            if len(parts) == 4 and parts[1] == "components":
+                kind, name = parts[2], parts[3]
+                if ref in stack:
+                    return {"$cycle": ref}
+                resolved = components.get(kind, {}).get(name)
+                if resolved:
+                    return _inline(resolved, components, stack | {ref})
+                return {"$missing": ref}
+        return {key: _inline(value, components, stack) for key, value in node.items()}
     if isinstance(node, list):
-        return [_inline(value, schemas, stack) for value in node]
+        return [_inline(value, components, stack) for value in node]
     return node
 
 
-def _param_identity(param, param_components):
-    """Return (name, in) for a parameter, resolving $ref if needed."""
-    if "$ref" in param:
-        ref = param["$ref"]
-        if ref.startswith("#/components/parameters/"):
-            name = ref.rsplit("/", 1)[-1]
-            resolved = param_components.get(name)
-            if resolved:
-                return (resolved.get("name"), resolved.get("in"))
-        # Unresolvable ref: make identity unique to the ref string
+def _param_identity(param):
+    """Return (name, in) for a parameter (already resolved by _inline)."""
+    # _inline resolves refs, but unresolvable ones become {"$missing": ref}
+    if "$missing" in param:
+        ref = param["$missing"]
         return ("$ref", ref)
+    if "$ref" in param:
+        # Fallback for unresolvable refs that _inline didn't catch
+        return ("$ref", param["$ref"])
     return (param.get("name"), param.get("in"))
 
 
 def _fingerprints(spec):
-    schemas = spec.get("components", {}).get("schemas", {})
-    param_components = spec.get("components", {}).get("parameters", {})
+    components = spec.get("components", {})
     prints = {}
 
     # Document-level contract
     doc_contract = {
         "servers": spec.get("servers", []),
         "security": spec.get("security", []),
-        "securitySchemes": spec.get("components", {}).get("securitySchemes", {}),
+        "securitySchemes": components.get("securitySchemes", {}),
     }
     doc_canonical = json.dumps(doc_contract, sort_keys=True, separators=(",", ":"))
     prints[("DOC", "")] = hashlib.sha256(doc_canonical.encode()).hexdigest()
 
     for spec_path, operations in spec.get("paths", {}).items():
-        path_params = operations.get("parameters", [])
+        # Inline path-level parameters too
+        path_params = _inline(operations.get("parameters", []), components, frozenset())
         for method in METHODS:
             if method not in operations:
                 continue
-            body = _inline(operations[method], schemas, frozenset())
+            body = _inline(operations[method], components, frozenset())
             # Merge path-level parameters, skipping those overridden by operation-level
-            if path_params:
+            op_params = body.get("parameters", [])
+            if path_params or op_params:
                 body = dict(body)  # shallow copy to avoid mutation
-                op_params = body.get("parameters", [])
-                op_identities = {_param_identity(p, param_components) for p in op_params}
+                op_identities = {_param_identity(p) for p in op_params}
                 # Skip path params whose (name, in) the operation already declares
                 merged = op_params + [
                     p for p in path_params
-                    if _param_identity(p, param_components) not in op_identities
+                    if _param_identity(p) not in op_identities
                 ]
+                # Sort by (in, name) so reordering is not drift
+                merged.sort(key=lambda p: (_param_identity(p)[1] or "", _param_identity(p)[0] or ""))
                 body["parameters"] = merged
             canonical = json.dumps(body, sort_keys=True, separators=(",", ":"))
             prints[(method.upper(), spec_path)] = hashlib.sha256(canonical.encode()).hexdigest()
@@ -162,6 +169,10 @@ def diff(old, new, called):
         return lines + [f"- `{method} {path}`" for method, path in keys] + [""]
 
     lines = ["## SDC OpenAPI drift", ""]
+    if not drifted:
+        lines += ["No drift."]
+        return "\n".join(lines), drifted
+
     if old_version != new_version:
         lines += [f"`info.version`: {old_version} → {new_version}", ""]
     for label, keys in (("changed", op_changed), ("removed", op_removed), ("added", op_added)):
@@ -216,6 +227,9 @@ def main(argv=None):
         print(f"{len(templates)} templates, {len(missing)} unmatched")
         return 1 if missing else 0
 
+    if not templates:
+        print("no API path templates extracted; the extractor is broken", file=sys.stderr)
+        return 1
     report, drifted = diff(_load(args.old), _load(args.new), templates)
     print(report)
     return 3 if drifted else 0

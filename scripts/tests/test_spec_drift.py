@@ -259,6 +259,185 @@ class Diff(unittest.TestCase):
         report, drifted = drift.diff(spec(old_paths), spec(new_paths), self.CALLED)
         self.assertTrue(drifted, "Changing path-level unresolvable $ref should be drift")
 
+    def test_path_level_parameter_schema_ref_change_is_drift(self):
+        # Path-level parameter with schema $ref; changing the ref target is drift
+        old_spec = {
+            "openapi": "3.0.0",
+            "info": {"title": "t", "version": "1.0.0"},
+            "paths": {
+                "/api/v1/devices": {
+                    "parameters": [{"name": "filter", "in": "query", "schema": {"$ref": "#/components/schemas/Filter"}}],
+                    "get": {"responses": {}},
+                }
+            },
+            "components": {
+                "schemas": {"Filter": {"type": "string"}},
+            },
+        }
+        new_spec = {
+            "openapi": "3.0.0",
+            "info": {"title": "t", "version": "1.0.0"},
+            "paths": {
+                "/api/v1/devices": {
+                    "parameters": [{"name": "filter", "in": "query", "schema": {"$ref": "#/components/schemas/Filter"}}],
+                    "get": {"responses": {}},
+                }
+            },
+            "components": {
+                "schemas": {"Filter": {"type": "integer"}},  # changed string -> integer
+            },
+        }
+        report, drifted = drift.diff(old_spec, new_spec, self.CALLED)
+        self.assertTrue(drifted, "Changing path-level parameter's schema ref target should be drift")
+
+    def test_component_parameter_schema_change_is_drift(self):
+        # Operation uses #/components/parameters/L; changing L's schema is drift
+        old_spec = {
+            "openapi": "3.0.0",
+            "info": {"title": "t", "version": "1.0.0"},
+            "paths": {
+                "/api/v1/devices": {
+                    "get": {
+                        "parameters": [{"$ref": "#/components/parameters/Limit"}],
+                        "responses": {},
+                    },
+                }
+            },
+            "components": {
+                "schemas": {},
+                "parameters": {
+                    "Limit": {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1}}
+                },
+            },
+        }
+        new_spec = {
+            "openapi": "3.0.0",
+            "info": {"title": "t", "version": "1.0.0"},
+            "paths": {
+                "/api/v1/devices": {
+                    "get": {
+                        "parameters": [{"$ref": "#/components/parameters/Limit"}],
+                        "responses": {},
+                    },
+                }
+            },
+            "components": {
+                "schemas": {},
+                "parameters": {
+                    "Limit": {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 10}}  # changed 1 -> 10
+                },
+            },
+        }
+        report, drifted = drift.diff(old_spec, new_spec, self.CALLED)
+        self.assertTrue(drifted, "Changing component parameter's schema should be drift")
+
+    def test_reordering_parameters_is_not_drift(self):
+        # Parameters sorted by (in, name) before hashing
+        old_paths = {
+            "/api/v1/devices": {
+                "get": {
+                    "parameters": [
+                        {"name": "limit", "in": "query"},
+                        {"name": "offset", "in": "query"},
+                    ],
+                    "responses": {},
+                }
+            }
+        }
+        new_paths = {
+            "/api/v1/devices": {
+                "get": {
+                    "parameters": [
+                        {"name": "offset", "in": "query"},  # reordered
+                        {"name": "limit", "in": "query"},
+                    ],
+                    "responses": {},
+                }
+            }
+        }
+        report, drifted = drift.diff(spec(old_paths), spec(new_paths), self.CALLED)
+        self.assertFalse(drifted, "Reordering parameters should not be drift")
+
+    def test_no_drift_report_includes_no_drift_line(self):
+        # When there's no drift, report must say "No drift."
+        s = spec({"/api/v1/devices": {"get": op()}})
+        report, drifted = drift.diff(s, s, self.CALLED)
+        self.assertFalse(drifted)
+        self.assertIn("No drift.", report)
+
+
+class MainFunction(unittest.TestCase):
+    def make_src_with_templates(self):
+        """Create a src directory with template calls."""
+        root = pathlib.Path(tempfile.mkdtemp())
+        (root / "client.rs").write_text('self.get(&["api", "v1", "devices"], &[], ct)')
+        return root
+
+    def test_diff_exit_0_on_identical_specs(self):
+        s = spec({"/api/v1/devices": {"get": op()}})
+        src = self.make_src_with_templates()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(s, f)
+            path = f.name
+        try:
+            result = drift.main(["diff", path, path, "--src", str(src)])
+            self.assertEqual(result, 0)
+        finally:
+            pathlib.Path(path).unlink()
+
+    def test_diff_exit_3_on_drift(self):
+        old = spec({"/api/v1/devices": {"get": op()}}, version="1.0.0")
+        new = spec({"/api/v1/devices": {"get": op()}}, version="1.1.0")
+        src = self.make_src_with_templates()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f1, \
+             tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f2:
+            json.dump(old, f1)
+            json.dump(new, f2)
+            path1, path2 = f1.name, f2.name
+        try:
+            result = drift.main(["diff", path1, path2, "--src", str(src)])
+            self.assertEqual(result, 3)
+        finally:
+            pathlib.Path(path1).unlink()
+            pathlib.Path(path2).unlink()
+
+    def test_diff_exit_2_on_non_openapi_file(self):
+        src = self.make_src_with_templates()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump({"not": "openapi"}, f)
+            path = f.name
+        try:
+            try:
+                result = drift.main(["diff", path, path, "--src", str(src)])
+            except SystemExit as e:
+                result = e.code
+            self.assertEqual(result, 2)
+        finally:
+            pathlib.Path(path).unlink()
+
+    def test_self_check_exit_1_when_templates_empty(self):
+        s = spec({"/api/v1/devices": {"get": op()}})
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(s, f)
+            path = f.name
+        try:
+            result = drift.main(["self-check", "--spec", path, "--src", tempfile.mkdtemp()])
+            self.assertEqual(result, 1)
+        finally:
+            pathlib.Path(path).unlink()
+
+    def test_only_catalog_rs_implies_item_path(self):
+        root = pathlib.Path(tempfile.mkdtemp())
+        (root / "client.rs").write_text('Self::Addresses => &["api", "v1", "addresses"],')
+        (root / "catalog.rs").write_text('Self::Devices => &["api", "v1", "devices"],')
+        templates = drift.called_templates(root)
+        # catalog.rs implies both collection and item path
+        self.assertIn(("api", "v1", "devices"), templates)
+        self.assertIn(("api", "v1", "devices", drift.PARAM), templates)
+        # client.rs does not imply item path
+        self.assertIn(("api", "v1", "addresses"), templates)
+        self.assertNotIn(("api", "v1", "addresses", drift.PARAM), templates)
+
 
 if __name__ == "__main__":
     unittest.main()

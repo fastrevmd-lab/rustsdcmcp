@@ -21,12 +21,12 @@ curl -fsSL --max-time 120 "${SPEC_URL}" -o "${DEST}.tmp"
 # Refuse to install a truncated or non-JSON download over a known-good spec.
 python3 -c "
 import json, sys
-spec = json.load(open('${DEST}.tmp'))
+spec = json.load(open(sys.argv[1]))
 assert spec.get('openapi', '').startswith('3.'), 'not an OpenAPI 3 document'
 assert spec.get('paths'), 'no paths in document'
 print('ok:', spec['info']['title'], 'v' + spec['info']['version'],
       '-', len(spec['paths']), 'paths')
-"
+" "${DEST}.tmp"
 
 mv "${DEST}.tmp" "${DEST}"
 echo "wrote ${DEST}"
