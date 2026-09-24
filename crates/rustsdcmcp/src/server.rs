@@ -43,6 +43,9 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "get_sdc_device_config_revision",
     "list_sdc_image_definitions",
     "get_sdc_image_job_status",
+    "get_sdc_mnha_sync_status",
+    "get_sdc_rma_state",
+    "get_sdc_rma_reactivation_status",
     "list_sdc_firewall_policies",
     "get_sdc_firewall_policy",
     "list_sdc_firewall_rules",
@@ -420,6 +423,36 @@ pub struct ImageJobArgs {
     pub job: ImageJob,
     /// Job ID returned when the stage or deploy was started.
     pub job_id: String,
+}
+
+/// Arguments for one MNHA sync job.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MnhaSyncArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// MNHA sync job ID.
+    pub mnha_sync_id: String,
+}
+
+/// Arguments for one device's RMA state.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RmaDeviceArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Device ID.
+    pub device_id: String,
+}
+
+/// Arguments for one RMA reactivation job.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RmaReactivationArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Reactivation job ID.
+    pub reactivation_id: String,
 }
 
 /// Arguments for device certificate list.
@@ -1162,6 +1195,94 @@ impl SdcHandler {
             audit,
             self.client
                 .get_image_job_status(args.job, &args.job_id, &cancellation)
+                .await,
+        ))
+    }
+
+    #[tool(
+        name = "get_sdc_mnha_sync_status",
+        description = "Get the status of one MNHA cluster sync job. Read-only; this server cannot start a sync."
+    )]
+    async fn get_sdc_mnha_sync_status(
+        &self,
+        Parameters(args): Parameters<MnhaSyncArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "get_sdc_mnha_sync_status",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "get_sdc_mnha_sync_status", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish_redacted(
+            audit,
+            self.client
+                .get_mnha_sync_status(&args.mnha_sync_id, &cancellation)
+                .await,
+        ))
+    }
+
+    #[tool(
+        name = "get_sdc_rma_state",
+        description = "Get the RMA state of one device, including missing resources blocking reactivation."
+    )]
+    async fn get_sdc_rma_state(
+        &self,
+        Parameters(args): Parameters<RmaDeviceArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "get_sdc_rma_state",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "get_sdc_rma_state", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish_redacted(
+            audit,
+            self.client
+                .get_rma_state(&args.device_id, &cancellation)
+                .await,
+        ))
+    }
+
+    #[tool(
+        name = "get_sdc_rma_reactivation_status",
+        description = "Get the status of one RMA reactivation job."
+    )]
+    async fn get_sdc_rma_reactivation_status(
+        &self,
+        Parameters(args): Parameters<RmaReactivationArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "get_sdc_rma_reactivation_status",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "get_sdc_rma_reactivation_status", &args.tenant)
+        {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish_redacted(
+            audit,
+            self.client
+                .get_rma_reactivation_status(&args.reactivation_id, &cancellation)
                 .await,
         ))
     }

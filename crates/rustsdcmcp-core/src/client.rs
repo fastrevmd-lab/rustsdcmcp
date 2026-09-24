@@ -483,6 +483,54 @@ impl SdcClient {
         .await
     }
 
+    /// Fetch the status of one MNHA cluster sync job.
+    pub async fn get_mnha_sync_status(
+        &self,
+        mnha_sync_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("mnha_sync_id", mnha_sync_id)?;
+        self.get(
+            &["api", "v1", "mnha_clusters", "sync", mnha_sync_id],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch the RMA state of one device.
+    ///
+    /// The sibling `rma/reactivation_config` endpoint is deliberately not
+    /// wrapped: it returns a full bootstrap configuration.
+    pub async fn get_rma_state(
+        &self,
+        device_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("device_id", device_id)?;
+        self.get(
+            &["api", "v1", "devices", device_id, "rma", "state"],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch the status of one RMA reactivation job.
+    pub async fn get_rma_reactivation_status(
+        &self,
+        reactivation_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("reactivation_id", reactivation_id)?;
+        self.get(
+            &["api", "v1", "devices", "rma", "reactivate", reactivation_id],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
     /// List firewall policies with bounded pagination.
     pub async fn list_firewall_policies(
         &self,
@@ -3661,6 +3709,36 @@ mod tests {
                 "/api/v1/device_image_definitions?from=0&size=2",
                 "/api/v1/device_image_definitions/stage_image/s1",
                 "/api/v1/device_image_definitions/deploy_image/d1",
+            ]
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn mnha_and_rma_status_reads_use_their_spec_paths() {
+        let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorder = seen.clone();
+        let app = Router::new().fallback(move |uri: axum::http::Uri| {
+            let recorder = recorder.clone();
+            async move {
+                recorder.lock().expect("record").push(uri.to_string());
+                Json(serde_json::json!({}))
+            }
+        });
+        let (base_url, server) = serve(app).await;
+        let sdc = client(base_url, 4096);
+        let ct = CancellationToken::new();
+        sdc.get_mnha_sync_status("m1", &ct).await.expect("mnha");
+        sdc.get_rma_state("dev1", &ct).await.expect("rma state");
+        sdc.get_rma_reactivation_status("r1", &ct)
+            .await
+            .expect("reactivation");
+        assert_eq!(
+            seen.lock().expect("read").clone(),
+            vec![
+                "/api/v1/mnha_clusters/sync/m1",
+                "/api/v1/devices/dev1/rma/state",
+                "/api/v1/devices/rma/reactivate/r1",
             ]
         );
         server.abort();

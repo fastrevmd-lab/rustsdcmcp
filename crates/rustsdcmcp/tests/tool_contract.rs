@@ -15,7 +15,8 @@ fn tool_registry_has_expected_unique_surface() {
     // #156 added three global-settings singletons and the device global-settings list.
     // #155 added device config section and revision reads.
     // #155 added image definition and job-status reads.
-    assert_eq!(KNOWN_TOOLS.len(), 70);
+    // #155 added MNHA sync and RMA status reads.
+    assert_eq!(KNOWN_TOOLS.len(), 73);
     assert_eq!(
         KNOWN_TOOLS.iter().copied().collect::<BTreeSet<_>>().len(),
         KNOWN_TOOLS.len()
