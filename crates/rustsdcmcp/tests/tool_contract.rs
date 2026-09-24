@@ -12,7 +12,8 @@ fn tool_registry_has_expected_unique_surface() {
     // device-sync prepare/apply pair. #156 added list/get_sdc_sites (redacted).
     // #156 added IPS rule and exempt-rule reads.
     // #156 added ECF rule-set and rule reads.
-    assert_eq!(KNOWN_TOOLS.len(), 62);
+    // #156 added three global-settings singletons and the device global-settings list.
+    assert_eq!(KNOWN_TOOLS.len(), 66);
     assert_eq!(
         KNOWN_TOOLS.iter().copied().collect::<BTreeSet<_>>().len(),
         KNOWN_TOOLS.len()

@@ -756,6 +756,74 @@ impl SdcClient {
         .await
     }
 
+    /// Fetch the tenant's firewall global settings (a singleton).
+    ///
+    /// No pagination exists; the response is bounded by `max_response_bytes`
+    /// and refused, never truncated, above it.
+    pub async fn get_firewall_global_settings(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        self.get(
+            &["api", "v1", "firewall_global_settings"],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch the tenant's firewall global profile (a singleton).
+    pub async fn get_firewall_global_profile(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        self.get(
+            &["api", "v1", "firewall_global_profiles"],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch the tenant's content-security settings (a singleton).
+    pub async fn get_content_security_settings(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        self.get(
+            &["api", "v1", "content_security_settings"],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// List per-device firewall global settings.
+    ///
+    /// Unlike the rest of `/api/v1/`, this endpoint pages with `offset` and
+    /// `limit`. `device_id` narrows to one device when given.
+    pub async fn list_device_global_settings(
+        &self,
+        device_id: Option<&str>,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        let page = ListRequest::new(page.from, page.size, self.max_page_size)?;
+        let offset = page.from.to_string();
+        let limit = page.size.to_string();
+        let mut query = vec![("offset", offset.as_str()), ("limit", limit.as_str())];
+        if let Some(device_id) = device_id {
+            validate_atom("device_id", device_id)?;
+            query.push(("device_id", device_id));
+        }
+        self.get(
+            &["api", "v1", "firewall_device_global_settings"],
+            &query,
+            cancellation,
+        )
+        .await
+    }
+
     /// Create one object in an allowlisted generic resource family.
     ///
     /// Takes [`WritableResource`], not [`ResourceKind`]: adding a family to the
@@ -3308,6 +3376,76 @@ mod tests {
             (rules["profile"].as_str(), rules["set"].as_str()),
             (Some("p1"), Some("s1"))
         );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn singleton_reads_send_no_query_and_refuse_an_oversized_body() {
+        let app = Router::new()
+            .route(
+                "/api/v1/firewall_global_settings",
+                get(|Query(query): Query<HashMap<String, String>>| async move {
+                    assert!(query.is_empty(), "singleton sent a query: {query:?}");
+                    Json(serde_json::json!({"ok": "settings"}))
+                }),
+            )
+            .route(
+                "/api/v1/firewall_global_profiles",
+                get(|| async { Json(serde_json::json!({"ok": "profile"})) }),
+            )
+            .route(
+                "/api/v1/content_security_settings",
+                get(|| async { Json(serde_json::json!({"padding": "x".repeat(512)})) }),
+            );
+        let (base_url, server) = serve(app).await;
+        let ct = CancellationToken::new();
+        let roomy = client(base_url.clone(), 4096);
+        assert_eq!(
+            roomy
+                .get_firewall_global_settings(&ct)
+                .await
+                .expect("settings")["ok"],
+            "settings"
+        );
+        assert_eq!(
+            roomy
+                .get_firewall_global_profile(&ct)
+                .await
+                .expect("profile")["ok"],
+            "profile"
+        );
+        let tight = client(base_url, 64);
+        assert!(matches!(
+            tight.get_content_security_settings(&ct).await,
+            Err(SdcError::ResponseTooLarge { limit: 64 })
+        ));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn device_global_settings_page_with_offset_and_limit() {
+        let app = Router::new().route(
+            "/api/v1/firewall_device_global_settings",
+            get(|Query(query): Query<HashMap<String, String>>| async move {
+                assert_eq!(query.get("offset").map(String::as_str), Some("2"));
+                assert_eq!(query.get("limit").map(String::as_str), Some("5"));
+                assert_eq!(query.get("device_id").map(String::as_str), Some("d1"));
+                assert!(
+                    !query.contains_key("size"),
+                    "from/size vocabulary leaked: {query:?}"
+                );
+                Json(serde_json::json!({"items": [], "count": 0}))
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        client(base_url, 4096)
+            .list_device_global_settings(
+                Some("d1"),
+                ListRequest::new(2, 5, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("list succeeds");
         server.abort();
     }
 }

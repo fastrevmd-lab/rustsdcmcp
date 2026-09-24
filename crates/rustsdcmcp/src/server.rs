@@ -96,6 +96,10 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "prepare_sdc_device_inventory_sync",
     "apply_sdc_device_inventory_sync",
     "get_sdc_firewall_policy_state",
+    "get_sdc_firewall_global_settings",
+    "get_sdc_firewall_global_profile",
+    "get_sdc_content_security_settings",
+    "list_sdc_device_global_settings",
 ];
 
 /// Tools that can cause an SDC deployment or object lifecycle mutation.
@@ -407,6 +411,22 @@ pub struct DeviceLicenseListArgs {
     #[serde(default)]
     pub from: u64,
     /// Explicit positive page size.
+    pub size: u32,
+}
+
+/// Arguments for listing per-device firewall global settings.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceGlobalSettingsListArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Optional device ID to narrow the list to one device.
+    #[serde(default)]
+    pub device_id: Option<String>,
+    /// Zero-based offset (sent upstream as `offset`).
+    #[serde(default)]
+    pub from: u64,
+    /// Explicit positive page size (sent upstream as `limit`).
     pub size: u32,
 }
 
@@ -1921,6 +1941,130 @@ impl SdcHandler {
                 )
                 .await,
         ))
+    }
+
+    #[tool(
+        name = "get_sdc_firewall_global_settings",
+        description = "Get the tenant's firewall global settings. Refused, not truncated, above the response size cap."
+    )]
+    async fn get_sdc_firewall_global_settings(
+        &self,
+        Parameters(args): Parameters<TenantArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "get_sdc_firewall_global_settings",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "get_sdc_firewall_global_settings", &args.tenant)
+        {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish_redacted(
+            audit,
+            self.client
+                .get_firewall_global_settings(&cancellation)
+                .await,
+        ))
+    }
+
+    #[tool(
+        name = "get_sdc_firewall_global_profile",
+        description = "Get the tenant's firewall global profile. Refused, not truncated, above the response size cap."
+    )]
+    async fn get_sdc_firewall_global_profile(
+        &self,
+        Parameters(args): Parameters<TenantArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "get_sdc_firewall_global_profile",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "get_sdc_firewall_global_profile", &args.tenant)
+        {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish_redacted(
+            audit,
+            self.client.get_firewall_global_profile(&cancellation).await,
+        ))
+    }
+
+    #[tool(
+        name = "get_sdc_content_security_settings",
+        description = "Get the tenant's content-security settings. Refused, not truncated, above the response size cap."
+    )]
+    async fn get_sdc_content_security_settings(
+        &self,
+        Parameters(args): Parameters<TenantArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "get_sdc_content_security_settings",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) =
+            self.authorize(caller, "get_sdc_content_security_settings", &args.tenant)
+        {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish_redacted(
+            audit,
+            self.client
+                .get_content_security_settings(&cancellation)
+                .await,
+        ))
+    }
+
+    #[tool(
+        name = "list_sdc_device_global_settings",
+        description = "List per-device firewall global settings with bounded pagination, optionally for one device."
+    )]
+    async fn list_sdc_device_global_settings(
+        &self,
+        Parameters(args): Parameters<DeviceGlobalSettingsListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_sdc_device_global_settings",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "list_sdc_device_global_settings", &args.tenant)
+        {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
+            .map_err(SdcError::from);
+        let result = match result {
+            Ok(page) => {
+                self.client
+                    .list_device_global_settings(args.device_id.as_deref(), page, &cancellation)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
