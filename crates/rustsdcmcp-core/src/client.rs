@@ -628,6 +628,202 @@ impl SdcClient {
         self.get(&segments, &[], cancellation).await
     }
 
+    /// List the IPS rules of one IPS profile with bounded pagination.
+    pub async fn list_ips_rules(
+        &self,
+        profile_uuid: &str,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("profile_uuid", profile_uuid)?;
+        self.list(
+            &["api", "v1", "ips_profiles", profile_uuid, "ips_rules"],
+            page,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch one IPS rule of one IPS profile.
+    pub async fn get_ips_rule(
+        &self,
+        profile_uuid: &str,
+        rule_uuid: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("profile_uuid", profile_uuid)?;
+        validate_atom("rule_uuid", rule_uuid)?;
+        self.get(
+            &[
+                "api",
+                "v1",
+                "ips_profiles",
+                profile_uuid,
+                "ips_rules",
+                rule_uuid,
+            ],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// List the exempt rules of one IPS profile with bounded pagination.
+    pub async fn list_ips_exempt_rules(
+        &self,
+        profile_uuid: &str,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("profile_uuid", profile_uuid)?;
+        self.list(
+            &["api", "v1", "ips_profiles", profile_uuid, "exempt_rules"],
+            page,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch one exempt rule of one IPS profile.
+    pub async fn get_ips_exempt_rule(
+        &self,
+        profile_uuid: &str,
+        rule_uuid: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("profile_uuid", profile_uuid)?;
+        validate_atom("rule_uuid", rule_uuid)?;
+        self.get(
+            &[
+                "api",
+                "v1",
+                "ips_profiles",
+                profile_uuid,
+                "exempt_rules",
+                rule_uuid,
+            ],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// List the rule sets of one enhanced content-filtering profile.
+    pub async fn list_ecf_rule_sets(
+        &self,
+        profile_uuid: &str,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("profile_uuid", profile_uuid)?;
+        self.list(
+            &[
+                "api",
+                "v1",
+                "enhanced_content_filtering_profiles",
+                profile_uuid,
+                "rule_sets",
+            ],
+            page,
+            cancellation,
+        )
+        .await
+    }
+
+    /// List the rules of one rule set of one enhanced content-filtering profile.
+    pub async fn list_ecf_rules(
+        &self,
+        profile_uuid: &str,
+        rule_set_uuid: &str,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("profile_uuid", profile_uuid)?;
+        validate_atom("rule_set_uuid", rule_set_uuid)?;
+        self.list(
+            &[
+                "api",
+                "v1",
+                "enhanced_content_filtering_profiles",
+                profile_uuid,
+                "rule_sets",
+                rule_set_uuid,
+                "rules",
+            ],
+            page,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch the tenant's firewall global settings (a singleton).
+    ///
+    /// No pagination exists; the response is bounded by `max_response_bytes`
+    /// and refused, never truncated, above it.
+    pub async fn get_firewall_global_settings(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        self.get(
+            &["api", "v1", "firewall_global_settings"],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch the tenant's firewall global profile (a singleton).
+    pub async fn get_firewall_global_profile(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        self.get(
+            &["api", "v1", "firewall_global_profiles"],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch the tenant's content-security settings (a singleton).
+    pub async fn get_content_security_settings(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        self.get(
+            &["api", "v1", "content_security_settings"],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// List per-device firewall global settings.
+    ///
+    /// Unlike the rest of `/api/v1/`, this endpoint pages with `offset` and
+    /// `limit`. `device_id` narrows to one device when given.
+    pub async fn list_device_global_settings(
+        &self,
+        device_id: Option<&str>,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        let page = ListRequest::new(page.from, page.size, self.max_page_size)?;
+        let offset = page.from.to_string();
+        let limit = page.size.to_string();
+        let mut query = vec![("offset", offset.as_str()), ("limit", limit.as_str())];
+        if let Some(device_id) = device_id {
+            validate_atom("device_id", device_id)?;
+            query.push(("device_id", device_id));
+        }
+        self.get(
+            &["api", "v1", "firewall_device_global_settings"],
+            &query,
+            cancellation,
+        )
+        .await
+    }
+
     /// Create one object in an allowlisted generic resource family.
     ///
     /// Takes [`WritableResource`], not [`ResourceKind`]: adding a family to the
@@ -738,7 +934,7 @@ impl SdcClient {
         page: ListRequest,
         cancellation: &CancellationToken,
     ) -> Result<Value, SdcError> {
-        self.list(&["api", "v2", "tunnels"], page, cancellation)
+        self.list_v2(&["api", "v2", "tunnels"], page, cancellation)
             .await
     }
 
@@ -765,6 +961,30 @@ impl SdcClient {
             cancellation,
         )
         .await
+    }
+
+    /// List sites with bounded pagination (`/api/v2/`, `spec.from`/`spec.size`).
+    ///
+    /// Site objects embed CPE interfaces carrying IKE pre-shared keys. The
+    /// client returns them verbatim; the tool boundary redacts.
+    pub async fn list_sites(
+        &self,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        self.list_v2(&["api", "v2", "sites"], page, cancellation)
+            .await
+    }
+
+    /// Fetch one site by name (`/api/v2/site/{site_name}`).
+    pub async fn get_site(
+        &self,
+        site_name: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("site_name", site_name)?;
+        self.get(&["api", "v2", "site", site_name], &[], cancellation)
+            .await
     }
 
     /// List CA certificates across all devices with bounded pagination.
@@ -1630,6 +1850,25 @@ impl SdcClient {
             .map(|(key, value)| (*key, value.as_str()))
             .collect::<Vec<_>>();
         self.get(segments, &borrowed, cancellation).await
+    }
+
+    /// Bounded list for `/api/v2/` collections, which prefix their page
+    /// parameters (`spec.from`, `spec.size`) and accept no `fields`.
+    async fn list_v2(
+        &self,
+        segments: &[&str],
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        let page = ListRequest::new(page.from, page.size, self.max_page_size)?;
+        let from = page.from.to_string();
+        let size = page.size.to_string();
+        self.get(
+            segments,
+            &[("spec.from", from.as_str()), ("spec.size", size.as_str())],
+            cancellation,
+        )
+        .await
     }
 
     async fn get<T: DeserializeOwned>(
@@ -2955,6 +3194,258 @@ mod tests {
             .preview_device_result("preview-123", "device-456", &CancellationToken::new())
             .await
             .expect("preview_device_result succeeds");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn v2_tunnel_list_sends_spec_prefixed_page_parameters() {
+        // ListTunnels declares `spec.from`/`spec.size`. Plain `from`/`size`
+        // are ignored upstream, leaving the list bounded only by bytes.
+        let app = Router::new().route(
+            "/api/v2/tunnels",
+            get(|Query(query): Query<HashMap<String, String>>| async move {
+                assert_eq!(query.get("spec.from").map(String::as_str), Some("5"));
+                assert_eq!(query.get("spec.size").map(String::as_str), Some("7"));
+                assert!(
+                    !query.contains_key("from"),
+                    "unprefixed from sent: {query:?}"
+                );
+                assert!(
+                    !query.contains_key("size"),
+                    "unprefixed size sent: {query:?}"
+                );
+                Json(serde_json::json!({"tunnels": [], "total": 0}))
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        let result = client(base_url, 4096)
+            .list_tunnels(
+                ListRequest::new(5, 7, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("list succeeds");
+        assert_eq!(result["total"], 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn list_sites_uses_the_v2_page_parameters() {
+        let app = Router::new().route(
+            "/api/v2/sites",
+            get(|Query(query): Query<HashMap<String, String>>| async move {
+                assert_eq!(query.get("spec.from").map(String::as_str), Some("0"));
+                assert_eq!(query.get("spec.size").map(String::as_str), Some("3"));
+                Json(serde_json::json!({"sites": [], "total": 0}))
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        let result = client(base_url, 4096)
+            .list_sites(
+                ListRequest::new(0, 3, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("list succeeds");
+        assert_eq!(result["total"], 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn get_site_addresses_the_site_by_one_encoded_name_segment() {
+        let app = Router::new().route(
+            "/api/v2/site/{site_name}",
+            get(
+                |axum::extract::Path(site_name): axum::extract::Path<String>| async move {
+                    Json(serde_json::json!({"site": {"site_name": site_name}}))
+                },
+            ),
+        );
+        let (base_url, server) = serve(app).await;
+        let result = client(base_url, 4096)
+            .get_site("branch/../1", &CancellationToken::new())
+            .await
+            .expect("get succeeds");
+        assert_eq!(result["site"]["site_name"], "branch/../1");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn ips_rule_reads_use_the_ips_rules_and_exempt_rules_segments() {
+        let app = Router::new()
+            .route(
+                "/api/v1/ips_profiles/{profile}/ips_rules",
+                get(|Query(query): Query<HashMap<String, String>>| async move {
+                    assert_eq!(query.get("size").map(String::as_str), Some("2"));
+                    Json(serde_json::json!({"items": [], "count": 0, "kind": "ips"}))
+                }),
+            )
+            .route(
+                "/api/v1/ips_profiles/{profile}/ips_rules/{rule}",
+                get(|axum::extract::Path((p, r)): axum::extract::Path<(String, String)>| async move {
+                    Json(serde_json::json!({"profile": p, "rule": r}))
+                }),
+            )
+            .route(
+                "/api/v1/ips_profiles/{profile}/exempt_rules",
+                get(|| async { Json(serde_json::json!({"items": [], "count": 0, "kind": "exempt"})) }),
+            )
+            .route(
+                "/api/v1/ips_profiles/{profile}/exempt_rules/{rule}",
+                get(|axum::extract::Path((p, r)): axum::extract::Path<(String, String)>| async move {
+                    Json(serde_json::json!({"profile": p, "exempt": r}))
+                }),
+            );
+        let (base_url, server) = serve(app).await;
+        let sdc = client(base_url, 4096);
+        let ct = CancellationToken::new();
+        let page = || ListRequest::new(0, 2, 100).expect("test page");
+        assert_eq!(
+            sdc.list_ips_rules("p1", page(), &ct).await.expect("list")["kind"],
+            "ips"
+        );
+        assert_eq!(
+            sdc.get_ips_rule("p1", "r1", &ct).await.expect("get")["rule"],
+            "r1"
+        );
+        assert_eq!(
+            sdc.list_ips_exempt_rules("p1", page(), &ct)
+                .await
+                .expect("list")["kind"],
+            "exempt"
+        );
+        assert_eq!(
+            sdc.get_ips_exempt_rule("p1", "e1", &ct).await.expect("get")["exempt"],
+            "e1"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn ips_rule_reads_refuse_empty_identifiers() {
+        let sdc = client(Url::parse("http://127.0.0.1:9/").expect("url"), 4096);
+        let ct = CancellationToken::new();
+        assert!(matches!(
+            sdc.get_ips_rule("", "r1", &ct).await,
+            Err(SdcError::InvalidIdentifier {
+                field: "profile_uuid"
+            })
+        ));
+        assert!(matches!(
+            sdc.get_ips_exempt_rule("p1", "", &ct).await,
+            Err(SdcError::InvalidIdentifier { field: "rule_uuid" })
+        ));
+    }
+
+    #[tokio::test]
+    async fn ecf_reads_nest_rule_sets_under_the_profile_and_rules_under_the_set() {
+        let app = Router::new()
+            .route(
+                "/api/v1/enhanced_content_filtering_profiles/{p}/rule_sets",
+                get(
+                    |axum::extract::Path(p): axum::extract::Path<String>| async move {
+                        Json(serde_json::json!({"items": [], "count": 0, "profile": p}))
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/enhanced_content_filtering_profiles/{p}/rule_sets/{s}/rules",
+                get(
+                    |axum::extract::Path((p, s)): axum::extract::Path<(String, String)>,
+                     Query(query): Query<HashMap<String, String>>| async move {
+                        assert_eq!(query.get("size").map(String::as_str), Some("4"));
+                        Json(serde_json::json!({"items": [], "count": 0, "profile": p, "set": s}))
+                    },
+                ),
+            );
+        let (base_url, server) = serve(app).await;
+        let sdc = client(base_url, 4096);
+        let ct = CancellationToken::new();
+        let page = || ListRequest::new(0, 4, 100).expect("test page");
+        assert_eq!(
+            sdc.list_ecf_rule_sets("p1", page(), &ct)
+                .await
+                .expect("sets")["profile"],
+            "p1"
+        );
+        let rules = sdc
+            .list_ecf_rules("p1", "s1", page(), &ct)
+            .await
+            .expect("rules");
+        assert_eq!(
+            (rules["profile"].as_str(), rules["set"].as_str()),
+            (Some("p1"), Some("s1"))
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn singleton_reads_send_no_query_and_refuse_an_oversized_body() {
+        let app = Router::new()
+            .route(
+                "/api/v1/firewall_global_settings",
+                get(|Query(query): Query<HashMap<String, String>>| async move {
+                    assert!(query.is_empty(), "singleton sent a query: {query:?}");
+                    Json(serde_json::json!({"ok": "settings"}))
+                }),
+            )
+            .route(
+                "/api/v1/firewall_global_profiles",
+                get(|| async { Json(serde_json::json!({"ok": "profile"})) }),
+            )
+            .route(
+                "/api/v1/content_security_settings",
+                get(|| async { Json(serde_json::json!({"padding": "x".repeat(512)})) }),
+            );
+        let (base_url, server) = serve(app).await;
+        let ct = CancellationToken::new();
+        let roomy = client(base_url.clone(), 4096);
+        assert_eq!(
+            roomy
+                .get_firewall_global_settings(&ct)
+                .await
+                .expect("settings")["ok"],
+            "settings"
+        );
+        assert_eq!(
+            roomy
+                .get_firewall_global_profile(&ct)
+                .await
+                .expect("profile")["ok"],
+            "profile"
+        );
+        let tight = client(base_url, 64);
+        assert!(matches!(
+            tight.get_content_security_settings(&ct).await,
+            Err(SdcError::ResponseTooLarge { limit: 64 })
+        ));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn device_global_settings_page_with_offset_and_limit() {
+        let app = Router::new().route(
+            "/api/v1/firewall_device_global_settings",
+            get(|Query(query): Query<HashMap<String, String>>| async move {
+                assert_eq!(query.get("offset").map(String::as_str), Some("2"));
+                assert_eq!(query.get("limit").map(String::as_str), Some("5"));
+                assert_eq!(query.get("device_id").map(String::as_str), Some("d1"));
+                assert!(
+                    !query.contains_key("size"),
+                    "from/size vocabulary leaked: {query:?}"
+                );
+                Json(serde_json::json!({"items": [], "count": 0}))
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        client(base_url, 4096)
+            .list_device_global_settings(
+                Some("d1"),
+                ListRequest::new(2, 5, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("list succeeds");
         server.abort();
     }
 }
