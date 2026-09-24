@@ -15,11 +15,14 @@ use serde_json::Value;
 /// Marker substituted for a redacted value.
 pub const REDACTED: &str = "[REDACTED]";
 
-/// Keys whose values are credentials, compared case-insensitively.
+/// Keys whose values are credentials, compared case- and separator-insensitively.
 ///
 /// `site_config` and `cpe_config` are not themselves credentials. They are
 /// rendered device configuration bodies, and SDC-generated IPsec config carries
 /// the IKE pre-shared key, so both are withheld as a whole.
+///
+/// Each key is normalized (lowercased, `_` and `-` removed) before comparison,
+/// so `preSharedKey`, `pre_shared_key`, and `PRE-SHARED-KEY` all match.
 const SECRET_KEYS: &[&str] = &[
     "password",
     "password_ascii",
@@ -30,6 +33,14 @@ const SECRET_KEYS: &[&str] = &[
     "site_config",
     "cpe_config",
 ];
+
+/// Normalize a key for comparison: lowercase and remove `_` and `-`.
+fn normalize_key(key: &str) -> String {
+    key.to_ascii_lowercase()
+        .chars()
+        .filter(|c| *c != '_' && *c != '-')
+        .collect()
+}
 
 /// Replace every credential-bearing value in `value`, at any depth.
 ///
@@ -45,8 +56,11 @@ fn redact_in_place(value: &mut Value) {
     match value {
         Value::Object(map) => {
             for (key, child) in map.iter_mut() {
-                let lowered = key.to_ascii_lowercase();
-                if SECRET_KEYS.contains(&lowered.as_str()) {
+                let normalized = normalize_key(key);
+                let is_secret = SECRET_KEYS
+                    .iter()
+                    .any(|secret| normalize_key(secret) == normalized);
+                if is_secret {
                     if !child.is_null() {
                         *child = Value::String(REDACTED.to_owned());
                     }
@@ -110,5 +124,24 @@ mod tests {
     fn a_value_without_credentials_is_unchanged() {
         let original = json!({"items": [{"name": "a", "keysize": "2048"}]});
         assert_eq!(redact_secrets(original.clone()), original);
+    }
+
+    #[test]
+    fn camel_case_and_hyphenated_keys_are_redacted() {
+        let out = redact_secrets(json!({
+            "preSharedKey": "secret1",
+            "cpeConfig": {"body": "config"},
+            "siteConfig": {"format": "set"},
+            "passwordBase64": "c2VjcmV0",
+            "keysize": "2048",
+            "pskHint": "not-a-secret"
+        }));
+        assert_eq!(out["preSharedKey"], REDACTED);
+        assert_eq!(out["cpeConfig"], REDACTED);
+        assert_eq!(out["siteConfig"], REDACTED);
+        assert_eq!(out["passwordBase64"], REDACTED);
+        // These should NOT be redacted
+        assert_eq!(out["keysize"], "2048");
+        assert_eq!(out["pskHint"], "not-a-secret");
     }
 }

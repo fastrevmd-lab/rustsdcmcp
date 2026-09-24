@@ -93,3 +93,79 @@ fn a_device_group_list_accepts_an_omitted_from_and_fields() {
     .expect("fields is a list, not a comma-joined string");
     assert_eq!(projected.fields, vec!["uuid".to_owned(), "name".to_owned()]);
 }
+
+/// Tools that return credential-bearing responses use `finish_redacted`.
+///
+/// Reverting a redacted handler to plain `finish` would pass the existing
+/// tests, because no test exercises a live credential field. This tripwire
+/// fails if any REDACTED_TOOLS handler does not call `finish_redacted`, or
+/// if it calls plain `finish`.
+#[test]
+fn redacted_tools_call_finish_redacted() {
+    const REDACTED_TOOLS: &[&str] = &[
+        "list_sdc_resources",
+        "get_sdc_resource",
+        "list_sdc_sites",
+        "get_sdc_site",
+        "get_sdc_firewall_global_settings",
+        "get_sdc_firewall_global_profile",
+        "get_sdc_content_security_settings",
+        "list_sdc_device_global_settings",
+    ];
+
+    // Every REDACTED_TOOLS entry must be a known tool.
+    for tool in REDACTED_TOOLS {
+        assert!(
+            KNOWN_TOOLS.contains(tool),
+            "{tool} is in REDACTED_TOOLS but not KNOWN_TOOLS"
+        );
+    }
+
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let server_rs = std::fs::read_to_string(format!("{manifest_dir}/src/server.rs"))
+        .expect("server.rs must be readable");
+    let file = syn::parse_file(&server_rs).expect("server.rs must parse");
+
+    let mut found_tools = BTreeSet::new();
+
+    for item in &file.items {
+        if let syn::Item::Impl(impl_block) = item {
+            for impl_item in &impl_block.items {
+                if let syn::ImplItem::Fn(method) = impl_item {
+                    // Convert method to string to search for tool names
+                    let method_str = quote::quote!(#method).to_string();
+
+                    // Check each redacted tool
+                    for tool in REDACTED_TOOLS {
+                        let tool_marker = format!("name = \"{}\"", tool);
+                        if method_str.contains(&tool_marker) {
+                            found_tools.insert(*tool);
+
+                            assert!(
+                                method_str.contains("finish_redacted"),
+                                "{tool} is in REDACTED_TOOLS but does not call finish_redacted"
+                            );
+                            // Check that plain finish( is not called (but finish_redacted is OK)
+                            // We look for "finish (" with a space to distinguish from finish_redacted
+                            let has_plain_finish = method_str.contains("finish (")
+                                || (method_str.contains("finish(")
+                                    && !method_str.contains("finish_redacted("));
+                            assert!(
+                                !has_plain_finish,
+                                "{tool} is in REDACTED_TOOLS but may call plain finish()"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Ensure we found all expected tools
+    for tool in REDACTED_TOOLS {
+        assert!(
+            found_tools.contains(tool),
+            "{tool} is in REDACTED_TOOLS but was not found in server.rs"
+        );
+    }
+}

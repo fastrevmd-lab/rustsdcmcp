@@ -34,6 +34,7 @@ mecmcp-transport.workspace = true
 reqwest.workspace = true
 tempfile = "3"
 syn = { version = "3", features = ["full"] }
+quote = "1"
 toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 uuid.workspace = true
 
