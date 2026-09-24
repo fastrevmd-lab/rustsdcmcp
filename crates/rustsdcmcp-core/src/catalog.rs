@@ -28,7 +28,7 @@
 //!   `get_sdc_content_security_settings`
 //!
 //! **Pages with `offset`/`limit`** — vocabulary the generic `from`/`size` helper
-//! cannot send, so a bespoke tool bounded by `max_response_bytes`:
+//! cannot send, so a bespoke tool that maps `from`/`size` onto `offset`/`limit`:
 //!
 //! - `DeviceGlobalSettings`: `list_sdc_device_global_settings`
 //!
