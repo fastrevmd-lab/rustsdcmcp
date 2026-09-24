@@ -19,7 +19,7 @@ use rmcp::{
 use rustsdcmcp_core::{
     ChangeManager, ListRequest, NatWriteOperation, ObjectWriteAction, PolicyOperation,
     ResourceKind, SdcClient, SdcError, WritableResource, project_ca_certificates, project_license,
-    project_licenses, project_local_certificates,
+    project_licenses, project_local_certificates, redact_secrets,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -188,6 +188,11 @@ fn finish<T: Serialize>(mut audit: AuditScope, result: Result<T, SdcError>) -> C
         Err(error) => audit.fail(error),
     }
     tool_result(result, ResultFormat::PrettyJson, RESULT_LIMITS)
+}
+
+/// `finish`, for reads whose upstream shape may carry credentials.
+fn finish_redacted(audit: AuditScope, result: Result<Value, SdcError>) -> CallToolResult {
+    finish(audit, result.map(redact_secrets))
 }
 
 /// Arguments shared by tenant-level tools.
@@ -1872,7 +1877,7 @@ impl SdcHandler {
             }
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1896,7 +1901,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_resource(args.resource, &args.uuid, &cancellation)
