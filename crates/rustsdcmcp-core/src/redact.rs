@@ -9,6 +9,13 @@
 //! observed on the lab tenant, so there is no observed field set to allowlist.
 //! A present-but-redacted marker is used instead of removal so a caller can
 //! see the field exists without learning its value.
+//!
+//! ## Redaction policy
+//!
+//! `finish_redacted` is used for every family whose response shape has not been
+//! observed live, or whose schema declares a credential or rendered-config field.
+//! IPS and ECF families use plain `finish` because the spec declares no such
+//! fields for them.
 
 use serde_json::Value;
 

@@ -2069,7 +2069,7 @@ impl SdcHandler {
 
     #[tool(
         name = "list_sdc_resources",
-        description = "List one allowlisted SDC resource collection. The `resource` enum in this schema is the catalog of available families."
+        description = "List one allowlisted SDC resource collection. The `resource` enum in this schema is the catalog of available families. Credential fields are redacted."
     )]
     async fn list_sdc_resources(
         &self,
@@ -2103,7 +2103,7 @@ impl SdcHandler {
 
     #[tool(
         name = "get_sdc_resource",
-        description = "Get one object from an allowlisted SDC resource collection by UUID. The `resource` enum in this schema is the catalog of available families."
+        description = "Get one object from an allowlisted SDC resource collection by UUID. The `resource` enum in this schema is the catalog of available families. Credential fields are redacted."
     )]
     async fn get_sdc_resource(
         &self,

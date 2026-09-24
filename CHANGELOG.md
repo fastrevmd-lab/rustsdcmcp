@@ -29,7 +29,9 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
   list/get, ECF rule-set and rule lists, three global-settings singletons, and
   `list_sdc_device_global_settings`.
 - **Operators:** tokens minted with explicit tool lists do not gain these tools.
-  Re-mint or widen scopes to use them.
+  Re-mint or widen scopes to use them. Tokens with a wildcard read scope DO gain
+  the new tools, including `list/get_sdc_sites`, whose output is redacted but
+  still exposes topology (private_nets, IKE IDs, tunnel peer addresses).
 
 ### Changed
 - Raised MSRV from 1.88 to 1.89.

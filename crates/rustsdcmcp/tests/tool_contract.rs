@@ -5,14 +5,12 @@ use std::collections::BTreeSet;
 
 #[test]
 fn tool_registry_has_expected_unique_surface() {
-    // 40 reads / 14 writes. #32 added 6 license/certificate reads (PR #49) and
+    // 52 reads / 14 writes. #32 added 6 license/certificate reads (PR #49) and
     // 2 license/certificate writes; #34 added device-group list and get; #63
     // added discard_sdc_operation, which must be a write tool so a wildcard
     // scope cannot reach it; #21 added list_sdc_config_versions (read) and the
-    // device-sync prepare/apply pair. #156 added list/get_sdc_sites (redacted).
-    // #156 added IPS rule and exempt-rule reads.
-    // #156 added ECF rule-set and rule reads.
-    // #156 added three global-settings singletons and the device global-settings list.
+    // device-sync prepare/apply pair. #156 added 12 reads: sites (redacted),
+    // IPS rules and exempt-rules, ECF rule-sets and rules, and global-settings.
     assert_eq!(KNOWN_TOOLS.len(), 66);
     assert_eq!(
         KNOWN_TOOLS.iter().copied().collect::<BTreeSet<_>>().len(),
