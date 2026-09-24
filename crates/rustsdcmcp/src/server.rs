@@ -56,6 +56,10 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "get_sdc_device_group",
     "list_sdc_resources",
     "get_sdc_resource",
+    "list_sdc_ips_rules",
+    "get_sdc_ips_rule",
+    "list_sdc_ips_exempt_rules",
+    "get_sdc_ips_exempt_rule",
     "list_sdc_ipsec_profiles",
     "get_sdc_ipsec_profile",
     "list_sdc_tunnels",
@@ -583,6 +587,33 @@ pub struct ResourceArgs {
     pub resource: ResourceKind,
     /// Resource UUID.
     pub uuid: String,
+}
+
+/// Arguments for listing the rules nested under one IPS profile.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IpsRuleListArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Parent IPS profile UUID.
+    pub profile_uuid: String,
+    /// Zero-based offset.
+    #[serde(default)]
+    pub from: u64,
+    /// Explicit positive page size.
+    pub size: u32,
+}
+
+/// Arguments for one rule nested under one IPS profile.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IpsRuleArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Parent IPS profile UUID.
+    pub profile_uuid: String,
+    /// Rule UUID.
+    pub rule_uuid: String,
 }
 
 /// Arguments for listing IPsec profiles.
@@ -1917,6 +1948,132 @@ impl SdcHandler {
             audit,
             self.client
                 .get_resource(args.resource, &args.uuid, &cancellation)
+                .await,
+        ))
+    }
+
+    #[tool(
+        name = "list_sdc_ips_rules",
+        description = "List the IPS rules of one IPS profile with bounded pagination."
+    )]
+    async fn list_sdc_ips_rules(
+        &self,
+        Parameters(args): Parameters<IpsRuleListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_sdc_ips_rules",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "list_sdc_ips_rules", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
+            .map_err(SdcError::from);
+        let result = match result {
+            Ok(page) => {
+                self.client
+                    .list_ips_rules(&args.profile_uuid, page, &cancellation)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        Ok(finish(audit, result))
+    }
+
+    #[tool(
+        name = "get_sdc_ips_rule",
+        description = "Get one IPS rule of one IPS profile."
+    )]
+    async fn get_sdc_ips_rule(
+        &self,
+        Parameters(args): Parameters<IpsRuleArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "get_sdc_ips_rule",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "get_sdc_ips_rule", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish(
+            audit,
+            self.client
+                .get_ips_rule(&args.profile_uuid, &args.rule_uuid, &cancellation)
+                .await,
+        ))
+    }
+
+    #[tool(
+        name = "list_sdc_ips_exempt_rules",
+        description = "List the exempt rules of one IPS profile with bounded pagination."
+    )]
+    async fn list_sdc_ips_exempt_rules(
+        &self,
+        Parameters(args): Parameters<IpsRuleListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_sdc_ips_exempt_rules",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "list_sdc_ips_exempt_rules", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let result = ListRequest::new(args.from, args.size, self.client.max_page_size())
+            .map_err(SdcError::from);
+        let result = match result {
+            Ok(page) => {
+                self.client
+                    .list_ips_exempt_rules(&args.profile_uuid, page, &cancellation)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        Ok(finish(audit, result))
+    }
+
+    #[tool(
+        name = "get_sdc_ips_exempt_rule",
+        description = "Get one exempt rule of one IPS profile."
+    )]
+    async fn get_sdc_ips_exempt_rule(
+        &self,
+        Parameters(args): Parameters<IpsRuleArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "get_sdc_ips_exempt_rule",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "get_sdc_ips_exempt_rule", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        Ok(finish(
+            audit,
+            self.client
+                .get_ips_exempt_rule(&args.profile_uuid, &args.rule_uuid, &cancellation)
                 .await,
         ))
     }

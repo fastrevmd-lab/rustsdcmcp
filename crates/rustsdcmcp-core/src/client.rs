@@ -628,6 +628,86 @@ impl SdcClient {
         self.get(&segments, &[], cancellation).await
     }
 
+    /// List the IPS rules of one IPS profile with bounded pagination.
+    pub async fn list_ips_rules(
+        &self,
+        profile_uuid: &str,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("profile_uuid", profile_uuid)?;
+        self.list(
+            &["api", "v1", "ips_profiles", profile_uuid, "ips_rules"],
+            page,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch one IPS rule of one IPS profile.
+    pub async fn get_ips_rule(
+        &self,
+        profile_uuid: &str,
+        rule_uuid: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("profile_uuid", profile_uuid)?;
+        validate_atom("rule_uuid", rule_uuid)?;
+        self.get(
+            &[
+                "api",
+                "v1",
+                "ips_profiles",
+                profile_uuid,
+                "ips_rules",
+                rule_uuid,
+            ],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// List the exempt rules of one IPS profile with bounded pagination.
+    pub async fn list_ips_exempt_rules(
+        &self,
+        profile_uuid: &str,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("profile_uuid", profile_uuid)?;
+        self.list(
+            &["api", "v1", "ips_profiles", profile_uuid, "exempt_rules"],
+            page,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch one exempt rule of one IPS profile.
+    pub async fn get_ips_exempt_rule(
+        &self,
+        profile_uuid: &str,
+        rule_uuid: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("profile_uuid", profile_uuid)?;
+        validate_atom("rule_uuid", rule_uuid)?;
+        self.get(
+            &[
+                "api",
+                "v1",
+                "ips_profiles",
+                profile_uuid,
+                "exempt_rules",
+                rule_uuid,
+            ],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
     /// Create one object in an allowlisted generic resource family.
     ///
     /// Takes [`WritableResource`], not [`ResourceKind`]: adding a family to the
@@ -3072,5 +3152,72 @@ mod tests {
             .expect("get succeeds");
         assert_eq!(result["site"]["site_name"], "branch/../1");
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn ips_rule_reads_use_the_ips_rules_and_exempt_rules_segments() {
+        let app = Router::new()
+            .route(
+                "/api/v1/ips_profiles/{profile}/ips_rules",
+                get(|Query(query): Query<HashMap<String, String>>| async move {
+                    assert_eq!(query.get("size").map(String::as_str), Some("2"));
+                    Json(serde_json::json!({"items": [], "count": 0, "kind": "ips"}))
+                }),
+            )
+            .route(
+                "/api/v1/ips_profiles/{profile}/ips_rules/{rule}",
+                get(|axum::extract::Path((p, r)): axum::extract::Path<(String, String)>| async move {
+                    Json(serde_json::json!({"profile": p, "rule": r}))
+                }),
+            )
+            .route(
+                "/api/v1/ips_profiles/{profile}/exempt_rules",
+                get(|| async { Json(serde_json::json!({"items": [], "count": 0, "kind": "exempt"})) }),
+            )
+            .route(
+                "/api/v1/ips_profiles/{profile}/exempt_rules/{rule}",
+                get(|axum::extract::Path((p, r)): axum::extract::Path<(String, String)>| async move {
+                    Json(serde_json::json!({"profile": p, "exempt": r}))
+                }),
+            );
+        let (base_url, server) = serve(app).await;
+        let sdc = client(base_url, 4096);
+        let ct = CancellationToken::new();
+        let page = || ListRequest::new(0, 2, 100).expect("test page");
+        assert_eq!(
+            sdc.list_ips_rules("p1", page(), &ct).await.expect("list")["kind"],
+            "ips"
+        );
+        assert_eq!(
+            sdc.get_ips_rule("p1", "r1", &ct).await.expect("get")["rule"],
+            "r1"
+        );
+        assert_eq!(
+            sdc.list_ips_exempt_rules("p1", page(), &ct)
+                .await
+                .expect("list")["kind"],
+            "exempt"
+        );
+        assert_eq!(
+            sdc.get_ips_exempt_rule("p1", "e1", &ct).await.expect("get")["exempt"],
+            "e1"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn ips_rule_reads_refuse_empty_identifiers() {
+        let sdc = client(Url::parse("http://127.0.0.1:9/").expect("url"), 4096);
+        let ct = CancellationToken::new();
+        assert!(matches!(
+            sdc.get_ips_rule("", "r1", &ct).await,
+            Err(SdcError::InvalidIdentifier {
+                field: "profile_uuid"
+            })
+        ));
+        assert!(matches!(
+            sdc.get_ips_exempt_rule("p1", "", &ct).await,
+            Err(SdcError::InvalidIdentifier { field: "rule_uuid" })
+        ));
     }
 }
