@@ -3307,6 +3307,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn interface_name_dot_dot_is_refused() {
+        let sdc = client(Url::parse("http://127.0.0.1:9/").expect("url"), 4096);
+        let error = sdc
+            .list_device_config(
+                "d1",
+                DeviceConfigSection::Subinterfaces,
+                Some(".."),
+                ListRequest::new(0, 3, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect_err("dot-dot segment should be refused");
+        assert!(matches!(error, SdcError::UrlConstruction));
+    }
+
+    #[tokio::test]
+    async fn interface_name_dot_dot_slash_becomes_safe_segment() {
+        use std::sync::{Arc, Mutex};
+        let captured_path = Arc::new(Mutex::new(String::new()));
+        let captured_path_clone = Arc::clone(&captured_path);
+        let app = Router::new().route(
+            "/api/v1/devices/{device_uuid}/config/interfaces/{interface}/subinterfaces",
+            get(
+                move |axum::extract::Path((_device_uuid, interface)): axum::extract::Path<(
+                    String,
+                    String,
+                )>| {
+                    let mut path = captured_path_clone
+                        .lock()
+                        .expect("lock should not be poisoned");
+                    *path = format!("/config/interfaces/{}/subinterfaces", interface);
+                    async move { Json(serde_json::json!({"items": [], "count": 0})) }
+                },
+            ),
+        );
+        let (base_url, server) = serve(app).await;
+        let _ = client(base_url, 4096)
+            .list_device_config(
+                "d1",
+                DeviceConfigSection::Subinterfaces,
+                Some("../x"),
+                ListRequest::new(0, 3, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await;
+        let path = captured_path
+            .lock()
+            .expect("lock should not be poisoned");
+        assert!(
+            path.contains(".._x"),
+            "path should contain .._x, got: {}",
+            path
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn list_licenses_sends_device_uuid_in_path() {
         let app = Router::new().route(
             "/api/v1/devices/{device_uuid}/licenses",

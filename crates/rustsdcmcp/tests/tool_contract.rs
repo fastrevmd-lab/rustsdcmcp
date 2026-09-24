@@ -175,4 +175,46 @@ fn redacted_tools_call_finish_redacted() {
             "{tool} is in REDACTED_TOOLS but was not found in server.rs"
         );
     }
+
+    // Reverse check: every method that calls finish_redacted must be in REDACTED_TOOLS.
+    let mut tools_calling_finish_redacted = BTreeSet::new();
+
+    for item in &file.items {
+        if let syn::Item::Impl(impl_block) = item {
+            for impl_item in &impl_block.items {
+                if let syn::ImplItem::Fn(method) = impl_item {
+                    let method_str = quote::quote!(#method).to_string();
+
+                    // Find tool name from #[tool(name = "...")] attribute
+                    let mut tool_name = None;
+                    for attr in &method.attrs {
+                        let attr_str = quote::quote!(#attr).to_string();
+                        if attr_str.contains("name =") {
+                            // Extract name = "tool_name"
+                            if let Some(start) = attr_str.find("name = \"") {
+                                let rest = &attr_str[start + 8..];
+                                if let Some(end) = rest.find('"') {
+                                    tool_name = Some(rest[..end].to_owned());
+                                }
+                            }
+                        }
+                    }
+
+                    if method_str.contains("finish_redacted")
+                        && let Some(name) = tool_name
+                    {
+                        tools_calling_finish_redacted.insert(name);
+                    }
+                }
+            }
+        }
+    }
+
+    // Every tool that calls finish_redacted must be in REDACTED_TOOLS
+    for tool in &tools_calling_finish_redacted {
+        assert!(
+            REDACTED_TOOLS.contains(&tool.as_str()),
+            "{tool} calls finish_redacted but is not in REDACTED_TOOLS"
+        );
+    }
 }

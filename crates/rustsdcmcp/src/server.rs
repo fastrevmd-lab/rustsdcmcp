@@ -20,7 +20,7 @@ use rustsdcmcp_core::{
     ChangeManager, DeviceConfigSection, ImageJob, ListRequest, NatWriteOperation,
     ObjectWriteAction, PolicyOperation, ResourceKind, SdcClient, SdcError, WritableResource,
     project_ca_certificates, project_license, project_licenses, project_local_certificates,
-    redact_secrets,
+    redact_rma_state, redact_secrets,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -441,7 +441,7 @@ pub struct MnhaSyncArgs {
 pub struct RmaDeviceArgs {
     /// Configured tenant alias.
     pub tenant: String,
-    /// Device ID.
+    /// Device UUID.
     pub device_id: String,
 }
 
@@ -1230,7 +1230,7 @@ impl SdcHandler {
 
     #[tool(
         name = "get_sdc_rma_state",
-        description = "Get the RMA state of one device, including missing resources blocking reactivation."
+        description = "Get the RMA state of one device by UUID, including missing license keys blocking reactivation."
     )]
     async fn get_sdc_rma_state(
         &self,
@@ -1253,7 +1253,8 @@ impl SdcHandler {
             audit,
             self.client
                 .get_rma_state(&args.device_id, &cancellation)
-                .await,
+                .await
+                .map(redact_rma_state),
         ))
     }
 
