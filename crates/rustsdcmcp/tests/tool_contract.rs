@@ -114,6 +114,13 @@ fn redacted_tools_call_finish_redacted() {
         "get_sdc_firewall_global_profile",
         "get_sdc_content_security_settings",
         "list_sdc_device_global_settings",
+        "list_sdc_device_config",
+        "get_sdc_device_config_revision",
+        "list_sdc_image_definitions",
+        "get_sdc_image_job_status",
+        "get_sdc_mnha_sync_status",
+        "get_sdc_rma_state",
+        "get_sdc_rma_reactivation_status",
     ];
 
     // Every REDACTED_TOOLS entry must be a known tool.
