@@ -17,9 +17,9 @@ pub const REDACTED: &str = "[REDACTED]";
 
 /// Keys whose values are credentials, compared case-insensitively.
 ///
-/// `site_config` is not itself a credential. It is a rendered device
-/// configuration body, and SDC-generated IPsec config carries the IKE
-/// pre-shared key, so it is withheld as a whole.
+/// `site_config` and `cpe_config` are not themselves credentials. They are
+/// rendered device configuration bodies, and SDC-generated IPsec config carries
+/// the IKE pre-shared key, so both are withheld as a whole.
 const SECRET_KEYS: &[&str] = &[
     "password",
     "password_ascii",
@@ -28,6 +28,7 @@ const SECRET_KEYS: &[&str] = &[
     "psk",
     "pre_shared_key",
     "site_config",
+    "cpe_config",
 ];
 
 /// Replace every credential-bearing value in `value`, at any depth.
@@ -80,13 +81,19 @@ mod tests {
     #[test]
     fn nested_site_psk_and_config_body_are_redacted() {
         let site = json!({"site": {"site_name": "s1", "cpe_devices": [{
-            "name": "cpe", "cpe_interfaces": [{
+            "name": "cpe",
+            "cpe_config": {"body": "...pre-shared-key...", "format": "set"},
+            "mist_config": {"pre_shared_key": "k"},
+            "cpe_interfaces": [{
                 "psk": "shared", "ike_id": "id",
                 "site_config": {"body": "set security ike ... pre-shared-key", "format": "set"}
             }]
         }]}});
         let out = redact_secrets(site);
-        let iface = &out["site"]["cpe_devices"][0]["cpe_interfaces"][0];
+        let device = &out["site"]["cpe_devices"][0];
+        assert_eq!(device["cpe_config"], REDACTED);
+        assert_eq!(device["mist_config"]["pre_shared_key"], REDACTED);
+        let iface = &device["cpe_interfaces"][0];
         assert_eq!(iface["psk"], REDACTED);
         assert_eq!(iface["site_config"], REDACTED);
         assert_eq!(iface["ike_id"], "id");
