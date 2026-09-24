@@ -20,3 +20,4 @@ test.log
 *.log
 .gstack/
 .review-codex/
+__pycache__/

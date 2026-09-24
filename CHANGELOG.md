@@ -34,6 +34,7 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
   still exposes topology (private_nets, IKE IDs, tunnel peer addresses).
 
 ### Changed
+- CI: weekly upstream spec-drift check and a per-PR check that every called path exists in the vendored spec (#154).
 - Raised MSRV from 1.88 to 1.89.
 
 ## `v0.0.5` — 2026-09-16

@@ -27,6 +27,10 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@f8be11a05b1d4f3fcebe6410cc16743212b999b0 # 1.98.0
+      - name: Spec-drift script unit tests
+        run: python3 -m unittest discover -s scripts/tests -v
+      - name: Every called SDC path exists in the vendored spec
+        run: python3 scripts/spec-drift.py self-check
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - run: cargo build --workspace --locked
