@@ -373,7 +373,9 @@ impl SdcClient {
     /// List one section of a device's configuration as SDC models it.
     ///
     /// `interface_name` narrows `Subinterfaces` to one parent interface and is
-    /// refused for any other section rather than silently ignored.
+    /// refused for any other section rather than silently ignored. The API
+    /// expects underscores in place of forward slashes in the interface name
+    /// path segment (per `GetDeviceInterfaceSubinterfaces` in the spec).
     pub async fn list_device_config(
         &self,
         device_uuid: &str,
@@ -405,6 +407,7 @@ impl SdcClient {
             ));
         }
         validate_atom("interface_name", interface_name)?;
+        let interface_segment = interface_name.replace('/', "_");
         self.list(
             &[
                 "api",
@@ -413,7 +416,7 @@ impl SdcClient {
                 device_uuid,
                 "config",
                 "interfaces",
-                interface_name,
+                &interface_segment,
                 "subinterfaces",
             ],
             page,
@@ -3196,7 +3199,7 @@ mod tests {
                 "/api/v1/devices/d1/config/zones?from=0&size=3",
                 "/api/v1/devices/d1/config/routing_instances?from=0&size=3",
                 "/api/v1/devices/d1/config/idp_sensors?from=0&size=3",
-                "/api/v1/devices/d1/config/interfaces/ge-0%2F0%2F1/subinterfaces?from=0&size=3",
+                "/api/v1/devices/d1/config/interfaces/ge-0_0_1/subinterfaces?from=0&size=3",
                 "/api/v1/devices/d1/config/latest_version",
             ]
         );

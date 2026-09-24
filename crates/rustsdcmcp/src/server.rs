@@ -396,7 +396,8 @@ pub struct DeviceConfigListArgs {
     pub device_uuid: String,
     /// Configuration section to list.
     pub section: DeviceConfigSection,
-    /// Parent interface; valid only with `section=subinterfaces`.
+    /// Junos interface name, e.g. ge-0/0/1; slashes are translated to the underscores the API expects.
+    /// Valid only with `section=subinterfaces`.
     #[serde(default)]
     pub interface_name: Option<String>,
     /// Zero-based offset.
