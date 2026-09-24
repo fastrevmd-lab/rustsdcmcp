@@ -33,6 +33,14 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
   the new tools, including `list/get_sdc_sites`, whose output is redacted but
   still exposes topology (private_nets, IKE IDs, tunnel peer addresses).
 
+### Added (#155)
+- 7 read tools: device config section list and revision read, image definition
+  list and job status read, MNHA sync status, and RMA state and reactivation
+  status reads.
+- **Operators:** tokens minted with explicit tool lists do not gain these tools.
+  Re-mint or widen scopes to use them. Tokens with a wildcard read scope DO gain
+  the new tools.
+
 ### Changed
 - Raised MSRV from 1.88 to 1.89.
 

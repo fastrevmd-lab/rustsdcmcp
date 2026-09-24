@@ -70,14 +70,14 @@ addition.
 **Deferred with SASE**, if this repo ever grows a SASE remit: PAC Manager (2),
 Service Location Management (1).
 
-**In scope, simply unbuilt.** Fair game whenever there is a reason:
+**Out of scope — do not implement.**
 
-- **Device Resources** (7) — interfaces and zones as SDC sees them. The most
-  useful of these, because it is how SDC's view could be reconciled against
-  `rustjunosmcp`'s.
-- **Device Image Definitions** (8) and **RMA** (6) — pair with lifecycle
-  workflows this server does not have yet.
-- **MNHA Clusters** (2) — untested territory; the lab device is standalone.
+- **`GET /api/v1/devices/{device_id}/rma/reactivation_config`** — returns
+  `config_contents`, a full bootstrap device configuration. A credential-bearing
+  blob with no review value; the RMA state and reactivation-status reads cover
+  the lifecycle question.
+- **Image stage/deploy, MNHA sync, RMA activate/reactivate** stay unbuilt as
+  writes. If needed, they go through prepare → approve → apply, never direct.
 
 ## The API surface is pinned — read it, don't re-derive it
 

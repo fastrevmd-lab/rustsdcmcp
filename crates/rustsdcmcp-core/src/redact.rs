@@ -5,11 +5,11 @@
 //! endpoints to capture before-state, and redacting there would hide drift.
 //!
 //! This is a **denylist**, unlike the certificate allowlists. The families it
-//! guards (ICAP servers, v2 sites, device config, image definitions, MNHA sync
-//! status, RMA state) are deeply nested and have never been observed on the lab
-//! tenant, so there is no observed field set to allowlist. A present-but-redacted
-//! marker is used instead of removal so a caller can see the field exists without
-//! learning its value.
+//! guards (ICAP servers, v2 sites, device config, image definitions and job status,
+//! MNHA sync status, RMA state and reactivation status) are deeply nested and have
+//! never been observed on the lab tenant, so there is no observed field set to
+//! allowlist. A present-but-redacted marker is used instead of removal so a caller
+//! can see the field exists without learning its value.
 //!
 //! ## Redaction policy
 //!
