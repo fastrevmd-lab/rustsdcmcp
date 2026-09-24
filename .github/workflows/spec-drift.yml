@@ -1,0 +1,56 @@
+name: Spec drift
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spec-drift
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    name: Compare vendored spec with the live export
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # A failed fetch or invalid document fails this step, so the run goes red
+      # rather than reporting "no drift".
+      - name: Fetch the live export
+        run: SDC_SPEC_DEST="$RUNNER_TEMP/live.json" docs/sdc-api/fetch-spec.sh
+      - name: Compare
+        id: compare
+        run: |
+          set +e
+          python3 scripts/spec-drift.py diff \
+            docs/sdc-api/security-director-cloud-apis-openapi3.json \
+            "$RUNNER_TEMP/live.json" > "$RUNNER_TEMP/report.md"
+          code=$?
+          set -e
+          cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
+          case "$code" in
+            0) echo "drift=false" >> "$GITHUB_OUTPUT" ;;
+            3) echo "drift=true" >> "$GITHUB_OUTPUT" ;;
+            *) exit "$code" ;;
+          esac
+      - name: Open or update the tracking issue
+        if: steps.compare.outputs.drift == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create spec-drift --color D93F0B \
+            --description "Upstream SDC OpenAPI export changed" --force
+          existing=$(gh issue list --label spec-drift --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file "$RUNNER_TEMP/report.md"
+          else
+            gh issue create --title "Upstream SDC OpenAPI export changed" \
+              --label spec-drift --body-file "$RUNNER_TEMP/report.md"
+          fi
