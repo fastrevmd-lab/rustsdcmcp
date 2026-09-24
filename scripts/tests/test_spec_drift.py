@@ -51,9 +51,9 @@ class ExtractTemplates(unittest.TestCase):
         self.assertEqual(
             drift.called_templates(root),
             {
-                ("api", "v1", "devices", "{}", "config", "versions"),
+                ("api", "v1", "devices", drift.PARAM, "config", "versions"),
                 ("api", "v2", "tunnels"),
-                ("api", "v1", "devices", "{}", "config", "{}"),
+                ("api", "v1", "devices", drift.PARAM, "config", drift.ANY),
             },
         )
 
@@ -65,7 +65,7 @@ class ExtractTemplates(unittest.TestCase):
         root = self.write_src({"catalog.rs": 'Self::Addresses => &["api", "v1", "addresses"],'})
         self.assertEqual(
             drift.called_templates(root),
-            {("api", "v1", "addresses"), ("api", "v1", "addresses", "{}")},
+            {("api", "v1", "addresses"), ("api", "v1", "addresses", drift.PARAM)},
         )
 
 
@@ -75,9 +75,22 @@ class SelfCheck(unittest.TestCase):
         paths = spec({"/api/v1/devices": {"get": op()}})["paths"]
         self.assertEqual(drift.unmatched(templates, paths), [("api", "v1", "nope")])
 
-    def test_wildcard_matches_a_spec_parameter_or_literal(self):
-        templates = {("api", "v1", "devices", "{}")}
+    def test_param_matches_only_spec_parameters(self):
+        templates = {("api", "v1", "devices", drift.PARAM)}
         paths = spec({"/api/v1/devices/{device_uuid}": {"get": op()}})["paths"]
+        self.assertEqual(drift.unmatched(templates, paths), [])
+
+    def test_param_does_not_match_literal(self):
+        templates = {("api", "v1", "devices", drift.PARAM)}
+        paths = spec({"/api/v1/devices/sync": {"get": op()}})["paths"]
+        self.assertEqual(drift.unmatched(templates, paths), [("api", "v1", "devices", drift.PARAM)])
+
+    def test_any_matches_both_literal_and_parameter(self):
+        templates = {("api", "v1", "config", drift.ANY)}
+        paths = spec({
+            "/api/v1/config/global": {"get": op()},
+            "/api/v1/config/{section}": {"get": op()},
+        })["paths"]
         self.assertEqual(drift.unmatched(templates, paths), [])
 
 
@@ -123,6 +136,22 @@ class Diff(unittest.TestCase):
         s = spec({"/api/v1/devices": {"get": op("#/components/schemas/N")}}, schemas=schemas)
         _, drifted = drift.diff(s, s, self.CALLED)
         self.assertFalse(drifted)
+
+    def test_changed_servers_is_drift_in_document_level_section(self):
+        old = spec({"/api/v1/devices": {"get": op()}})
+        old["servers"] = [{"url": "https://old.example.com"}]
+        new = spec({"/api/v1/devices": {"get": op()}})
+        new["servers"] = [{"url": "https://new.example.com"}]
+        report, drifted = drift.diff(old, new, self.CALLED)
+        self.assertTrue(drifted)
+        self.assertIn("### Document-level contract (affects every call)", report)
+
+    def test_changed_path_level_parameter_is_drift(self):
+        old_paths = {"/api/v1/devices": {"parameters": [{"name": "x", "in": "query"}], "get": op()}}
+        new_paths = {"/api/v1/devices": {"parameters": [{"name": "y", "in": "query"}], "get": op()}}
+        report, drifted = drift.diff(spec(old_paths), spec(new_paths), self.CALLED)
+        self.assertTrue(drifted)
+        self.assertIn("GET /api/v1/devices", report)
 
 
 if __name__ == "__main__":

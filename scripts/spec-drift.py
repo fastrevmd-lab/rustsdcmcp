@@ -19,7 +19,8 @@ import sys
 
 VENDORED = pathlib.Path("docs/sdc-api/security-director-cloud-apis-openapi3.json")
 METHODS = ("get", "put", "post", "delete", "patch")
-WILDCARD = "{}"
+PARAM = "{param}"  # matches only {x} segments
+ANY = "{any}"      # matches both literals and {x} segments
 _ARRAY = re.compile(r'&\[\s*"api"\s*,\s*"v\d+"[^\]]*\]', re.S)
 _TEST_MODULE = "\n#[cfg(test)]\nmod tests"
 
@@ -35,12 +36,13 @@ def called_templates(src_root):
         for match in _ARRAY.finditer(text):
             tokens = [token.strip() for token in match.group(0)[2:-1].split(",") if token.strip()]
             template = tuple(
-                token[1:-1] if token.startswith('"') and token.endswith('"') else WILDCARD
+                token[1:-1] if token.startswith('"') and token.endswith('"')
+                else ANY if "(" in token else PARAM
                 for token in tokens
             )
             templates.add(template)
             if path.name == "catalog.rs":
-                templates.add(template + (WILDCARD,))
+                templates.add(template + (PARAM,))
     return templates
 
 
@@ -50,9 +52,17 @@ def _segments(spec_path):
 
 def _matches(template, spec_path):
     segments = _segments(spec_path)
-    return len(template) == len(segments) and all(
-        want == WILDCARD or want == have for want, have in zip(template, segments)
-    )
+    if len(template) != len(segments):
+        return False
+    for want, have in zip(template, segments):
+        if want == have:
+            continue
+        if want == ANY:
+            continue
+        if want == PARAM and have.startswith("{") and have.endswith("}"):
+            continue
+        return False
+    return True
 
 
 def unmatched(templates, spec_paths):
@@ -78,11 +88,26 @@ def _inline(node, schemas, stack):
 def _fingerprints(spec):
     schemas = spec.get("components", {}).get("schemas", {})
     prints = {}
+
+    # Document-level contract
+    doc_contract = {
+        "servers": spec.get("servers", []),
+        "security": spec.get("security", []),
+        "securitySchemes": spec.get("components", {}).get("securitySchemes", {}),
+    }
+    doc_canonical = json.dumps(doc_contract, sort_keys=True, separators=(",", ":"))
+    prints[("DOC", "")] = hashlib.sha256(doc_canonical.encode()).hexdigest()
+
     for spec_path, operations in spec.get("paths", {}).items():
+        path_params = operations.get("parameters", [])
         for method in METHODS:
             if method not in operations:
                 continue
             body = _inline(operations[method], schemas, frozenset())
+            # Merge path-level parameters
+            if path_params:
+                body = dict(body)  # shallow copy to avoid mutation
+                body["parameters"] = body.get("parameters", []) + path_params
             canonical = json.dumps(body, sort_keys=True, separators=(",", ":"))
             prints[(method.upper(), spec_path)] = hashlib.sha256(canonical.encode()).hexdigest()
     return prints
@@ -96,7 +121,14 @@ def diff(old, new, called):
     changed = sorted(key for key in set(before) & set(after) if before[key] != after[key])
     old_version = old.get("info", {}).get("version")
     new_version = new.get("info", {}).get("version")
-    drifted = bool(added or removed or changed or old_version != new_version)
+
+    # Separate document-level contract from operations
+    doc_changed = ("DOC", "") in changed
+    op_added = [k for k in added if k[0] != "DOC"]
+    op_removed = [k for k in removed if k[0] != "DOC"]
+    op_changed = [k for k in changed if k[0] != "DOC"]
+
+    drifted = bool(op_added or op_removed or op_changed or doc_changed or old_version != new_version)
 
     def is_called(key):
         return any(_matches(template, key[1]) for template in called)
@@ -110,11 +142,16 @@ def diff(old, new, called):
     lines = ["## SDC OpenAPI drift", ""]
     if old_version != new_version:
         lines += [f"`info.version`: {old_version} → {new_version}", ""]
-    for label, keys in (("changed", changed), ("removed", removed), ("added", added)):
+    for label, keys in (("changed", op_changed), ("removed", op_removed), ("added", op_added)):
         lines.append(f"- {len(keys)} {label}")
     lines.append("")
-    lines += section("Operations this server calls", [k for k in changed + removed if is_called(k)])
-    lines += section("Other operations", [k for k in changed + removed if not is_called(k)] + added)
+
+    if doc_changed:
+        lines += ["### Document-level contract (affects every call)", ""]
+        lines += ["Changed: `servers`, `security`, or `securitySchemes`", ""]
+
+    lines += section("Operations this server calls", [k for k in op_changed + op_removed if is_called(k)])
+    lines += section("Other operations", [k for k in op_changed + op_removed if not is_called(k)] + op_added)
     lines += [
         "Refresh with `docs/sdc-api/fetch-spec.sh`, re-run "
         "`scripts/gen-endpoint-inventory.py`, and land it through a normal PR.",
