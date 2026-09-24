@@ -85,8 +85,21 @@ def _inline(node, schemas, stack):
     return node
 
 
+def _param_identity(param, param_components):
+    """Return (name, in) for a parameter, resolving $ref if needed."""
+    if "$ref" in param:
+        ref = param["$ref"]
+        if ref.startswith("#/components/parameters/"):
+            name = ref.rsplit("/", 1)[-1]
+            resolved = param_components.get(name)
+            if resolved:
+                return (resolved.get("name"), resolved.get("in"))
+    return (param.get("name"), param.get("in"))
+
+
 def _fingerprints(spec):
     schemas = spec.get("components", {}).get("schemas", {})
+    param_components = spec.get("components", {}).get("parameters", {})
     prints = {}
 
     # Document-level contract
@@ -104,10 +117,17 @@ def _fingerprints(spec):
             if method not in operations:
                 continue
             body = _inline(operations[method], schemas, frozenset())
-            # Merge path-level parameters
+            # Merge path-level parameters, skipping those overridden by operation-level
             if path_params:
                 body = dict(body)  # shallow copy to avoid mutation
-                body["parameters"] = body.get("parameters", []) + path_params
+                op_params = body.get("parameters", [])
+                op_identities = {_param_identity(p, param_components) for p in op_params}
+                # Skip path params whose (name, in) the operation already declares
+                merged = op_params + [
+                    p for p in path_params
+                    if _param_identity(p, param_components) not in op_identities
+                ]
+                body["parameters"] = merged
             canonical = json.dumps(body, sort_keys=True, separators=(",", ":"))
             prints[(method.upper(), spec_path)] = hashlib.sha256(canonical.encode()).hexdigest()
     return prints

@@ -153,6 +153,43 @@ class Diff(unittest.TestCase):
         self.assertTrue(drifted)
         self.assertIn("GET /api/v1/devices", report)
 
+    def test_operation_level_parameter_overrides_path_level(self):
+        # Operation-level param overrides path-level param with same (name, in)
+        old_paths = {
+            "/api/v1/devices": {
+                "parameters": [{"name": "limit", "in": "query", "description": "path-level"}],
+                "get": {
+                    "parameters": [{"name": "limit", "in": "query", "description": "operation-level"}],
+                    "responses": {},
+                },
+            }
+        }
+        new_paths_path_changed = {
+            "/api/v1/devices": {
+                "parameters": [{"name": "limit", "in": "query", "description": "CHANGED path-level"}],
+                "get": {
+                    "parameters": [{"name": "limit", "in": "query", "description": "operation-level"}],
+                    "responses": {},
+                },
+            }
+        }
+        new_paths_op_changed = {
+            "/api/v1/devices": {
+                "parameters": [{"name": "limit", "in": "query", "description": "path-level"}],
+                "get": {
+                    "parameters": [{"name": "limit", "in": "query", "description": "CHANGED operation-level"}],
+                    "responses": {},
+                },
+            }
+        }
+        # Changing only the overridden path-level parameter is NOT drift
+        report1, drifted1 = drift.diff(spec(old_paths), spec(new_paths_path_changed), self.CALLED)
+        self.assertFalse(drifted1, "Changing overridden path-level param should not be drift")
+        # Changing the operation-level parameter IS drift
+        report2, drifted2 = drift.diff(spec(old_paths), spec(new_paths_op_changed), self.CALLED)
+        self.assertTrue(drifted2, "Changing operation-level param should be drift")
+        self.assertIn("GET /api/v1/devices", report2)
+
 
 if __name__ == "__main__":
     unittest.main()
