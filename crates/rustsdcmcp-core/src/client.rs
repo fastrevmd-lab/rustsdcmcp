@@ -4,9 +4,9 @@
 //! its reusable foundations are tracked in mecmcp issue #90.
 
 use crate::{
-    DeployRequest, DeploymentStatus, JobStatus, ListRequest, ListRequestError, PolicyOperation,
-    PreviewRequest, ResourceKind, SdcConfig, SdcPreparedChange, SdcPreparedTarget, TenantScope,
-    WritableResource,
+    DeployRequest, DeploymentStatus, DeviceConfigSection, ImageJob, JobStatus, ListRequest,
+    ListRequestError, PolicyOperation, PreviewRequest, ResourceKind, SdcConfig, SdcPreparedChange,
+    SdcPreparedTarget, TenantScope, WritableResource,
     models::{DeployResponse, PreviewResponse},
 };
 use futures::StreamExt as _;
@@ -364,6 +364,167 @@ impl SdcClient {
         validate_atom("device_uuid", device_uuid)?;
         self.get(
             &["api", "v1", "devices", device_uuid, "config", "versions"],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// List one section of a device's configuration as SDC models it.
+    ///
+    /// `interface_name` narrows `Subinterfaces` to one parent interface and is
+    /// refused for any other section rather than silently ignored. The API
+    /// expects underscores in place of forward slashes in the interface name
+    /// path segment (per `GetDeviceInterfaceSubinterfaces` in the spec).
+    pub async fn list_device_config(
+        &self,
+        device_uuid: &str,
+        section: DeviceConfigSection,
+        interface_name: Option<&str>,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("device_uuid", device_uuid)?;
+        let Some(interface_name) = interface_name else {
+            return self
+                .list(
+                    &[
+                        "api",
+                        "v1",
+                        "devices",
+                        device_uuid,
+                        "config",
+                        section.segment(),
+                    ],
+                    page,
+                    cancellation,
+                )
+                .await;
+        };
+        if section != DeviceConfigSection::Subinterfaces {
+            return Err(SdcError::InvalidInput(
+                "interface_name is only valid with section=subinterfaces",
+            ));
+        }
+        validate_atom("interface_name", interface_name)?;
+        let interface_segment = interface_name.replace('/', "_");
+        self.list(
+            &[
+                "api",
+                "v1",
+                "devices",
+                device_uuid,
+                "config",
+                "interfaces",
+                &interface_segment,
+                "subinterfaces",
+            ],
+            page,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch the configuration revision status for one device.
+    pub async fn get_device_config_revision(
+        &self,
+        device_uuid: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("device_uuid", device_uuid)?;
+        self.get(
+            &[
+                "api",
+                "v1",
+                "devices",
+                device_uuid,
+                "config",
+                "latest_version",
+            ],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// List device software image definitions with bounded pagination.
+    pub async fn list_image_definitions(
+        &self,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        self.list(
+            &["api", "v1", "device_image_definitions"],
+            page,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch the status of one image stage or deploy job.
+    pub async fn get_image_job_status(
+        &self,
+        job: ImageJob,
+        job_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("job_id", job_id)?;
+        self.get(
+            &[
+                "api",
+                "v1",
+                "device_image_definitions",
+                job.segment(),
+                job_id,
+            ],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch the status of one MNHA cluster sync job.
+    pub async fn get_mnha_sync_status(
+        &self,
+        mnha_sync_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("mnha_sync_id", mnha_sync_id)?;
+        self.get(
+            &["api", "v1", "mnha_clusters", "sync", mnha_sync_id],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch the RMA state of one device.
+    ///
+    /// The sibling `rma/reactivation_config` endpoint is deliberately not
+    /// wrapped: it returns a full bootstrap configuration.
+    pub async fn get_rma_state(
+        &self,
+        device_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("device_id", device_id)?;
+        self.get(
+            &["api", "v1", "devices", device_id, "rma", "state"],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
+    /// Fetch the status of one RMA reactivation job.
+    pub async fn get_rma_reactivation_status(
+        &self,
+        reactivation_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("reactivation_id", reactivation_id)?;
+        self.get(
+            &["api", "v1", "devices", "rma", "reactivate", reactivation_id],
             &[],
             cancellation,
         )
@@ -3076,6 +3237,131 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn device_config_sections_map_to_their_config_paths() {
+        let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorder = seen.clone();
+        let app = Router::new().fallback(move |uri: axum::http::Uri| {
+            let recorder = recorder.clone();
+            async move {
+                recorder.lock().expect("record").push(uri.to_string());
+                Json(serde_json::json!({"items": [], "count": 0}))
+            }
+        });
+        let (base_url, server) = serve(app).await;
+        let sdc = client(base_url, 4096);
+        let ct = CancellationToken::new();
+        let page = || ListRequest::new(0, 3, 100).expect("test page");
+        for section in [
+            DeviceConfigSection::Interfaces,
+            DeviceConfigSection::Subinterfaces,
+            DeviceConfigSection::Zones,
+            DeviceConfigSection::RoutingInstances,
+            DeviceConfigSection::IdpSensors,
+        ] {
+            sdc.list_device_config("d1", section, None, page(), &ct)
+                .await
+                .expect("list");
+        }
+        sdc.list_device_config(
+            "d1",
+            DeviceConfigSection::Subinterfaces,
+            Some("ge-0/0/1"),
+            page(),
+            &ct,
+        )
+        .await
+        .expect("per-interface list");
+        sdc.get_device_config_revision("d1", &ct)
+            .await
+            .expect("revision");
+        let seen = seen.lock().expect("read").clone();
+        assert_eq!(
+            seen,
+            vec![
+                "/api/v1/devices/d1/config/interfaces?from=0&size=3",
+                "/api/v1/devices/d1/config/subinterfaces?from=0&size=3",
+                "/api/v1/devices/d1/config/zones?from=0&size=3",
+                "/api/v1/devices/d1/config/routing_instances?from=0&size=3",
+                "/api/v1/devices/d1/config/idp_sensors?from=0&size=3",
+                "/api/v1/devices/d1/config/interfaces/ge-0_0_1/subinterfaces?from=0&size=3",
+                "/api/v1/devices/d1/config/latest_version",
+            ]
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn interface_name_is_refused_outside_the_subinterfaces_section() {
+        let sdc = client(Url::parse("http://127.0.0.1:9/").expect("url"), 4096);
+        let error = sdc
+            .list_device_config(
+                "d1",
+                DeviceConfigSection::Zones,
+                Some("ge-0/0/1"),
+                ListRequest::new(0, 3, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect_err("interface_name only narrows subinterfaces");
+        assert!(matches!(error, SdcError::InvalidInput(_)));
+    }
+
+    #[tokio::test]
+    async fn interface_name_dot_dot_is_refused() {
+        let sdc = client(Url::parse("http://127.0.0.1:9/").expect("url"), 4096);
+        let error = sdc
+            .list_device_config(
+                "d1",
+                DeviceConfigSection::Subinterfaces,
+                Some(".."),
+                ListRequest::new(0, 3, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect_err("dot-dot segment should be refused");
+        assert!(matches!(error, SdcError::UrlConstruction));
+    }
+
+    #[tokio::test]
+    async fn interface_name_dot_dot_slash_becomes_safe_segment() {
+        use std::sync::{Arc, Mutex};
+        let captured_path = Arc::new(Mutex::new(String::new()));
+        let captured_path_clone = Arc::clone(&captured_path);
+        let app = Router::new().route(
+            "/api/v1/devices/{device_uuid}/config/interfaces/{interface}/subinterfaces",
+            get(
+                move |axum::extract::Path((_device_uuid, interface)): axum::extract::Path<(
+                    String,
+                    String,
+                )>| {
+                    let mut path = captured_path_clone
+                        .lock()
+                        .expect("lock should not be poisoned");
+                    *path = format!("/config/interfaces/{}/subinterfaces", interface);
+                    async move { Json(serde_json::json!({"items": [], "count": 0})) }
+                },
+            ),
+        );
+        let (base_url, server) = serve(app).await;
+        let _ = client(base_url, 4096)
+            .list_device_config(
+                "d1",
+                DeviceConfigSection::Subinterfaces,
+                Some("../x"),
+                ListRequest::new(0, 3, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await;
+        let path = captured_path.lock().expect("lock should not be poisoned");
+        assert!(
+            path.contains(".._x"),
+            "path should contain .._x, got: {}",
+            path
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn list_licenses_sends_device_uuid_in_path() {
         let app = Router::new().route(
             "/api/v1/devices/{device_uuid}/licenses",
@@ -3446,6 +3732,70 @@ mod tests {
             )
             .await
             .expect("list succeeds");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn image_reads_use_the_definition_list_and_job_status_paths() {
+        let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorder = seen.clone();
+        let app = Router::new().fallback(move |uri: axum::http::Uri| {
+            let recorder = recorder.clone();
+            async move {
+                recorder.lock().expect("record").push(uri.to_string());
+                Json(serde_json::json!({}))
+            }
+        });
+        let (base_url, server) = serve(app).await;
+        let sdc = client(base_url, 4096);
+        let ct = CancellationToken::new();
+        sdc.list_image_definitions(ListRequest::new(0, 2, 100).expect("page"), &ct)
+            .await
+            .expect("list");
+        sdc.get_image_job_status(ImageJob::Stage, "s1", &ct)
+            .await
+            .expect("stage");
+        sdc.get_image_job_status(ImageJob::Deploy, "d1", &ct)
+            .await
+            .expect("deploy");
+        assert_eq!(
+            seen.lock().expect("read").clone(),
+            vec![
+                "/api/v1/device_image_definitions?from=0&size=2",
+                "/api/v1/device_image_definitions/stage_image/s1",
+                "/api/v1/device_image_definitions/deploy_image/d1",
+            ]
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn mnha_and_rma_status_reads_use_their_spec_paths() {
+        let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorder = seen.clone();
+        let app = Router::new().fallback(move |uri: axum::http::Uri| {
+            let recorder = recorder.clone();
+            async move {
+                recorder.lock().expect("record").push(uri.to_string());
+                Json(serde_json::json!({}))
+            }
+        });
+        let (base_url, server) = serve(app).await;
+        let sdc = client(base_url, 4096);
+        let ct = CancellationToken::new();
+        sdc.get_mnha_sync_status("m1", &ct).await.expect("mnha");
+        sdc.get_rma_state("dev1", &ct).await.expect("rma state");
+        sdc.get_rma_reactivation_status("r1", &ct)
+            .await
+            .expect("reactivation");
+        assert_eq!(
+            seen.lock().expect("read").clone(),
+            vec![
+                "/api/v1/mnha_clusters/sync/m1",
+                "/api/v1/devices/dev1/rma/state",
+                "/api/v1/devices/rma/reactivate/r1",
+            ]
+        );
         server.abort();
     }
 }

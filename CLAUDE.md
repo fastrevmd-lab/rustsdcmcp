@@ -59,25 +59,29 @@ here so an absence reads as a decision rather than as work nobody got to.
 - **IAM** (user and role administration, 9 operations beyond the `GetTokenScope`
   used for startup tenant validation)
 - **Subscriptions** (tenant entitlement, 3 operations)
+- **`GET /api/v1/devices/{device_id}/rma/reactivation_config`** — returns
+  `config_contents`, a full bootstrap device configuration. A credential-bearing
+  blob with no review value; the RMA state and reactivation-status reads cover
+  the lifecycle question.
 
-These are tenant administration, not network management. An MCP client that can
-create users, alter roles or change entitlements holds a surface with no
-networking value and a large blast radius — the same reasoning that puts Mist's
-portal identity flows in `ExecuteClass::Excluded` over in rustmistmcp. If a
-future need appears, it needs its own decision recorded here, not a quiet
+**Deferred writes** — reads exist; writes need prepare → approve → apply.
+
+Image stage/deploy (`POST /api/v1/device_image_definitions/{image_uuid}/stage_image`,
+`POST /api/v1/device_image_definitions/{image_uuid}/deploy_image`, and
+`POST /api/v1/device_image_definitions/deploy_image` for bulk), MNHA sync,
+RMA activate/reactivate, image-definition create/delete, and RMA
+`reactivation_preferences` stay unbuilt as writes. If needed, they go through
+prepare → approve → apply, never direct.
+
+IAM and subscriptions are tenant administration, not network management. An MCP
+client that can create users, alter roles or change entitlements holds a surface
+with no networking value and a large blast radius — the same reasoning that puts
+Mist's portal identity flows in `ExecuteClass::Excluded` over in rustmistmcp.
+If a future need appears, it needs its own decision recorded here, not a quiet
 addition.
 
 **Deferred with SASE**, if this repo ever grows a SASE remit: PAC Manager (2),
 Service Location Management (1).
-
-**In scope, simply unbuilt.** Fair game whenever there is a reason:
-
-- **Device Resources** (7) — interfaces and zones as SDC sees them. The most
-  useful of these, because it is how SDC's view could be reconciled against
-  `rustjunosmcp`'s.
-- **Device Image Definitions** (8) and **RMA** (6) — pair with lifecycle
-  workflows this server does not have yet.
-- **MNHA Clusters** (2) — untested territory; the lab device is standalone.
 
 ## The API surface is pinned — read it, don't re-derive it
 

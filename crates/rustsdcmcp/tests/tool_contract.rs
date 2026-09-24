@@ -5,13 +5,15 @@ use std::collections::BTreeSet;
 
 #[test]
 fn tool_registry_has_expected_unique_surface() {
-    // 52 reads / 14 writes. #32 added 6 license/certificate reads (PR #49) and
+    // 59 reads / 14 writes. #32 added 6 license/certificate reads (PR #49) and
     // 2 license/certificate writes; #34 added device-group list and get; #63
     // added discard_sdc_operation, which must be a write tool so a wildcard
     // scope cannot reach it; #21 added list_sdc_config_versions (read) and the
     // device-sync prepare/apply pair. #156 added 12 reads: sites (redacted),
     // IPS rules and exempt-rules, ECF rule-sets and rules, and global-settings.
-    assert_eq!(KNOWN_TOOLS.len(), 66);
+    // #155 added 7 reads: device config sections and revision, image definitions
+    // and job status, MNHA sync and RMA status.
+    assert_eq!(KNOWN_TOOLS.len(), 73);
     assert_eq!(
         KNOWN_TOOLS.iter().copied().collect::<BTreeSet<_>>().len(),
         KNOWN_TOOLS.len()
@@ -109,6 +111,13 @@ fn redacted_tools_call_finish_redacted() {
         "get_sdc_firewall_global_profile",
         "get_sdc_content_security_settings",
         "list_sdc_device_global_settings",
+        "list_sdc_device_config",
+        "get_sdc_device_config_revision",
+        "list_sdc_image_definitions",
+        "get_sdc_image_job_status",
+        "get_sdc_mnha_sync_status",
+        "get_sdc_rma_state",
+        "get_sdc_rma_reactivation_status",
     ];
 
     // Every REDACTED_TOOLS entry must be a known tool.
@@ -166,4 +175,71 @@ fn redacted_tools_call_finish_redacted() {
             "{tool} is in REDACTED_TOOLS but was not found in server.rs"
         );
     }
+
+    // Reverse check: every method that calls finish_redacted must be in REDACTED_TOOLS.
+    let mut tools_calling_finish_redacted = BTreeSet::new();
+    let mut all_tool_methods = BTreeSet::new();
+
+    for item in &file.items {
+        if let syn::Item::Impl(impl_block) = item {
+            for impl_item in &impl_block.items {
+                if let syn::ImplItem::Fn(method) = impl_item {
+                    let method_str = quote::quote!(#method).to_string();
+
+                    // Find tool name from #[tool(name = "...")] attribute, or fall back to fn ident
+                    let mut tool_name = None;
+                    for attr in &method.attrs {
+                        let attr_str = quote::quote!(#attr).to_string();
+                        // Check for #[tool(...)] or # [tool (...)] (quote may add spaces)
+                        if attr_str.contains("tool") && attr_str.contains("name =") {
+                            // Extract name = "tool_name"
+                            if let Some(start) = attr_str.find("name = \"") {
+                                let rest = &attr_str[start + 8..];
+                                if let Some(end) = rest.find('"') {
+                                    tool_name = Some(rest[..end].to_owned());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    // If we didn't find explicit name but have a tool attr, fall back to fn ident
+                    if tool_name.is_none() {
+                        for attr in &method.attrs {
+                            let attr_str = quote::quote!(#attr).to_string();
+                            if attr_str.contains("tool") {
+                                tool_name = Some(method.sig.ident.to_string());
+                                break;
+                            }
+                        }
+                    }
+
+                    if let Some(name) = &tool_name {
+                        all_tool_methods.insert(name.clone());
+
+                        if method_str.contains("finish_redacted") {
+                            tools_calling_finish_redacted.insert(name.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Every tool that calls finish_redacted must be in REDACTED_TOOLS
+    for tool in &tools_calling_finish_redacted {
+        assert!(
+            REDACTED_TOOLS.contains(&tool.as_str()),
+            "{tool} calls finish_redacted but is not in REDACTED_TOOLS"
+        );
+    }
+
+    // Sanity check: parser should find as many tool methods as KNOWN_TOOLS has entries
+    assert_eq!(
+        all_tool_methods.len(),
+        KNOWN_TOOLS.len(),
+        "tripwire parser found {} tool methods but KNOWN_TOOLS has {}",
+        all_tool_methods.len(),
+        KNOWN_TOOLS.len()
+    );
 }

@@ -38,9 +38,10 @@ pub use license_write::{
     SdcLicenseTransaction, SdcPreparedLicenseWrite,
 };
 pub use models::{
-    DeployRequest, DeploymentStatus, DeviceDeploymentStatus, DeviceStatusEntry, JobStatus,
-    ListRequest, ListRequestError, NatWriteOperation, PolicyEntry, PolicyOperation, PolicyType,
-    PreviewRequest, Target, TargetType, TenantScope, validate_deploy_targets,
+    DeployRequest, DeploymentStatus, DeviceConfigSection, DeviceDeploymentStatus,
+    DeviceStatusEntry, ImageJob, JobStatus, ListRequest, ListRequestError, NatWriteOperation,
+    PolicyEntry, PolicyOperation, PolicyType, PreviewRequest, Target, TargetType, TenantScope,
+    validate_deploy_targets,
 };
 pub use nat_write::{NatValidationReport, SdcNatTransaction, SdcPreparedNatWrite};
 pub use object_write::{
@@ -50,4 +51,4 @@ pub use prepared::{SdcPreparedChange, SdcPreparedTarget};
 pub use projection::{
     project_ca_certificates, project_license, project_licenses, project_local_certificates,
 };
-pub use redact::{REDACTED, redact_secrets};
+pub use redact::{REDACTED, redact_rma_state, redact_secrets};

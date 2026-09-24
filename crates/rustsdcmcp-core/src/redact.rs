@@ -5,10 +5,11 @@
 //! endpoints to capture before-state, and redacting there would hide drift.
 //!
 //! This is a **denylist**, unlike the certificate allowlists. The families it
-//! guards (ICAP servers, v2 sites) are deeply nested and have never been
-//! observed on the lab tenant, so there is no observed field set to allowlist.
-//! A present-but-redacted marker is used instead of removal so a caller can
-//! see the field exists without learning its value.
+//! guards (ICAP servers, v2 sites, device config, image definitions and job status,
+//! MNHA sync status, RMA state and reactivation status) are deeply nested and have
+//! never been observed on the lab tenant, so there is no observed field set to
+//! allowlist. A present-but-redacted marker is used instead of removal so a caller
+//! can see the field exists without learning its value.
 //!
 //! ## Redaction policy
 //!
@@ -56,6 +57,34 @@ fn normalize_key(key: &str) -> String {
 #[must_use]
 pub fn redact_secrets(mut value: Value) -> Value {
     redact_in_place(&mut value);
+    value
+}
+
+/// Redact license keys in an RMA state response.
+///
+/// Replaces each element of the top-level `missing_licenses` array with the
+/// REDACTED marker, preserving array length so the count stays visible. The
+/// spec describes `missing_licenses` as "Array of license keys that are missing",
+/// so the keys are the array VALUES, not object keys.
+///
+/// Fails closed: if `missing_licenses` is present but not an array (API
+/// regression), the entire value is replaced with REDACTED. `null` stays `null`.
+///
+/// Other fields are left untouched.
+#[must_use]
+pub fn redact_rma_state(mut value: Value) -> Value {
+    if let Some(obj) = value.as_object_mut()
+        && let Some(licenses) = obj.get_mut("missing_licenses")
+    {
+        if let Some(arr) = licenses.as_array_mut() {
+            for item in arr.iter_mut() {
+                *item = Value::String(REDACTED.to_owned());
+            }
+        } else if !licenses.is_null() {
+            // Fail closed: non-array, non-null → replace wholesale
+            *licenses = Value::String(REDACTED.to_owned());
+        }
+    }
     value
 }
 
@@ -150,5 +179,66 @@ mod tests {
         // These should NOT be redacted
         assert_eq!(out["keysize"], "2048");
         assert_eq!(out["pskHint"], "not-a-secret");
+    }
+
+    #[test]
+    fn rma_state_missing_licenses_are_redacted() {
+        let state = json!({
+            "device_id": "dev1",
+            "rma_state": "ACTIVE",
+            "missing_licenses": ["LIC-KEY-123", "LIC-KEY-456", "LIC-KEY-789"],
+            "other_field": "untouched"
+        });
+        let out = redact_rma_state(state);
+        assert_eq!(
+            out["missing_licenses"]
+                .as_array()
+                .expect("missing_licenses should be an array")
+                .len(),
+            3
+        );
+        assert_eq!(out["missing_licenses"][0], REDACTED);
+        assert_eq!(out["missing_licenses"][1], REDACTED);
+        assert_eq!(out["missing_licenses"][2], REDACTED);
+        assert_eq!(out["device_id"], "dev1");
+        assert_eq!(out["other_field"], "untouched");
+    }
+
+    #[test]
+    fn rma_state_without_missing_licenses_is_unchanged() {
+        let state = json!({"device_id": "dev1", "rma_state": "ACTIVE"});
+        let out = redact_rma_state(state.clone());
+        assert_eq!(out, state);
+    }
+
+    #[test]
+    fn rma_state_empty_missing_licenses_stays_empty() {
+        let state = json!({"missing_licenses": []});
+        let out = redact_rma_state(state);
+        assert_eq!(
+            out["missing_licenses"]
+                .as_array()
+                .expect("missing_licenses should be an array")
+                .len(),
+            0
+        );
+    }
+
+    #[test]
+    fn rma_state_non_array_missing_licenses_is_redacted() {
+        // Fail closed: if missing_licenses is a string (API regression), redact it
+        let state = json!({"device_id": "dev1", "missing_licenses": "LIC-KEY-MALFORMED"});
+        let out = redact_rma_state(state);
+        assert_eq!(out["missing_licenses"], REDACTED);
+        assert_eq!(out["device_id"], "dev1");
+    }
+
+    #[test]
+    fn rma_state_null_missing_licenses_stays_null() {
+        // null carries no secret, so leave it alone
+        let state = json!({"device_id": "dev1", "missing_licenses": null});
+        let out = redact_rma_state(state);
+        assert!(out["missing_licenses"].is_null());
+        assert_eq!(out["device_id"], "dev1");
     }
 }

@@ -64,6 +64,57 @@ pub enum TargetType {
     DeviceGroup,
 }
 
+/// One section of a device's configuration as SDC models it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceConfigSection {
+    /// Physical and logical interfaces.
+    Interfaces,
+    /// Sub-interfaces; narrow to one parent with `interface_name`.
+    Subinterfaces,
+    /// Security zones.
+    Zones,
+    /// Routing instances.
+    RoutingInstances,
+    /// IDP sensor configuration.
+    IdpSensors,
+}
+
+impl DeviceConfigSection {
+    /// The path segment under `/api/v1/devices/{device_uuid}/config/`.
+    #[must_use]
+    pub const fn segment(self) -> &'static str {
+        match self {
+            Self::Interfaces => "interfaces",
+            Self::Subinterfaces => "subinterfaces",
+            Self::Zones => "zones",
+            Self::RoutingInstances => "routing_instances",
+            Self::IdpSensors => "idp_sensors",
+        }
+    }
+}
+
+/// Kind of asynchronous device-image job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageJob {
+    /// Image staged onto a device, not yet installed.
+    Stage,
+    /// Image deployed (installed) onto a device.
+    Deploy,
+}
+
+impl ImageJob {
+    /// The path segment under `/api/v1/device_image_definitions/`.
+    #[must_use]
+    pub const fn segment(self) -> &'static str {
+        match self {
+            Self::Stage => "stage_image",
+            Self::Deploy => "deploy_image",
+        }
+    }
+}
+
 /// One SDC policy operation target.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
