@@ -125,9 +125,9 @@ spec): `from` (68), `size` (68), `filters` (58), `sortby` (54), `count` (50),
 - `sortby` — e.g. `sortby=(name(descending))`
 - **`/api/v2/` lists page with `spec.from`/`spec.size`** (`ListTunnels`,
   `GetSiteList`). Unprefixed `from`/`size` are ignored upstream, so the list is
-  bounded only by bytes. `GetIpsecProfileList` declares no page parameters at
-  all. `ListDeviceGlobalSettings` is the one `/api/v1/` list that pages with
-  `offset`/`limit`.
+  bounded only by bytes. `GetIpsecProfileList` and `ListPacFiles` declare no
+  page parameters at all. `ListDeviceGlobalSettings` is the one `/api/v1/` list
+  that pages with `offset`/`limit`.
 - **Credential fields in read responses.** `IcapServer` (`password_ascii`,
   `password_base64`) and v2 sites (`psk`, `pre_shared_key`, and `site_config` /
   `cpe_config` bodies that render device config with IKE PSKs) are redacted at

@@ -17,16 +17,20 @@
 //!   and their `get_` pairs
 //! - `EnhancedContentFilteringProfileSet` — `…/{profile_uuid}/rule_sets` and
 //!   `…/rule_sets/{rule_set_uuid}/rules`: `list_sdc_ecf_rule_sets`,
-//!   `list_sdc_ecf_rules` (no single-rule-set tool; spec has no single-rule-set GET)
+//!   `list_sdc_ecf_rules` (no single-rule-set tool; spec has no single-rule-set
+//!   GET. `get_sdc_ecf_rule` not built; `list_sdc_ecf_rules` reaches every rule)
 //!
-//! **Not pageable** — served by bespoke tools bounded by `max_response_bytes`,
-//! which refuses rather than truncates:
+//! **Not pageable** — singletons served by bespoke tools bounded by
+//! `max_response_bytes`, which refuses rather than truncates:
 //!
-//! - `GlobalProfile`, `GlobalSettings`, `ContentSecuritySettings` — singletons:
+//! - `GlobalProfile`, `GlobalSettings`, `ContentSecuritySettings`:
 //!   `get_sdc_firewall_global_profile`, `get_sdc_firewall_global_settings`,
 //!   `get_sdc_content_security_settings`
-//! - `DeviceGlobalSettings` — pages with `offset`/`limit`, not `from`/`size`:
-//!   `list_sdc_device_global_settings`
+//!
+//! **Pages with `offset`/`limit`** — vocabulary the generic `from`/`size` helper
+//! cannot send, so a bespoke tool bounded by `max_response_bytes`:
+//!
+//! - `DeviceGlobalSettings`: `list_sdc_device_global_settings`
 //!
 //! **Bespoke tools instead.** `NAT Pools` is keyed by `pool_id`; `Device
 //! Groups` needs membership, which the generic shape cannot return.
