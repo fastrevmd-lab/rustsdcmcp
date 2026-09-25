@@ -336,30 +336,30 @@ Restoring `tokens.json` rather than minting fresh tokens keeps existing clients
 working — the secrets are hashed and cannot be recovered, so re-minting means
 reconfiguring every client that talks to this rig.
 
-A fresh install creates an empty `/var/lib/rustsdcmcp/tokens.json`. Restore
-whichever store was live: if the backup has `var/lib/rustsdcmcp/tokens.json` with
-tokens, restore that; otherwise restore the backed-up `etc/rustsdcmcp/tokens.json`
-into `/var/lib/rustsdcmcp/tokens.json` (0600, rustsdcmcp-owned) so the canonical
-path holds the live tokens. Releases before #162 let an empty `/var/lib` store
-shadow an explicitly configured `/etc` store, rejecting all tokens.
+A fresh install creates an empty `/var/lib/rustsdcmcp/tokens.json`, and the
+step 6 override points `--tokens-file` there. Restore the store that was **live**
+on the old rig into that path, and do not restore the old drop-in's
+`--tokens-file` over the new one. The old drop-in names which store was live;
+file size does not, because an installer-created empty store is not zero bytes.
+Releases before #162 let an empty `/var/lib` store shadow an explicitly
+configured `/etc` store, which rejected every token.
+
+Run this on the Proxmox host after the rebuilt rig's install and step 6 override
+are in place:
 
 ```bash
-pct mount 614
+# Which store was live? The backed-up drop-in names it; the default is /var/lib.
+live=$(grep -ho -- '--tokens-file [^ \\]*' /root/backup-614/systemd/rustsdcmcp.service.d/*.conf 2>/dev/null \
+    | tail -1 | awk '{print $2}')
+live=${live:-/var/lib/rustsdcmcp/tokens.json}
+echo "restoring the live store: $live"
 
-# Restore whichever store was live (check the backup first):
-if [[ -s /root/backup-614/var/lib/rustsdcmcp/tokens.json ]]; then
-    install -m 0600 /root/backup-614/var/lib/rustsdcmcp/tokens.json \
-        /var/lib/lxc/614/rootfs/var/lib/rustsdcmcp/tokens.json
-else
-    install -m 0600 /root/backup-614/etc/rustsdcmcp/tokens.json \
-        /var/lib/lxc/614/rootfs/var/lib/rustsdcmcp/tokens.json
-fi
-
-pct exec 614 -- chown rustsdcmcp:rustsdcmcp /var/lib/rustsdcmcp/tokens.json
-pct unmount 614
-
-# If restoring to a non-default path instead, replace the existing --tokens-file
-# argument in the ExecStart override, then:
-#   systemctl daemon-reload
-#   systemctl restart rustsdcmcp
+# pct push and pct exec need the guest running.
+pct start 614
+pct push 614 "/root/backup-614$live" /var/lib/rustsdcmcp/tokens.json \
+    --user rustsdcmcp --group rustsdcmcp --perms 0600
+pct exec 614 -- systemctl restart rustsdcmcp   # restart, not reload
 ```
+
+Confirm the journal reports the restored count:
+`pct exec 614 -- journalctl -u rustsdcmcp -n 20 | grep 'token store loaded'`.
