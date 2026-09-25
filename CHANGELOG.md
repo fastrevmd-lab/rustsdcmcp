@@ -23,6 +23,15 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
 ### Fixed
 - `list_sdc_tunnels` now sends `spec.from`/`spec.size`. The unprefixed
   parameters were ignored, so `size` did not bound the response.
+- An explicitly configured `--tokens-file` is now the primary token store, never
+  shadowed by a file at the canonical location (#162). The old code treated both
+  the canonical `/var/lib/rustsdcmcp/tokens.json` and the legacy
+  `/etc/rustsdcmcp/tokens.json` the same way: when either path was configured, it
+  called the fallback logic that prefers canonical over legacy. An empty
+  canonical file (even `{"version":1,"tokens":[]}`) shadowed an explicitly
+  configured legacy store, rejecting all bearer tokens. The configured path is
+  now used verbatim unless it is byte-exactly the canonical path, in which case
+  the legacy fallback applies. This matches rust-junosmcp's behaviour.
 
 ### Added (#156)
 - 12 read tools: `list/get_sdc_sites` (PSKs redacted), IPS rule and exempt-rule
