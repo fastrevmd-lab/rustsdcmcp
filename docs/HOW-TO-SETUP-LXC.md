@@ -334,3 +334,23 @@ want to reproduce.
 Restoring `tokens.json` rather than minting fresh tokens keeps existing clients
 working — the secrets are hashed and cannot be recovered, so re-minting means
 reconfiguring every client that talks to this rig.
+
+A fresh install creates an empty `/var/lib/rustsdcmcp/tokens.json`. When restoring
+a backed-up `/etc/rustsdcmcp/tokens.json`, prefer restoring into
+`/var/lib/rustsdcmcp/tokens.json` (0600, rustsdcmcp-owned) so the canonical path
+holds the live tokens. If you restore to the legacy `/etc` location instead, point
+`--tokens-file` explicitly at it. Releases before #162 let an empty `/var/lib`
+store shadow an explicitly configured `/etc` store, rejecting all tokens.
+
+```bash
+# Restore to the canonical location (preferred):
+install -m 0600 -o rustsdcmcp -g rustsdcmcp \
+    /root/backup-614/etc/rustsdcmcp/tokens.json \
+    /var/lib/rustsdcmcp/tokens.json
+
+# Or restore to /etc and configure the service explicitly:
+install -m 0600 -o rustsdcmcp -g rustsdcmcp \
+    /root/backup-614/etc/rustsdcmcp/tokens.json \
+    /etc/rustsdcmcp/tokens.json
+# Then add --tokens-file /etc/rustsdcmcp/tokens.json to the ExecStart override.
+```
