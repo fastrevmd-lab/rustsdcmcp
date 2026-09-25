@@ -369,9 +369,12 @@ if [[ -n "$live" ]]; then
     pct start 614
     pct push 614 "/root/backup-614$live" /var/lib/rustsdcmcp/tokens.json \
         --user rustsdcmcp --group rustsdcmcp --perms 0600 &&
-        pct exec 614 -- systemctl restart rustsdcmcp   # restart, not reload
+        pct exec 614 -- systemctl restart rustsdcmcp &&   # restart, not reload
+        pct exec 614 -- journalctl -u rustsdcmcp -n 20 | grep 'token store loaded'
+else
+    echo "nothing to restore: mint fresh tokens as in section 7 and reconfigure clients"
 fi
 ```
 
-Confirm the journal reports the restored count:
-`pct exec 614 -- journalctl -u rustsdcmcp -n 20 | grep 'token store loaded'`.
+After a restore, the journal line must report the restored token count. When
+nothing held tokens, follow [section 7](#7-mint-a-token) instead.
