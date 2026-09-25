@@ -321,9 +321,10 @@ stopped container's filesystem without starting it:
 
 ```bash
 pct mount 614
-cp -a /var/lib/lxc/614/rootfs/etc/rustsdcmcp        /root/backup-614/
-cp -a /var/lib/lxc/614/rootfs/var/lib/rustsdcmcp    /root/backup-614/
-cp -a /var/lib/lxc/614/rootfs/etc/systemd/system/rustsdcmcp.service.d /root/backup-614/
+mkdir -p /root/backup-614/etc /root/backup-614/var/lib /root/backup-614/systemd
+cp -a /var/lib/lxc/614/rootfs/etc/rustsdcmcp        /root/backup-614/etc/
+cp -a /var/lib/lxc/614/rootfs/var/lib/rustsdcmcp    /root/backup-614/var/lib/
+cp -a /var/lib/lxc/614/rootfs/etc/systemd/system/rustsdcmcp.service.d /root/backup-614/systemd/
 pct config 614 > /root/backup-614/pct-config.txt
 pct unmount 614
 ```
@@ -335,22 +336,30 @@ Restoring `tokens.json` rather than minting fresh tokens keeps existing clients
 working — the secrets are hashed and cannot be recovered, so re-minting means
 reconfiguring every client that talks to this rig.
 
-A fresh install creates an empty `/var/lib/rustsdcmcp/tokens.json`. When restoring
-a backed-up `/etc/rustsdcmcp/tokens.json`, prefer restoring into
-`/var/lib/rustsdcmcp/tokens.json` (0600, rustsdcmcp-owned) so the canonical path
-holds the live tokens. If you restore to the legacy `/etc` location instead, point
-`--tokens-file` explicitly at it. Releases before #162 let an empty `/var/lib`
-store shadow an explicitly configured `/etc` store, rejecting all tokens.
+A fresh install creates an empty `/var/lib/rustsdcmcp/tokens.json`. Restore
+whichever store was live: if the backup has `var/lib/rustsdcmcp/tokens.json` with
+tokens, restore that; otherwise restore the backed-up `etc/rustsdcmcp/tokens.json`
+into `/var/lib/rustsdcmcp/tokens.json` (0600, rustsdcmcp-owned) so the canonical
+path holds the live tokens. Releases before #162 let an empty `/var/lib` store
+shadow an explicitly configured `/etc` store, rejecting all tokens.
 
 ```bash
-# Restore to the canonical location (preferred):
-install -m 0600 -o rustsdcmcp -g rustsdcmcp \
-    /root/backup-614/etc/rustsdcmcp/tokens.json \
-    /var/lib/rustsdcmcp/tokens.json
+pct mount 614
 
-# Or restore to /etc and configure the service explicitly:
-install -m 0600 -o rustsdcmcp -g rustsdcmcp \
-    /root/backup-614/etc/rustsdcmcp/tokens.json \
-    /etc/rustsdcmcp/tokens.json
-# Then add --tokens-file /etc/rustsdcmcp/tokens.json to the ExecStart override.
+# Restore whichever store was live (check the backup first):
+if [[ -s /root/backup-614/var/lib/rustsdcmcp/tokens.json ]]; then
+    install -m 0600 /root/backup-614/var/lib/rustsdcmcp/tokens.json \
+        /var/lib/lxc/614/rootfs/var/lib/rustsdcmcp/tokens.json
+else
+    install -m 0600 /root/backup-614/etc/rustsdcmcp/tokens.json \
+        /var/lib/lxc/614/rootfs/var/lib/rustsdcmcp/tokens.json
+fi
+
+pct exec 614 -- chown rustsdcmcp:rustsdcmcp /var/lib/rustsdcmcp/tokens.json
+pct unmount 614
+
+# If restoring to a non-default path instead, replace the existing --tokens-file
+# argument in the ExecStart override, then:
+#   systemctl daemon-reload
+#   systemctl restart rustsdcmcp
 ```
