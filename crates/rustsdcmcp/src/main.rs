@@ -95,6 +95,47 @@ fn resolve<T>(supplied_on_cli: bool, from_cli: T, from_config: T) -> T {
     }
 }
 
+/// Resolve the token store, applying the legacy fallback ONLY for the canonical path.
+///
+/// The migration fallback exists so an upgrade that has not yet moved
+/// `/etc/rustsdcmcp/tokens.json` still starts. It must not apply to an operator's own
+/// path: if `--tokens-file /srv/custom.json` is missing — a typo, or a deleted
+/// store — falling back to the legacy file would silently reactivate unrelated
+/// or revoked credentials. A non-canonical path is loaded directly and fails if
+/// absent, which is the honest outcome.
+fn resolve_tokens(configured: &std::path::Path) -> Result<mecmcp_auth::ResolvedTokenPath> {
+    resolve_tokens_with(
+        configured,
+        std::path::Path::new("/var/lib/rustsdcmcp/tokens.json"),
+        std::path::Path::new("/etc/rustsdcmcp/tokens.json"),
+    )
+}
+
+/// The rule behind [`resolve_tokens`], with the two well-known paths injected so
+/// it can be exercised against real files in a test rather than against absolute
+/// paths that never exist there.
+fn resolve_tokens_with(
+    configured: &std::path::Path,
+    canonical: &std::path::Path,
+    legacy: &std::path::Path,
+) -> Result<mecmcp_auth::ResolvedTokenPath> {
+    // Byte-exact, not `Path` equality. `Path` comparison normalizes away trailing
+    // separators and `.` components, so `/var/lib/rustsdcmcp/tokens.json/` compares
+    // EQUAL to the canonical path — while `metadata()` on that spelling returns
+    // NotFound when the file is absent, indistinguishable from the plain form.
+    // A typo would therefore pass this gate and activate the legacy store, which
+    // is exactly the fail-closed behaviour this check exists to provide.
+    if configured.as_os_str() != canonical.as_os_str() {
+        return Ok(mecmcp_auth::ResolvedTokenPath {
+            path: configured.to_path_buf(),
+            used_fallback: false,
+            fallback_from: None,
+        });
+    }
+
+    mecmcp_auth::resolve_token_path(configured, legacy).context("resolving token file path")
+}
+
 /// Bearer-token boundary selected for the Streamable HTTP listener.
 #[derive(Debug, PartialEq, Eq)]
 enum AuthMode {
@@ -615,28 +656,11 @@ async fn main() -> Result<()> {
     let token_store = match auth_mode {
         None => None,
         Some(AuthMode::Tokens(path)) => {
-            // Resolve token path with fallback for backward compatibility (#92).
-            // Primary: /var/lib/rustsdcmcp/tokens.json (writable under ProtectSystem=strict)
-            // Fallback: /etc/rustsdcmcp/tokens.json (legacy location, read-only to service)
-            let primary_path = PathBuf::from("/var/lib/rustsdcmcp/tokens.json");
-            let fallback_path = PathBuf::from("/etc/rustsdcmcp/tokens.json");
-
-            let resolved = if path == primary_path || path == fallback_path {
-                // CLI passed one of the standard paths; use resolve_token_path
-                mecmcp_auth::resolve_token_path(&primary_path, &fallback_path)
-                    .context("resolving token file path")?
-            } else {
-                // Non-standard path from CLI; use it directly
-                mecmcp_auth::ResolvedTokenPath {
-                    path: path.clone(),
-                    used_fallback: false,
-                    fallback_from: None,
-                }
-            };
+            let resolved = resolve_tokens(&path)?;
 
             if resolved.used_fallback {
                 tracing::warn!(
-                    primary = %primary_path.display(),
+                    primary = %"/var/lib/rustsdcmcp/tokens.json",
                     fallback = %resolved.path.display(),
                     "Token file not found at primary location; using fallback. \
                      Migration required: move the token file to the primary location \
@@ -969,5 +993,131 @@ mod tests {
             vec!["rustsdcmcp-612.mechub.org:30032".to_owned()]
         );
         assert!(parsed.cli.lab_mode);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod token_path_tests {
+    use super::resolve_tokens_with;
+
+    /// The canonical path is absent and the legacy store exists: the fallback
+    /// must fire, so an upgrade that has not migrated yet still starts.
+    #[test]
+    fn canonical_path_falls_back_to_an_existing_legacy_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let canonical = dir.path().join("var-lib-tokens.json");
+        let legacy = dir.path().join("etc-tokens.json");
+        std::fs::write(&legacy, "{}").unwrap();
+
+        let resolved = resolve_tokens_with(&canonical, &canonical, &legacy).unwrap();
+        assert_eq!(
+            resolved.path, legacy,
+            "the legacy store should have been used"
+        );
+        assert!(resolved.used_fallback);
+    }
+
+    /// The same legacy store exists, but the operator configured a DIFFERENT
+    /// path. Falling back here would silently reactivate credentials they did
+    /// not ask for — a typo or a deleted store must fail, not resurrect tokens.
+    #[test]
+    fn a_custom_path_never_falls_back_to_the_legacy_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let canonical = dir.path().join("var-lib-tokens.json");
+        let legacy = dir.path().join("etc-tokens.json");
+        std::fs::write(&legacy, "{}").unwrap();
+        let custom = dir.path().join("operator-chosen.json");
+
+        let resolved = resolve_tokens_with(&custom, &canonical, &legacy).unwrap();
+        assert_eq!(
+            resolved.path, custom,
+            "an operator-supplied path must be used verbatim"
+        );
+        assert!(
+            !resolved.used_fallback,
+            "a custom path must never resolve to the legacy /etc store"
+        );
+    }
+
+    /// A malformed spelling of the canonical path must NOT reach the fallback.
+    ///
+    /// `Path` equality normalizes away a trailing separator, so
+    /// `.../tokens.json/` compares equal to the canonical path; and when the
+    /// file is absent `metadata()` returns NotFound for that spelling too,
+    /// indistinguishable from the plain form. A typo would therefore activate
+    /// the legacy store — the opposite of fail-closed. The comparison is
+    /// byte-exact for this reason.
+    #[test]
+    fn a_trailing_slash_spelling_does_not_reach_the_legacy_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let canonical = dir.path().join("var-lib-tokens.json");
+        let legacy = dir.path().join("etc-tokens.json");
+        std::fs::write(&legacy, "{}").unwrap();
+
+        let mut malformed = canonical.clone().into_os_string();
+        malformed.push("/");
+        let malformed = std::path::PathBuf::from(malformed);
+
+        let resolved = resolve_tokens_with(&malformed, &canonical, &legacy).unwrap();
+        assert!(
+            !resolved.used_fallback,
+            "a trailing-slash spelling must not activate the legacy store"
+        );
+    }
+
+    /// Regression test for #162: an explicit legacy path is not shadowed by
+    /// the canonical store.
+    ///
+    /// When the operator explicitly configured `--tokens-file /etc/rustsdcmcp/tokens.json`,
+    /// the old code called `resolve_token_path(primary, legacy)` because
+    /// `path == fallback_path`, which let any file at the canonical location
+    /// shadow the explicitly configured legacy path — even an empty
+    /// `{"version":1,"tokens":[]}`. This meant every bearer token was rejected.
+    #[test]
+    fn an_explicit_legacy_path_is_not_shadowed_by_the_canonical_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let canonical = dir.path().join("var-lib-tokens.json");
+        let legacy = dir.path().join("etc-tokens.json");
+
+        // Canonical file exists but is empty
+        std::fs::write(&canonical, r#"{"version":1,"tokens":[]}"#).unwrap();
+
+        // Legacy file exists with a real store
+        std::fs::write(&legacy, r#"{"version":1,"tokens":[{"id":"test"}]}"#).unwrap();
+
+        // Configured = legacy path → should use legacy, not canonical
+        let resolved = resolve_tokens_with(&legacy, &canonical, &legacy).unwrap();
+        assert_eq!(
+            resolved.path, legacy,
+            "an explicit legacy path must be used, not shadowed by canonical"
+        );
+        assert!(
+            !resolved.used_fallback,
+            "explicitly configuring the legacy path is not a fallback"
+        );
+    }
+
+    /// When the canonical path is configured and the file exists at that
+    /// location, it should be used without fallback.
+    #[test]
+    fn canonical_configured_and_present_uses_canonical() {
+        let dir = tempfile::tempdir().unwrap();
+        let canonical = dir.path().join("var-lib-tokens.json");
+        let legacy = dir.path().join("etc-tokens.json");
+
+        // Canonical file exists
+        std::fs::write(&canonical, r#"{"version":1,"tokens":[{"id":"test"}]}"#).unwrap();
+
+        // Configured = canonical path → should use canonical
+        let resolved = resolve_tokens_with(&canonical, &canonical, &legacy).unwrap();
+        assert_eq!(
+            resolved.path, canonical,
+            "canonical path should be used when present"
+        );
+        assert!(
+            !resolved.used_fallback,
+            "no fallback should occur when canonical is present"
+        );
     }
 }
