@@ -348,13 +348,23 @@ Run this on the Proxmox host after the rebuilt rig's install and step 6 override
 are in place:
 
 ```bash
-# Which store was live? The backed-up drop-in names it; the default is /var/lib.
-live=$(grep -ho -- '--tokens-file [^ \\]*' /root/backup-614/systemd/rustsdcmcp.service.d/*.conf 2>/dev/null \
-    | tail -1 | awk '{print $2}')
-live=${live:-/var/lib/rustsdcmcp/tokens.json}
-echo "restoring the live store: $live"
+# Which store was live? The active (uncommented) --tokens-file in the backed-up
+# drop-in names it. Pre-#92 units and overrides that do not restate ExecStart name
+# none, so fall back to whichever backed-up store actually holds tokens.
+live=$(grep -hv '^[[:space:]]*#' /root/backup-614/systemd/rustsdcmcp.service.d/*.conf 2>/dev/null \
+    | grep -o -- '--tokens-file [^ \\]*' | tail -1 | awk '{print $2}')
+if [[ -z "$live" ]]; then
+    for cand in /var/lib/rustsdcmcp/tokens.json /etc/rustsdcmcp/tokens.json; do
+        if python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("tokens") else 1)' \
+            "/root/backup-614$cand" 2>/dev/null; then
+            live=$cand
+            break
+        fi
+    done
+fi
+echo "restoring the live store: ${live:-NONE, so no backed-up store holds tokens and fresh ones must be minted}"
 
-# pct push and pct exec need the guest running.
+# Continue only if a live store was found. pct push and pct exec need the guest running.
 pct start 614
 pct push 614 "/root/backup-614$live" /var/lib/rustsdcmcp/tokens.json \
     --user rustsdcmcp --group rustsdcmcp --perms 0600
