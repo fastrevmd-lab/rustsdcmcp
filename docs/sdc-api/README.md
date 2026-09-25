@@ -205,16 +205,18 @@ rustjunosmcp:
 | Section | SDC returned | Device | Verdict |
 |---|---|---|---|
 | interfaces | 8: `ge-0/0/0`, `ge-0/0/1`, `fab0`, `fxp0`, `lo0`, `reth0`, `reth1`, `st0` | the same 8 in `show configuration interfaces`; `show interfaces terse` also lists `ge-0/0/2`–`5` | SDC models the **configuration**, not operational state. Unconfigured ports do not appear. |
-| subinterfaces | 9 units, every IPv4 address correct | the same units and IPv4 addresses, **plus** `inet6` on `ge-0/0/0.0` and `fxp0.0` | **IPv6 addresses are absent from SDC.** Do not use SDC to audit IPv6 addressing. |
+| subinterfaces | 9 entries: 7 logical units (`ge-0/0/0.0`, `fxp0.0`, `lo0.0`, `reth0.0`, `reth1.0`, `st0.1`, `st0.2`) and 2 bare interface names (`ge-0/0/1`, `fab0`); every IPv4 address correct | the same units and IPv4 addresses, **plus** `inet6` on `ge-0/0/0.0` and `fxp0.0` | **IPv6 addresses are absent from SDC.** Do not use SDC to audit IPv6 addressing. |
 | zones | `trust`, `untrust`, names only | the same zones, with interface bindings, host-inbound services and a screen | Names match. SDC returns no bindings, so zone membership must come from the device. |
 | routing_instances | empty | none configured | Match. |
 | idp_sensors | one item, empty `packet_log` sub-objects | no IDP sensor configuration | Treat as a default placeholder, not configuration. |
 
 `interface_name` translation was confirmed live: `ge-0/0/0` returned the single
 unit `ge-0/0/0.0`. `get_sdc_device_config_revision` returned
-`device_config_revision` and `last_sync_revision` timestamps. `count` is an
-**integer** on every device-config response, unlike the string `count` on
-catalog lists (see §1 below).
+`device_config_revision` and `last_sync_revision` timestamps. Where
+present, `count` was an **integer** on every device-config response, unlike the
+string `count` on catalog lists (see §1 below). An empty section
+(`routing_instances` here) comes back as a bare `{}` with no `count` at all, so a
+typed model must not require it.
 
 ## Live-observed response shapes (2026-08-07)
 
