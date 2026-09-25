@@ -383,7 +383,8 @@ if [[ -n "$live" ]]; then
         fi
         sleep 1
     done
-    [[ -n "$loaded" ]] || echo "RESTORE NOT CONFIRMED: no token-load record for invocation $inv"
+    # `false`, not `exit`, so an interactive shell is not closed on failure.
+    [[ -n "$loaded" ]] || { echo "RESTORE NOT CONFIRMED: no token-load record for invocation $inv" >&2; false; }
 else
     echo "nothing to restore: mint fresh tokens as in section 7 and reconfigure clients"
 fi
