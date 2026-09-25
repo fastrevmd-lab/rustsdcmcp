@@ -366,18 +366,24 @@ echo "restoring the live store: ${live:-NONE, so no backed-up store holds tokens
 
 # Restore only if a live store was found. pct push and pct exec need the guest running.
 if [[ -n "$live" ]]; then
+    inv=
     pct start 614
     pct push 614 "/root/backup-614$live" /var/lib/rustsdcmcp/tokens.json \
         --user rustsdcmcp --group rustsdcmcp --perms 0600 &&
-        since=$(pct exec 614 -- date '+%Y-%m-%d %H:%M:%S') &&
         pct exec 614 -- systemctl restart rustsdcmcp &&   # restart, not reload
-        # The unit is Type=simple and verifies the tenant before loading tokens,
-        # so wait for a load record newer than the restart.
-        for _ in $(seq 1 30); do
-            pct exec 614 -- journalctl -u rustsdcmcp --since "$since" -o cat \
-                | grep -m1 'token store loaded' && break
-            sleep 1
-        done
+        inv=$(pct exec 614 -- systemctl show -p InvocationID --value rustsdcmcp)
+    # The unit is Type=simple and verifies the tenant before loading tokens, so
+    # poll for the load record of THIS invocation, and fail loudly on timeout.
+    loaded=
+    for _ in $(seq 1 30); do
+        if loaded=$(pct exec 614 -- journalctl _SYSTEMD_INVOCATION_ID="$inv" -o cat \
+                | grep -m1 'token store loaded'); then
+            echo "$loaded"
+            break
+        fi
+        sleep 1
+    done
+    [[ -n "$loaded" ]] || echo "RESTORE NOT CONFIRMED: no token-load record for invocation $inv"
 else
     echo "nothing to restore: mint fresh tokens as in section 7 and reconfigure clients"
 fi
