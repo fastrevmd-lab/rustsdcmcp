@@ -169,12 +169,12 @@ mode `0600`. Complete the service and access flow:
 sudo systemctl enable --now rustsdcmcp.service
 sudo systemctl --no-pager --full status rustsdcmcp.service
 sudo ss -ltnp 'sport = :30032'
-ssh -N -L 30032:127.0.0.1:30032 root@rustsdcmcp.mechub.org
+ssh -N -L 30032:127.0.0.1:30032 root@rustsdcmcp.example.net
 ```
 
 State that the expected listener is only `127.0.0.1:30032`, and the local MCP
 client uses `http://127.0.0.1:30032/mcp` while the SSH tunnel is active. Make
-clear that `rustsdcmcp.mechub.org` is the current lab deployment; other
+clear that `rustsdcmcp.example.net` is the current lab deployment; other
 installations use their own SSH host.
 
 - [ ] **Step 4: Consolidate security, completed work, and roadmap**
@@ -192,7 +192,7 @@ Retain or rewrite the security commitments so the README explicitly covers:
 ```
 
 Add a completed-work summary with VMID 606 on `pve2`, Debian 13, DNS
-`rustsdcmcp.mechub.org`, the loopback-only endpoint, the private prerelease and
+`rustsdcmcp.example.net`, the loopback-only endpoint, the private prerelease and
 SBOM, and the qualified live read-only results. Link the detailed acceptance
 record at `docs/lab-deployment-606.md`. Do not copy the tenant ID, API key,
 bearer token, HMAC key, or runtime state.
