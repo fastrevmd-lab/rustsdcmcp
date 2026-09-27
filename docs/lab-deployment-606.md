@@ -9,7 +9,7 @@
 ## Deployment identity
 
 - Date: 2026-07-29
-- Operator: `mharman`, assisted by Codex
+- Operator: `opuser`, assisted by Codex
 - Draft pull request: https://github.com/fastrevmd-lab/rustsdcmcp/pull/1
 - Release status: lab-only; no Git tag or GitHub release was created
 - Source commit from `BUILD-INFO`:
@@ -37,9 +37,9 @@
 - LXC VMID: `606`
 - Hostname: `rustsdcmcp-606`
 - Operating system: Debian GNU/Linux 13
-- Address: `192.168.1.211/24`
-- Gateway: `192.168.1.1`
-- DNS: `rustsdcmcp.mechub.org`
+- Address: `203.0.113.11/24`
+- Gateway: `203.0.113.1`
+- DNS: `rustsdcmcp.example.net`
 - Resources: 1 CPU core, 512 MiB memory, 512 MiB swap, 4 GiB
   `local-lvm` root disk
 - Isolation: unprivileged LXC with `nesting=1`, Proxmox interface firewall
