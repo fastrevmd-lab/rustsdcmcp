@@ -47,7 +47,7 @@ This corrects a standing note claiming the tenant had no onboarded devices.
 `system services outbound-ssh` is configured correctly — client
 `EMS-srx.sdcloud.juniperclouds.net`, `device-id` matching the SDC uuid exactly,
 `services netconf`, target `srx.sdcloud.juniperclouds.net` port `7804`. But
-`inet.0` holds only the connected `192.168.1.0/24`; there is **no default
+`inet.0` holds only the connected `203.0.113.0/24`; there is **no default
 route**. The device cannot reach SDC, and the log contains zero outbound-ssh
 attempts.
 
@@ -56,8 +56,8 @@ attempts.
 `interfaces ge-0/0/0 unit 0 family inet` carries two addresses:
 
 ```
-address 192.168.1.162/24;
-address 192.168.1.1/24;      <- the real LAN default gateway
+address 203.0.113.162/24;
+address 203.0.113.1/24;      <- the real LAN default gateway
 ```
 
 Added `2026-08-11 22:13 by netconf`. The real gateway currently wins the ARP
@@ -66,7 +66,7 @@ latent rather than actively breaking the network — but it is a duplicate-IP
 conflict on the home gateway and resolves on whichever host answers first.
 
 The shape strongly suggests a prior automated session intended
-`set routing-options static route 0.0.0.0/0 next-hop 192.168.1.1` and
+`set routing-options static route 0.0.0.0/0 next-hop 203.0.113.1` and
 configured an interface address instead. Both defects therefore share one fix.
 
 ### The `mecmcp` compatibility blocker has cleared
@@ -135,7 +135,7 @@ mecmcp#267 and does not block adoption.
 | Devices onboarded | Fix `vsrx-ci` only | One healthy `MANAGED` device answers all three questions; no bootstrap work |
 | Release claims | State the upstream blocker cleared, name what actually remains | The docs currently assert a blocker that does not exist |
 | Container 612 | New, protected, TLS on LAN | 606 is loopback-only and therefore unusable as a client endpoint |
-| 612 address | `192.168.1.213`, `rustsdcmcp-612.mechub.org` | `.212` is taken by 610; leaves `rustsdcmcp.mechub.org` pointing at 606 so existing docs stay true |
+| 612 address | `203.0.113.13`, `rustsdcmcp-612.example.net` | `.212` is taken by 610; leaves `rustsdcmcp.example.net` pointing at 606 so existing docs stay true |
 | 612 credential | Separate SDC API key | Independent audit attribution and revocation |
 | Lab mode | Ship it as the standard `--lab-mode` flag, adopting the full CLI standard | User decision, reaffirmed after the concern was raised. The sanctioned pattern needs no upstream change |
 
@@ -173,8 +173,8 @@ Snapshot VM 114 first. One Junos commit, using `commit confirmed` so a mistake
 self-reverts:
 
 ```
-delete interfaces ge-0/0/0 unit 0 family inet address 192.168.1.1/24
-set routing-options static route 0.0.0.0/0 next-hop 192.168.1.1
+delete interfaces ge-0/0/0 unit 0 family inet address 203.0.113.1/24
+set routing-options static route 0.0.0.0/0 next-hop 203.0.113.1
 ```
 
 Removing `.1/24` does not disturb `.162`, which is how `rust-junosmcp` reaches
@@ -285,8 +285,8 @@ that make it usable as a client endpoint.
 | Hostname | `rustsdcmcp-612` |
 | Template | `debian-13-standard_13.1-2_amd64` |
 | Resources | 1 core, 512 MB RAM, 512 MB swap, 4 GB rootfs, unprivileged, `nesting=1` |
-| Address | `192.168.1.213/24`, gw `192.168.1.1`, `searchdomain mechub.org` |
-| DNS | new record `rustsdcmcp-612.mechub.org` |
+| Address | `203.0.113.13/24`, gw `203.0.113.1`, `searchdomain example.net` |
+| DNS | new record `rustsdcmcp-612.example.net` |
 | Listener | streamable-HTTP over **TLS**, bound to its own address |
 | Auth | bearer token; `--allowed-host` set to the dialled name |
 | Credential | its own SDC API key, minted in the portal |
