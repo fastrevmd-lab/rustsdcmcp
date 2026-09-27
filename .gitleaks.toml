@@ -1,0 +1,12 @@
+title = "rustsdcmcp gitleaks config"
+
+[extend]
+path = ".gitleaks-vendor.toml"
+
+[[allowlists]]
+# projection.rs's own #[cfg(test)] module exercises the certificate/licence
+# field allowlist against a synthetic placeholder PEM and passphrase.
+description = "projection.rs unit-test fixtures for the field allowlist"
+paths = [
+  '''crates/rustsdcmcp-core/src/projection\.rs$''',
+]
