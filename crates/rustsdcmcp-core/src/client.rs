@@ -10,6 +10,7 @@ use crate::{
     models::{DeployResponse, PreviewResponse},
 };
 use futures::StreamExt as _;
+use mecmcp_secret::OutboundSecret;
 use reqwest::{Method, StatusCode, header::HeaderValue};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -20,7 +21,6 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use url::Url;
-use zeroize::Zeroizing;
 
 /// Additional `GET` attempts allowed after a rate-limited or overloaded
 /// response, on top of the first attempt.
@@ -74,20 +74,12 @@ fn jitter_nanos() -> u64 {
         .unwrap_or_default()
 }
 
-struct Credential(Zeroizing<String>);
-
-impl std::fmt::Debug for Credential {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("Credential([REDACTED])")
-    }
-}
-
 /// Cloneable, bounded client for one SDC tenant.
 #[derive(Clone)]
 pub struct SdcClient {
     http: reqwest::Client,
     base_url: Url,
-    credential: Arc<Credential>,
+    credential: Arc<OutboundSecret>,
     auth_scheme: crate::AuthScheme,
     request_timeout: Duration,
     max_response_bytes: usize,
@@ -103,7 +95,7 @@ impl std::fmt::Debug for SdcClient {
         formatter
             .debug_struct("SdcClient")
             .field("base_url", &self.base_url)
-            .field("credential", &self.credential)
+            .field("credential", &"OutboundSecret([REDACTED])")
             .field("auth_scheme", &self.auth_scheme)
             .field("request_timeout", &self.request_timeout)
             .field("max_response_bytes", &self.max_response_bytes)
@@ -120,11 +112,11 @@ impl SdcClient {
     /// # Errors
     ///
     /// Returns stable, credential-free configuration or client-construction errors.
-    pub fn new(config: &SdcConfig, credential: String) -> Result<Self, SdcError> {
+    pub fn new(config: &SdcConfig, credential: OutboundSecret) -> Result<Self, SdcError> {
         config
             .validate()
             .map_err(|error| SdcError::Config(error.to_string()))?;
-        if credential.is_empty() || credential.len() > 16 * 1024 {
+        if credential.expose().is_empty() || credential.expose().len() > 16 * 1024 {
             return Err(SdcError::Credential);
         }
         let egress_proxy = config
@@ -150,7 +142,7 @@ impl SdcClient {
 
     fn from_parts(
         config: &SdcConfig,
-        credential: String,
+        credential: OutboundSecret,
         http: reqwest::Client,
     ) -> Result<Self, SdcError> {
         Ok(Self {
@@ -158,7 +150,7 @@ impl SdcClient {
             base_url: config
                 .base_url()
                 .map_err(|error| SdcError::Config(error.to_string()))?,
-            credential: Arc::new(Credential(Zeroizing::new(credential))),
+            credential: Arc::new(credential),
             auth_scheme: config.auth_scheme,
             request_timeout: Duration::from_millis(config.request_timeout_ms),
             max_response_bytes: config.max_response_bytes,
@@ -211,8 +203,12 @@ impl SdcClient {
             approval_ttl_secs: 60,
             egress_proxy: None,
         };
-        let mut client =
-            Self::from_parts(&config, credential, reqwest::Client::new()).expect("test client");
+        let mut client = Self::from_parts(
+            &config,
+            OutboundSecret::new_unchecked(credential),
+            reqwest::Client::new(),
+        )
+        .expect("test client");
         client.base_url = base_url;
         client
     }
@@ -2252,7 +2248,7 @@ impl SdcClient {
             }
         }
 
-        let mut auth = HeaderValue::from_str(&self.credential.0)
+        let mut auth = HeaderValue::from_str(self.credential.expose())
             .map_err(|_| SdcError::InvalidCredentialHeader)?;
         auth.set_sensitive(true);
         let mut request = self
