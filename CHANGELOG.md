@@ -19,6 +19,9 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
   self-approval (not actor type) was checked. `/healthz` and `/readyz` are
   now mounted, both unauthenticated and returning no device or customer
   data.
+  **Upgrade note:** existing approver tokens minted without
+  `--actor-type human` will be refused; re-mint them with the flag before
+  they are next used to approve a change set.
 - ICAP server passwords (`password_ascii`, `password_base64`) are redacted from
   `list_sdc_resources` / `get_sdc_resource`. The spec declares them; the lab
   tenant has not been checked for them.

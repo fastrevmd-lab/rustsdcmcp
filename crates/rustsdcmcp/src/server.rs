@@ -202,6 +202,13 @@ fn attribution(caller: Option<&CallerCtx<NoGrant>>, change_ref: Option<String>) 
     attribution
 }
 
+/// The actor type `approve_sdc_change_set` hands mecmcp for its human-approver
+/// check. Pulled out of the handler so the enforcement wiring itself — not
+/// just the underlying `attribution()` mapping — has a direct unit test.
+fn approver_actor_type(caller: Option<&CallerCtx<NoGrant>>) -> mecmcp_audit::ActorType {
+    attribution(caller, None).actor_type
+}
+
 fn finish<T: Serialize>(mut audit: AuditScope, result: Result<T, SdcError>) -> CallToolResult {
     match &result {
         Ok(_) => audit.succeed(),
@@ -2961,7 +2968,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        let approver_actor_type = attribution(caller, None).actor_type;
+        let approver_actor_type = approver_actor_type(caller);
         Ok(finish(
             audit,
             self.changes
@@ -3405,29 +3412,31 @@ mod tests {
         );
     }
 
-    /// `approve_sdc_change_set` derives `approver_actor_type` from
-    /// `attribution(caller, None).actor_type`. mecmcp v0.24.0 refuses the
-    /// approval unless that value is `Human`, so this pins the mapping an
-    /// agent-minted or unattributed caller cannot bypass by way of a
-    /// silently-defaulted actor type.
+    /// `approve_sdc_change_set` calls `approver_actor_type()` — not
+    /// `attribution()` directly — to get the value it hands mecmcp's
+    /// human-approver check. Testing `approver_actor_type()` itself, rather
+    /// than the `attribution()` helper it happens to be built on, means a
+    /// future edit that changes what the handler passes (say, defaulting to
+    /// `Human` instead of calling through) fails this test even though
+    /// `attribution()` is untouched.
     #[test]
     fn approver_actor_type_is_taken_from_the_caller_not_defaulted_to_human() {
         let human = caller(ScopeSet::Wildcard, ScopeSet::Wildcard);
         assert_eq!(
-            attribution(Some(&human), None).actor_type,
+            approver_actor_type(Some(&human)),
             mecmcp_audit::ActorType::Human
         );
 
         let mut agent = caller(ScopeSet::Wildcard, ScopeSet::Wildcard);
         agent.actor_type = ActorType::Agent;
         assert_eq!(
-            attribution(Some(&agent), None).actor_type,
+            approver_actor_type(Some(&agent)),
             mecmcp_audit::ActorType::Agent,
             "an agent-minted token must not be attributed as human"
         );
 
         assert_eq!(
-            attribution(None, None).actor_type,
+            approver_actor_type(None),
             mecmcp_audit::ActorType::Unknown,
             "a stdio caller with no context must not be attributed as human"
         );
