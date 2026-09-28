@@ -12,6 +12,10 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
 ## Unreleased
 
 ### Added
+- `egress_proxy`: optional explicit HTTP(S) forward-proxy setting for
+  outbound SDC traffic. Unset by default — the client never autodiscovers a
+  proxy from environment variables, and the SDC endpoint stays fixed either
+  way. See `docs/operations.md#explicit-egress-proxy`.
 - `--enable-metrics`, `--max-requests-per-second-per-ip`,
   `--max-request-burst-per-ip`, `--max-requests-per-second-per-token`, and
   `--max-request-burst-per-token` flags (MEC-347). Metrics and rate limits
@@ -19,6 +23,13 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
   to change them. Rate limits are now on by default without operator
   action; `/metrics` stays off by default and is an explicit opt-in. See
   `docs/operations.md`.
+
+### Fixed
+- A `GET` rate-limited or overloaded by SDC (`429`/`503`) is now retried,
+  honouring `Retry-After` when SDC sends one, with jitter and a capped
+  number of attempts, instead of failing immediately. Writes are unaffected
+  and still never retry automatically — a mutation must not be silently
+  resent into an unknown state.
 
 ### Security
 - Bumped `mecmcp` to v0.24.0. `approve_sdc_change_set` now refuses an

@@ -10,6 +10,7 @@ use crate::{
     models::{DeployResponse, PreviewResponse},
 };
 use futures::StreamExt as _;
+use mecmcp_secret::OutboundSecret;
 use reqwest::{Method, StatusCode, header::HeaderValue};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -20,14 +21,57 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use url::Url;
-use zeroize::Zeroizing;
 
-struct Credential(Zeroizing<String>);
+/// Additional `GET` attempts allowed after a rate-limited or overloaded
+/// response, on top of the first attempt.
+const MAX_RETRY_ATTEMPTS: u32 = 3;
 
-impl std::fmt::Debug for Credential {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("Credential([REDACTED])")
-    }
+/// Upper bound on any single retry delay, regardless of what SDC's
+/// `Retry-After` header requests. Protects against an unreasonable or
+/// hostile value stalling a caller far past the whole-request deadline.
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+
+/// Backoff used for a retryable status with no usable `Retry-After` header.
+const BASE_RETRY_DELAY: Duration = Duration::from_millis(500);
+
+/// Outcome of one wire attempt: status, an optional retry hint, and the body
+/// read (or the reason it could not be read).
+struct SendOutcome {
+    status: StatusCode,
+    retry_after: Option<Duration>,
+    body: Result<Vec<u8>, SdcError>,
+}
+
+/// Delay before the next retry attempt.
+///
+/// Honours a server-provided `Retry-After`, capped so a hostile or
+/// unreasonable value cannot stall a caller far past the whole-request
+/// deadline; falls back to capped exponential backoff otherwise. Either way
+/// a small jitter is added so concurrent callers rate-limited at the same
+/// moment do not retry in lockstep.
+fn retry_delay(retry_after: Option<Duration>, attempt: u32) -> Duration {
+    let base = retry_after.unwrap_or_else(|| {
+        BASE_RETRY_DELAY.saturating_mul(1u32.checked_shl(attempt).unwrap_or(u32::MAX))
+    });
+    let capped = base.min(MAX_RETRY_DELAY);
+    let jitter_bound_ms = u64::try_from(capped.as_millis() / 4)
+        .unwrap_or(u64::MAX)
+        .max(1);
+    let jitter_ms = jitter_nanos() % jitter_bound_ms;
+    capped + Duration::from_millis(jitter_ms)
+}
+
+/// Cheap, non-cryptographic entropy source for retry jitter.
+///
+/// This only needs to desynchronize concurrent retries, not resist
+/// prediction, so wall-clock sub-second precision is sufficient and avoids
+/// adding an RNG dependency.
+fn jitter_nanos() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| u64::from(elapsed.subsec_nanos()))
+        .unwrap_or_default()
 }
 
 /// Cloneable, bounded client for one SDC tenant.
@@ -35,7 +79,7 @@ impl std::fmt::Debug for Credential {
 pub struct SdcClient {
     http: reqwest::Client,
     base_url: Url,
-    credential: Arc<Credential>,
+    credential: Arc<OutboundSecret>,
     auth_scheme: crate::AuthScheme,
     request_timeout: Duration,
     max_response_bytes: usize,
@@ -51,7 +95,7 @@ impl std::fmt::Debug for SdcClient {
         formatter
             .debug_struct("SdcClient")
             .field("base_url", &self.base_url)
-            .field("credential", &self.credential)
+            .field("credential", &"OutboundSecret([REDACTED])")
             .field("auth_scheme", &self.auth_scheme)
             .field("request_timeout", &self.request_timeout)
             .field("max_response_bytes", &self.max_response_bytes)
@@ -68,29 +112,37 @@ impl SdcClient {
     /// # Errors
     ///
     /// Returns stable, credential-free configuration or client-construction errors.
-    pub fn new(config: &SdcConfig, credential: String) -> Result<Self, SdcError> {
+    pub fn new(config: &SdcConfig, credential: OutboundSecret) -> Result<Self, SdcError> {
         config
             .validate()
             .map_err(|error| SdcError::Config(error.to_string()))?;
-        if credential.is_empty() || credential.len() > 16 * 1024 {
+        if credential.expose().is_empty() || credential.expose().len() > 16 * 1024 {
             return Err(SdcError::Credential);
         }
-        let http = reqwest::Client::builder()
+        let egress_proxy = config
+            .egress_proxy_url()
+            .map_err(|error| SdcError::Config(error.to_string()))?;
+        let mut builder = reqwest::Client::builder()
             .https_only(true)
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_millis(config.connect_timeout_ms))
             .pool_idle_timeout(Duration::from_secs(300))
             .pool_max_idle_per_host(config.max_concurrency)
-            .user_agent(format!("rustsdcmcp/{}", env!("CARGO_PKG_VERSION")))
-            .no_proxy()
-            .build()
-            .map_err(|_| SdcError::ClientConstruction)?;
+            .user_agent(format!("rustsdcmcp/{}", env!("CARGO_PKG_VERSION")));
+        builder = match egress_proxy {
+            // Operator opted into one explicit proxy; environment variables
+            // still never redirect traffic.
+            Some(proxy_url) => builder
+                .proxy(reqwest::Proxy::all(proxy_url).map_err(|_| SdcError::ClientConstruction)?),
+            None => builder.no_proxy(),
+        };
+        let http = builder.build().map_err(|_| SdcError::ClientConstruction)?;
         Self::from_parts(config, credential, http)
     }
 
     fn from_parts(
         config: &SdcConfig,
-        credential: String,
+        credential: OutboundSecret,
         http: reqwest::Client,
     ) -> Result<Self, SdcError> {
         Ok(Self {
@@ -98,7 +150,7 @@ impl SdcClient {
             base_url: config
                 .base_url()
                 .map_err(|error| SdcError::Config(error.to_string()))?,
-            credential: Arc::new(Credential(Zeroizing::new(credential))),
+            credential: Arc::new(credential),
             auth_scheme: config.auth_scheme,
             request_timeout: Duration::from_millis(config.request_timeout_ms),
             max_response_bytes: config.max_response_bytes,
@@ -149,9 +201,14 @@ impl SdcClient {
             poll_deadline_ms: 50,
             changeset_state_file: None,
             approval_ttl_secs: 60,
+            egress_proxy: None,
         };
-        let mut client =
-            Self::from_parts(&config, credential, reqwest::Client::new()).expect("test client");
+        let mut client = Self::from_parts(
+            &config,
+            OutboundSecret::new_unchecked(credential),
+            reqwest::Client::new(),
+        )
+        .expect("test client");
         client.base_url = base_url;
         client
     }
@@ -2119,12 +2176,17 @@ impl SdcClient {
         Ok(body)
     }
 
-    /// Send one request, reporting the response status separately from the body.
+    /// Send one request, retrying a `GET` on a rate-limited or overloaded
+    /// response, and reporting the response status separately from the body.
     ///
     /// The status is resolved first so a caller can tell a request SDC refused
-    /// from one it accepted but whose body could not be read. Reads do not care
-    /// about that distinction; writes do, because it decides whether a mutation
-    /// landed.
+    /// from one it accepted but whose body could not be read. Reads do not
+    /// care about that distinction; writes do, because it decides whether a
+    /// mutation landed.
+    ///
+    /// Retrying is deliberately restricted to `GET`: a write must not
+    /// silently resend into an unknown state, so `send_write` always takes
+    /// this same method and never observes more than one attempt here.
     async fn send_parts<B: Serialize>(
         &self,
         method: Method,
@@ -2133,6 +2195,39 @@ impl SdcClient {
         body: Option<&B>,
         cancellation: &CancellationToken,
     ) -> Result<(StatusCode, Result<Vec<u8>, SdcError>), SdcError> {
+        let mut attempt: u32 = 0;
+        loop {
+            let outcome = self
+                .send_parts_once(method.clone(), segments, query, body, cancellation)
+                .await?;
+            let retryable = method == Method::GET
+                && attempt < MAX_RETRY_ATTEMPTS
+                && matches!(
+                    outcome.status,
+                    StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE
+                );
+            if !retryable {
+                return Ok((outcome.status, outcome.body));
+            }
+            let delay = retry_delay(outcome.retry_after, attempt);
+            attempt += 1;
+            tokio::select! {
+                () = cancellation.cancelled() => return Err(SdcError::Cancelled),
+                () = self.shutdown.cancelled() => return Err(SdcError::Cancelled),
+                () = time::sleep(delay) => {}
+            }
+        }
+    }
+
+    /// Send exactly one wire attempt.
+    async fn send_parts_once<B: Serialize>(
+        &self,
+        method: Method,
+        segments: &[&str],
+        query: &[(&str, &str)],
+        body: Option<&B>,
+        cancellation: &CancellationToken,
+    ) -> Result<SendOutcome, SdcError> {
         let mut url = self.base_url.clone();
         {
             let mut path = url
@@ -2153,7 +2248,7 @@ impl SdcClient {
             }
         }
 
-        let mut auth = HeaderValue::from_str(&self.credential.0)
+        let mut auth = HeaderValue::from_str(self.credential.expose())
             .map_err(|_| SdcError::InvalidCredentialHeader)?;
         auth.set_sensitive(true);
         let mut request = self
@@ -2179,6 +2274,12 @@ impl SdcClient {
             // whether SDC accepted the request even when the body is then
             // unreadable, because that decides whether the mutation landed.
             let status = response.status();
+            let retry_after = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.trim().parse::<u64>().ok())
+                .map(Duration::from_secs);
             let oversized = response
                 .content_length()
                 .is_some_and(|length| length > self.max_response_bytes as u64);
@@ -2202,7 +2303,11 @@ impl SdcClient {
                 Ok(body)
             }
             .await;
-            Ok::<_, SdcError>((status, body))
+            Ok::<_, SdcError>(SendOutcome {
+                status,
+                retry_after,
+                body,
+            })
         };
 
         tokio::select! {
@@ -2490,6 +2595,7 @@ mod tests {
         Json, Router,
         extract::Query,
         http::{HeaderMap, StatusCode},
+        response::IntoResponse,
         routing::{delete, get, post, put},
     };
     use std::collections::HashMap;
@@ -2587,13 +2693,23 @@ mod tests {
 
     #[tokio::test]
     async fn status_429_is_never_hidden_as_a_retryable_transport_error() {
+        // A persistent 429 must still fail once retries are exhausted, not
+        // surface as some other, more optimistic-looking transport error.
+        let calls: Arc<std::sync::atomic::AtomicU32> =
+            Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let counted = Arc::clone(&calls);
         let app = Router::new().route(
             "/api/v1/devices",
-            get(|| async {
-                (
-                    StatusCode::TOO_MANY_REQUESTS,
-                    Json(serde_json::json!({"message": "too many"})),
-                )
+            get(move || {
+                let counted = Arc::clone(&counted);
+                async move {
+                    counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    (
+                        StatusCode::TOO_MANY_REQUESTS,
+                        [(reqwest::header::RETRY_AFTER.as_str(), "0")],
+                        Json(serde_json::json!({"message": "too many"})),
+                    )
+                }
             }),
         );
         let (base_url, server) = serve(app).await;
@@ -2605,6 +2721,88 @@ mod tests {
             .await
             .expect_err("429 must fail");
         assert!(matches!(error, SdcError::ResourceExhausted));
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            MAX_RETRY_ATTEMPTS + 1,
+            "GET must retry up to the capped attempt count, then stop"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn get_retries_a_429_with_retry_after_and_then_succeeds() {
+        // Acceptance criterion: a GET rate-limited with `Retry-After` retries
+        // and succeeds within the capped attempt count.
+        let calls: Arc<std::sync::atomic::AtomicU32> =
+            Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let counted = Arc::clone(&calls);
+        let app = Router::new().route(
+            "/api/v1/devices",
+            get(move || {
+                let counted = Arc::clone(&counted);
+                async move {
+                    let attempt = counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if attempt < MAX_RETRY_ATTEMPTS {
+                        return (
+                            StatusCode::TOO_MANY_REQUESTS,
+                            [(reqwest::header::RETRY_AFTER.as_str(), "0")],
+                            Json(serde_json::json!({"message": "too many"})),
+                        )
+                            .into_response();
+                    }
+                    Json(serde_json::json!({"items": [], "count": 0})).into_response()
+                }
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        let result = client(base_url, 4096)
+            .list_devices(
+                ListRequest::new(0, 20, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("must succeed once the rate limit clears within the cap");
+        assert_eq!(result["count"], 0);
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            MAX_RETRY_ATTEMPTS + 1
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn write_never_retries_on_429() {
+        // Acceptance criterion: a write must not silently retry into an
+        // unknown state, so it gets exactly one attempt even when rate
+        // limited.
+        let calls: Arc<std::sync::atomic::AtomicU32> =
+            Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let counted = Arc::clone(&calls);
+        let app = Router::new().route(
+            "/api/v1/policies/firewall",
+            post(move || {
+                let counted = Arc::clone(&counted);
+                async move {
+                    counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    (
+                        StatusCode::TOO_MANY_REQUESTS,
+                        [(reqwest::header::RETRY_AFTER.as_str(), "0")],
+                        Json(serde_json::json!({"message": "too many"})),
+                    )
+                }
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        let error = client(base_url, 4096)
+            .create_firewall_policy(&serde_json::json!({"name": "p"}), &CancellationToken::new())
+            .await
+            .expect_err("429 must fail");
+        assert!(matches!(error, SdcError::ResourceExhausted));
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "a write must never be retried automatically"
+        );
         server.abort();
     }
 
