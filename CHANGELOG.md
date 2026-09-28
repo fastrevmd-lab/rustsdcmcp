@@ -11,6 +11,15 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
 
 ## Unreleased
 
+### Added
+- `--enable-metrics`, `--max-requests-per-second-per-ip`,
+  `--max-request-burst-per-ip`, `--max-requests-per-second-per-token`, and
+  `--max-request-burst-per-token` flags (MEC-347). Metrics and rate limits
+  were previously hardcoded (`false`, unbounded) with no way for an operator
+  to change them. Rate limits are now on by default without operator
+  action; `/metrics` stays off by default and is an explicit opt-in. See
+  `docs/operations.md`.
+
 ### Security
 - ICAP server passwords (`password_ascii`, `password_base64`) are redacted from
   `list_sdc_resources` / `get_sdc_resource`. The spec declares them; the lab
