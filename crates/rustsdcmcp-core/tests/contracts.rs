@@ -12,7 +12,7 @@ fn test_config() -> SdcConfig {
         "expected_tenant_id": "tenant-123",
         "credential_env": "SDC_TOKEN",
         "auth_scheme": "oauth2_token",
-        "endpoint": "https://example.invalid/"
+        "endpoint": "https://api.sdcloud.juniperclouds.net/"
     }))
     .expect("valid config")
 }
@@ -38,7 +38,7 @@ fn config_names_the_credential_variable_and_carries_no_field_for_its_value() {
         "expected_tenant_id": "tenant-123",
         "credential_env": "SDC_TOKEN",
         "auth_scheme": "oauth2_token",
-        "endpoint": "https://example.invalid/",
+        "endpoint": "https://api.sdcloud.juniperclouds.net/",
         "credential": "smuggled-secret-value"
     });
     let rejected = serde_json::from_value::<SdcConfig>(smuggled)
@@ -170,4 +170,49 @@ fn deployment_status_classifier_uses_only_documented_states() {
     assert!(DeploymentStatus::PartialSuccess.is_terminal());
     assert!(!DeploymentStatus::PartialSuccess.succeeded());
     assert!(DeploymentStatus::Failed.is_terminal());
+}
+
+#[test]
+fn endpoint_must_be_the_exact_sdc_host_without_port() {
+    // The correct SDC endpoint
+    let valid = serde_json::from_value::<SdcConfig>(serde_json::json!({
+        "version": 1,
+        "tenant": "test",
+        "expected_tenant_id": "tenant-1",
+        "credential_env": "SDC_TOKEN",
+        "auth_scheme": "api_key",
+        "endpoint": "https://api.sdcloud.juniperclouds.net/"
+    }))
+    .expect("valid test config");
+    assert!(valid.validate().is_ok(), "valid endpoint should parse");
+
+    // Wrong host
+    let wrong_host = serde_json::from_value::<SdcConfig>(serde_json::json!({
+        "version": 1,
+        "tenant": "test",
+        "expected_tenant_id": "tenant-1",
+        "credential_env": "SDC_TOKEN",
+        "auth_scheme": "api_key",
+        "endpoint": "https://other.host.com/"
+    }))
+    .expect("wrong host test config");
+    assert!(
+        wrong_host.validate().is_err(),
+        "wrong host should be rejected"
+    );
+
+    // Non-default port
+    let wrong_port = serde_json::from_value::<SdcConfig>(serde_json::json!({
+        "version": 1,
+        "tenant": "test",
+        "expected_tenant_id": "tenant-1",
+        "credential_env": "SDC_TOKEN",
+        "auth_scheme": "api_key",
+        "endpoint": "https://api.sdcloud.juniperclouds.net:8443/"
+    }))
+    .expect("wrong port test config");
+    assert!(
+        wrong_port.validate().is_err(),
+        "non-default port should be rejected"
+    );
 }

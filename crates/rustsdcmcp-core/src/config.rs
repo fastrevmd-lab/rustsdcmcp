@@ -172,7 +172,8 @@ impl SdcConfig {
 fn validate_endpoint(raw: &str) -> Result<Url, ConfigError> {
     let url = Url::parse(raw).map_err(|_| ConfigError::Invalid("endpoint is not a valid URL"))?;
     if url.scheme() != "https"
-        || url.host_str().is_none()
+        || url.host_str() != Some("api.sdcloud.juniperclouds.net")
+        || url.port().is_some()
         || !url.username().is_empty()
         || url.password().is_some()
         || url.query().is_some()
@@ -180,7 +181,7 @@ fn validate_endpoint(raw: &str) -> Result<Url, ConfigError> {
         || !matches!(url.path(), "" | "/")
     {
         return Err(ConfigError::Invalid(
-            "endpoint must be an HTTPS base URL without credentials, path, query, or fragment",
+            "endpoint must be an HTTPS base URL without credentials, path, query, fragment, or port",
         ));
     }
     Ok(url)
