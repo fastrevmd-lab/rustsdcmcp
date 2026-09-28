@@ -73,6 +73,19 @@ rather than hand-rolling a unit from the command above. A unit with
 limit, so a tunnel pointed at a name that no longer resolves retries every five
 seconds indefinitely and reports no failure anyone notices.
 
+## Rate limits and metrics
+
+A fresh install rate-limits the Streamable HTTP listener without any operator
+action: `--max-requests-per-second-per-ip 50 --max-request-burst-per-ip 100`
+and `--max-requests-per-second-per-token 20 --max-request-burst-per-token 40`.
+Set the paired rate and burst flag for either axis to `0`/`0` to disable that
+axis; a rate/burst pair that is only partly zero is refused at startup.
+
+`/metrics` is **off by default** (`--enable-metrics` to turn it on). It is
+never protected by an MCP bearer token — see `mecmcp-transport`'s
+`docs/METRICS.md` for what it exposes and how to gate it for a non-loopback
+peer. Enabling it is an operator decision made per deployment, not a default.
+
 ## Egress policy
 
 > **The systemd egress directives are probably inert on the recommended
