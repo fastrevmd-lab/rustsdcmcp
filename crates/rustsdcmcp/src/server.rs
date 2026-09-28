@@ -19,8 +19,8 @@ use rmcp::{
 use rustsdcmcp_core::{
     ChangeManager, DeviceConfigSection, ImageJob, ListRequest, NatWriteOperation,
     ObjectWriteAction, PolicyOperation, ResourceKind, SdcClient, SdcError, WritableResource,
-    project_ca_certificates, project_license, project_licenses, project_local_certificates,
-    redact_rma_state, redact_secrets,
+    page_list, project_ca_certificates, project_license, project_licenses,
+    project_local_certificates, redact_rma_state, redact_secrets,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -397,6 +397,25 @@ pub struct DeviceArgs {
     pub tenant: String,
     /// Device UUID.
     pub device_uuid: String,
+}
+
+/// Arguments for listing one device's archived configuration versions,
+/// byte-budget paginated.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConfigVersionsListArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Device UUID.
+    pub device_uuid: String,
+    /// Continuation token from a prior call's response; omit to start at the
+    /// first page.
+    #[serde(default)]
+    pub continuation_token: Option<String>,
+    /// Optional projection: keep only these top-level fields on each entry.
+    /// Empty means every field.
+    #[serde(default)]
+    pub fields: Vec<String>,
 }
 
 /// Arguments for listing one section of a device's configuration.
@@ -1047,11 +1066,11 @@ impl SdcHandler {
 
     #[tool(
         name = "list_sdc_config_versions",
-        description = "List archived configuration versions for one device. Returns unbounded results; a device with a long archive may exceed max_response_bytes and fail."
+        description = "List archived configuration versions for one device, byte-budget paginated. SDC itself has no from/size parameters for this endpoint, so a device with a long archive comes back as a page plus a continuation_token rather than one unbounded (and possibly refused) response. Pass continuation_token back to fetch the next page, and an optional fields list to shrink each entry further."
     )]
     async fn list_sdc_config_versions(
         &self,
-        Parameters(args): Parameters<DeviceArgs>,
+        Parameters(args): Parameters<ConfigVersionsListArgs>,
         extensions: Extensions,
         cancellation: CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
@@ -1066,12 +1085,22 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
-            audit,
-            self.client
-                .list_config_versions(&args.device_uuid, &cancellation)
-                .await,
-        ))
+        let result = self
+            .client
+            .list_config_versions(&args.device_uuid, &cancellation)
+            .await
+            .and_then(|value| {
+                let fields = (!args.fields.is_empty()).then_some(args.fields.as_slice());
+                page_list(
+                    &value,
+                    "items",
+                    fields,
+                    args.continuation_token.as_deref(),
+                    self.client.list_page_budget_bytes(),
+                )
+                .map_err(SdcError::from)
+            });
+        Ok(finish(audit, result))
     }
 
     #[tool(
