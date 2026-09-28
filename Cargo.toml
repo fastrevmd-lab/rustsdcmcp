@@ -51,6 +51,7 @@ mecmcp-audit = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mec
 mecmcp-auth = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
 mecmcp-changeset = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
 mecmcp-runtime = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
+mecmcp-secret = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
 mecmcp-server = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
 mecmcp-transport = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
 

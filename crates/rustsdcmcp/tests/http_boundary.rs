@@ -6,6 +6,7 @@
 
 use axum::http::{StatusCode, header};
 use mecmcp_auth::{KnownNames, NoGrant, ScopeSet, TokenStoreFile};
+use mecmcp_secret::OutboundSecret;
 use mecmcp_transport::{LimitsConfig, serve_router};
 use rustsdcmcp::{KNOWN_TOOLS, build_http_router};
 use rustsdcmcp_core::{ChangeManager, SdcClient, SdcConfig};
@@ -42,7 +43,11 @@ impl TestServer {
             "auth_scheme": "api_key",
         }))
         .expect("config");
-        let client = SdcClient::new(&config, "test-credential".to_owned()).expect("client");
+        let client = SdcClient::new(
+            &config,
+            OutboundSecret::new_unchecked("test-credential".to_owned()),
+        )
+        .expect("client");
         let changes = Arc::new(
             ChangeManager::load(
                 client.clone(),
@@ -274,7 +279,11 @@ async fn router_rejects_body_over_limit_before_rmcp_dispatch() {
             "auth_scheme": "api_key",
         }))
         .expect("config");
-        let client = SdcClient::new(&config, "test-credential".to_owned()).expect("client");
+        let client = SdcClient::new(
+            &config,
+            OutboundSecret::new_unchecked("test-credential".to_owned()),
+        )
+        .expect("client");
         let changes = Arc::new(
             ChangeManager::load(
                 client.clone(),
@@ -426,7 +435,11 @@ async fn allow_insecure_bind_is_wired() {
         "auth_scheme": "api_key",
     }))
     .expect("config");
-    let client = SdcClient::new(&config, "test-credential".to_owned()).expect("client");
+    let client = SdcClient::new(
+        &config,
+        OutboundSecret::new_unchecked("test-credential".to_owned()),
+    )
+    .expect("client");
     let changes = Arc::new(
         ChangeManager::load(
             client.clone(),
