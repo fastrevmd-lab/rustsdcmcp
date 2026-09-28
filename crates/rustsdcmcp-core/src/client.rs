@@ -750,6 +750,31 @@ impl SdcClient {
         .await
     }
 
+    /// Fetch one NAT policy rule group by ID.
+    pub async fn get_nat_rule_group(
+        &self,
+        policy_id: &str,
+        group_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        validate_atom("policy_id", policy_id)?;
+        validate_atom("group_id", group_id)?;
+        self.get(
+            &[
+                "api",
+                "v1",
+                "policies",
+                "nat",
+                policy_id,
+                "rule_groups",
+                group_id,
+            ],
+            &[],
+            cancellation,
+        )
+        .await
+    }
+
     /// Fetch NAT policy rule hierarchy.
     ///
     /// Note: Unlike firewall policies, NAT uses the correctly-spelled `hierarchy`.
