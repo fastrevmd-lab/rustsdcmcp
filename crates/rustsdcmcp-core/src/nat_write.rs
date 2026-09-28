@@ -277,10 +277,21 @@ impl SdcNatTransaction {
                 Ok(before_digest(&current)? == before_digest(staged.before())?)
             }
             UpdateRuleGroup => {
-                // Rule group reads require listing and filtering, or we need a direct get endpoint
-                // For now, conservatively assume changed until we have the read method
-                // TODO: Add get_nat_rule_group method to client
-                Ok(true)
+                let Some(policy_id) = staged.policy_id() else {
+                    return Err(SdcError::InvalidInput(
+                        "policy_id required for rule group operations",
+                    ));
+                };
+                let Some(group_id) = staged.group_id() else {
+                    return Err(SdcError::InvalidInput(
+                        "group_id required for rule group operations",
+                    ));
+                };
+                let current = self
+                    .client
+                    .get_nat_rule_group(policy_id, group_id, &self.cancellation)
+                    .await?;
+                Ok(before_digest(&current)? == before_digest(staged.before())?)
             }
         }
     }

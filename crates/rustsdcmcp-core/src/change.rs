@@ -1252,9 +1252,19 @@ impl ChangeManager {
                 self.client.get_nat_rule(pid, rid, cancellation).await?
             }
             UpdateRuleGroup => {
-                // Rule group get is not yet implemented in client, use Null for now
-                // TODO: Add get_nat_rule_group to client and use it here
-                Value::Null
+                let Some(ref pid) = policy_id else {
+                    return Err(SdcError::InvalidInput(
+                        "policy_id required for rule group operations",
+                    ));
+                };
+                let Some(ref gid) = group_id else {
+                    return Err(SdcError::InvalidInput(
+                        "group_id required for rule group operations",
+                    ));
+                };
+                self.client
+                    .get_nat_rule_group(pid, gid, cancellation)
+                    .await?
             }
         };
 
@@ -2792,6 +2802,109 @@ mod tests {
             )
             .await;
         assert!(refused.is_err(), "an unknown operation id must be refused");
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn nat_rule_group_update_refuses_drift_through_full_prepare_path() {
+        // Regression for the safety gap where UpdateRuleGroup's `before` state
+        // was hardcoded to Null and drift was never checked, so an approved
+        // rule-group update could silently overwrite a change made after
+        // approval. This must go through the real prepare path so it proves
+        // prepare reads the live rule group rather than assuming Null.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let group_state = Arc::new(std::sync::Mutex::new(json!({
+            "uuid": "group-1",
+            "name": "as-prepared"
+        })));
+        let state_for_route = group_state.clone();
+
+        let app = Router::new().route(
+            "/api/v1/policies/nat/policy-1/rule_groups/group-1",
+            get(move || {
+                let state = state_for_route.lock().expect("test mutex").clone();
+                async move { Json(state) }
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        let client =
+            SdcClient::from_test_parts(base_url.clone(), "test-secret".to_owned(), 64 * 1024, 100);
+        let manager = ChangeManager::load(
+            client.clone(),
+            "tenant-a",
+            base_url.to_string(),
+            None,
+            Duration::from_secs(60),
+            false,
+            None,
+        )
+        .expect("change manager");
+        let cancellation = CancellationToken::new();
+
+        let prepared = manager
+            .prepare_nat_write(
+                "alice".to_owned(),
+                NatWriteOperation::UpdateRuleGroup,
+                Some("policy-1".to_owned()),
+                None,
+                Some("group-1".to_owned()),
+                json!({"name": "updated-name"}),
+                &cancellation,
+            )
+            .await
+            .expect("prepare");
+
+        // The prepared change MUST have captured the observed rule group
+        // state, not Value::Null. This is what binds into the plan digest.
+        assert!(
+            !prepared.prepared_change.before().is_null(),
+            "prepare must read and bind the actual rule group state, not Null"
+        );
+        assert_eq!(
+            prepared.prepared_change.before()["uuid"],
+            "group-1",
+            "prepare must capture the exact observed state"
+        );
+
+        // Drift: someone else changed the rule group between prepare and apply.
+        *group_state.lock().expect("test mutex") = json!({
+            "uuid": "group-1",
+            "name": "changed-by-someone-else"
+        });
+
+        let transaction = SdcNatTransaction::new(
+            client,
+            prepared.prepared_change.plan_digest().to_owned(),
+            cancellation,
+        );
+        let staged = transaction
+            .stage(std::slice::from_ref(&prepared.prepared_change))
+            .await
+            .expect("stages");
+
+        let error = transaction
+            .validate(&staged)
+            .await
+            .expect_err("a drifted rule group must refuse");
+        assert!(
+            matches!(&error, SdcError::TargetDrifted),
+            "unexpected error: {error:?}"
+        );
+
+        let error = transaction
+            .commit(
+                &staged,
+                &Attribution::stdio(),
+                &mecmcp_changeset::CommitOptions::default(),
+            )
+            .await
+            .expect_err("apply must also refuse a drifted rule group");
+        assert!(
+            matches!(&error, SdcError::TargetDrifted),
+            "unexpected error: {error:?}"
+        );
 
         server.abort();
     }
