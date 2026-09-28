@@ -211,8 +211,19 @@ fn finish<T: Serialize>(mut audit: AuditScope, result: Result<T, SdcError>) -> C
 }
 
 /// `finish`, for reads whose upstream shape may carry credentials.
-fn finish_redacted(audit: AuditScope, result: Result<Value, SdcError>) -> CallToolResult {
-    finish(audit, result.map(redact_secrets))
+///
+/// Every credential-bearing family goes through this, with no per-family
+/// exemption: the response is serialized to `Value` so `redact_secrets` can
+/// scan it regardless of the handler's return type. A serialization failure
+/// fails closed as [`SdcError::InvalidJson`] rather than falling back to the
+/// unredacted value.
+fn finish_redacted<T: Serialize>(audit: AuditScope, result: Result<T, SdcError>) -> CallToolResult {
+    let result = result.and_then(|value| {
+        serde_json::to_value(value)
+            .map(redact_secrets)
+            .map_err(|_| SdcError::InvalidJson)
+    });
+    finish(audit, result)
 }
 
 /// Arguments shared by tenant-level tools.
@@ -2453,7 +2464,7 @@ impl SdcHandler {
             }
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -2477,7 +2488,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_ips_rule(&args.profile_uuid, &args.rule_uuid, &cancellation)
@@ -2516,7 +2527,7 @@ impl SdcHandler {
             }
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -2540,7 +2551,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_ips_exempt_rule(&args.profile_uuid, &args.rule_uuid, &cancellation)
@@ -2579,7 +2590,7 @@ impl SdcHandler {
             }
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -2613,7 +2624,7 @@ impl SdcHandler {
             }
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -2643,7 +2654,7 @@ impl SdcHandler {
             Ok(page) => self.client.list_ipsec_profiles(page, &cancellation).await,
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -2667,7 +2678,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_ipsec_profile(&args.profile_name, &cancellation)
@@ -3336,6 +3347,47 @@ mod tests {
         for tool in WRITE_TOOLS {
             assert!(known.contains(tool), "{tool} is not a registered tool");
         }
+    }
+
+    /// `finish_redacted` must work for handlers whose client call returns a
+    /// typed struct, not just `serde_json::Value`: IPS/ECF handlers were
+    /// exempted from redaction precisely because their result types weren't
+    /// `Value`. Proves a non-`Value` `Serialize` result carrying a `community`
+    /// field comes out scrubbed.
+    #[test]
+    fn finish_redacted_scrubs_non_value_serializable_results() {
+        #[derive(Serialize)]
+        struct IpsRuleLike {
+            uuid: String,
+            community: String,
+        }
+
+        let audit = AuditScope::new(Attribution::stdio(), "get_sdc_ips_rule", "read", vec![]);
+        let result: Result<IpsRuleLike, SdcError> = Ok(IpsRuleLike {
+            uuid: "r1".to_owned(),
+            community: "public-secret".to_owned(),
+        });
+        let call_result = finish_redacted(audit, result);
+        let serialized = serde_json::to_string(&call_result).expect("CallToolResult serializes");
+        assert!(!serialized.contains("public-secret"));
+        assert!(serialized.contains("REDACTED"));
+    }
+
+    /// Fails closed: a value that cannot serialize to JSON must not fall back
+    /// to passing the original, unredacted value through.
+    #[test]
+    fn finish_redacted_fails_closed_on_serialize_error() {
+        struct Unserializable;
+        impl Serialize for Unserializable {
+            fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+                Err(serde::ser::Error::custom("boom"))
+            }
+        }
+
+        let audit = AuditScope::new(Attribution::stdio(), "get_sdc_ips_rule", "read", vec![]);
+        let result: Result<Unserializable, SdcError> = Ok(Unserializable);
+        let call_result = finish_redacted(audit, result);
+        assert_eq!(call_result.is_error, Some(true));
     }
 
     fn caller(targets: ScopeSet, tools: ScopeSet) -> CallerCtx<NoGrant> {

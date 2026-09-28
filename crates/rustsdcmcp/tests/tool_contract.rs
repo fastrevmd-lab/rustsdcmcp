@@ -118,6 +118,14 @@ fn redacted_tools_call_finish_redacted() {
         "get_sdc_mnha_sync_status",
         "get_sdc_rma_state",
         "get_sdc_rma_reactivation_status",
+        "list_sdc_ips_rules",
+        "get_sdc_ips_rule",
+        "list_sdc_ips_exempt_rules",
+        "get_sdc_ips_exempt_rule",
+        "list_sdc_ecf_rule_sets",
+        "list_sdc_ecf_rules",
+        "list_sdc_ipsec_profiles",
+        "get_sdc_ipsec_profile",
     ];
 
     // Every REDACTED_TOOLS entry must be a known tool.

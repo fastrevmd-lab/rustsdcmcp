@@ -13,10 +13,14 @@
 //!
 //! ## Redaction policy
 //!
-//! `finish_redacted` is used for every family whose response shape has not been
-//! observed live, or whose schema declares a credential or rendered-config field.
-//! IPS and ECF families use plain `finish` because the spec declares no such
-//! fields for them.
+//! `finish_redacted` is used for every tool, with no exemption. IPS and ECF
+//! families previously used plain `finish` on the reasoning that the spec
+//! declares no credential fields for them; that reasoning didn't hold up
+//! (mecmcp's threat model rates "tool output leaks secrets to the model
+//! provider" as unmitigated, T8) because a spec omission is not a guarantee
+//! upstream never adds a credential-bearing field, and the denylist below is
+//! now wide enough to catch upstream additions (SNMP `community` strings, API
+//! tokens, private keys) that a family-by-family carve-out would miss.
 
 use serde_json::Value;
 
@@ -29,6 +33,11 @@ pub const REDACTED: &str = "[REDACTED]";
 /// rendered device configuration bodies, and SDC-generated IPsec config carries
 /// the IKE pre-shared key, so both are withheld as a whole.
 ///
+/// `private_key` guards certificate private-key fields (see the
+/// `injected_private_key_is_dropped_from_local_certificates` test in
+/// `projection.rs` for the observed field name); this denylist entry is
+/// defence in depth for any endpoint the certificate allowlists don't cover.
+///
 /// Each key is normalized (lowercased, `_` and `-` removed) before comparison,
 /// so `preSharedKey`, `pre_shared_key`, and `PRE-SHARED-KEY` all match.
 const SECRET_KEYS: &[&str] = &[
@@ -40,6 +49,11 @@ const SECRET_KEYS: &[&str] = &[
     "pre_shared_key",
     "site_config",
     "cpe_config",
+    "secret",
+    "token",
+    "api_key",
+    "private_key",
+    "community",
 ];
 
 /// Normalize a key for comparison: lowercase and remove `_` and `-`.
@@ -179,6 +193,72 @@ mod tests {
         // These should NOT be redacted
         assert_eq!(out["keysize"], "2048");
         assert_eq!(out["pskHint"], "not-a-secret");
+    }
+
+    #[test]
+    fn secret_key_is_redacted() {
+        let out = redact_secrets(json!({"secret": "hunter2", "name": "a"}));
+        assert_eq!(out["secret"], REDACTED);
+        assert_eq!(out["name"], "a");
+    }
+
+    #[test]
+    fn token_key_is_redacted() {
+        let out = redact_secrets(json!({"token": "abc123", "name": "a"}));
+        assert_eq!(out["token"], REDACTED);
+        assert_eq!(out["name"], "a");
+    }
+
+    #[test]
+    fn api_key_is_redacted() {
+        let out = redact_secrets(json!({"api_key": "abc123", "apiKey": "def456", "name": "a"}));
+        assert_eq!(out["api_key"], REDACTED);
+        assert_eq!(out["apiKey"], REDACTED);
+        assert_eq!(out["name"], "a");
+    }
+
+    #[test]
+    fn private_key_is_redacted() {
+        let out = redact_secrets(json!({
+            "private_key": "-----BEGIN PRIVATE KEY-----AAAA-----END PRIVATE KEY-----",
+            "public_key_algorithm": "rsa"
+        }));
+        assert_eq!(out["private_key"], REDACTED);
+        // Public key metadata is not a secret and must survive.
+        assert_eq!(out["public_key_algorithm"], "rsa");
+    }
+
+    #[test]
+    fn community_string_is_redacted() {
+        let out = redact_secrets(json!({"community": "public", "name": "a"}));
+        assert_eq!(out["community"], REDACTED);
+        assert_eq!(out["name"], "a");
+    }
+
+    /// Proves IPS/ECF-shaped output is now redacted. Before this change,
+    /// IPS/ECF handlers called plain `finish` and skipped `redact_secrets`
+    /// entirely, so an SNMP `community` string on an IPS rule, or a `token`
+    /// on an ECF rule set, would have reached the model unredacted.
+    #[test]
+    fn ips_and_ecf_shaped_responses_are_redacted() {
+        let ips_rule = json!({
+            "uuid": "r1",
+            "name": "block-scan",
+            "community": "public",
+            "action": "drop"
+        });
+        let out = redact_secrets(ips_rule);
+        assert_eq!(out["community"], REDACTED);
+        assert_eq!(out["action"], "drop");
+
+        let ecf_rule_set = json!({
+            "items": [{"uuid": "s1", "name": "blocklist", "token": "ecf-abc123"}],
+            "count": 1
+        });
+        let out = redact_secrets(ecf_rule_set);
+        assert_eq!(out["items"][0]["token"], REDACTED);
+        assert_eq!(out["items"][0]["name"], "blocklist");
+        assert_eq!(out["count"], 1);
     }
 
     #[test]
