@@ -73,6 +73,12 @@ pub struct SdcConfig {
     /// Maximum page size accepted by list tools.
     #[serde(default = "default_max_page_size")]
     pub max_page_size: u32,
+    /// Byte budget for one page of a budget-paginated list result -- a list
+    /// SDC itself has no `from`/`size` parameters for, such as
+    /// `list_sdc_config_versions`. Independent of `max_response_bytes`,
+    /// which bounds the raw SDC response before it is paged.
+    #[serde(default = "default_list_page_budget_bytes")]
+    pub list_page_budget_bytes: usize,
     /// Initial job-poll interval in milliseconds.
     #[serde(default = "default_poll_initial_ms")]
     pub poll_initial_ms: u64,
@@ -132,6 +138,7 @@ impl SdcConfig {
             || self.max_response_bytes == 0
             || !(1..=1024).contains(&self.max_concurrency)
             || self.max_page_size == 0
+            || self.list_page_budget_bytes == 0
             || self.approval_ttl_secs == 0
         {
             return Err(ConfigError::Invalid(
@@ -257,6 +264,9 @@ const fn default_max_concurrency() -> usize {
 }
 const fn default_max_page_size() -> u32 {
     200
+}
+const fn default_list_page_budget_bytes() -> usize {
+    131_072
 }
 const fn default_poll_initial_ms() -> u64 {
     250
