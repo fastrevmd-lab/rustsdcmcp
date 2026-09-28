@@ -69,6 +69,39 @@ struct ServerCli {
     /// requiring external dependencies like jq.
     #[arg(long)]
     validate_package: Option<PathBuf>,
+
+    /// Expose unauthenticated Prometheus metrics at /metrics (streamable-http only).
+    ///
+    /// Off by default: `/metrics` carries no MCP bearer auth of its own (see
+    /// mecmcp-transport's docs/METRICS.md), so turning it on is an operator
+    /// decision, not a default.
+    #[arg(long)]
+    enable_metrics: bool,
+
+    /// Max requests per second per source IP address. Set together with
+    /// `--max-request-burst-per-ip`; `0`/`0` disables per-IP rate limiting.
+    ///
+    /// Defaults match `mecmcp_transport::LimitsConfig::default()`, spelled out
+    /// here rather than read from the dependency so a fresh install gets a
+    /// non-zero limit even while this crate's `mecmcp-transport` pin lags the
+    /// version that default landed in.
+    #[arg(long, default_value_t = 50)]
+    max_requests_per_second_per_ip: u64,
+
+    /// Max immediate request burst per source IP address. Set together with
+    /// `--max-requests-per-second-per-ip`; `0`/`0` disables per-IP rate limiting.
+    #[arg(long, default_value_t = 100)]
+    max_request_burst_per_ip: u64,
+
+    /// Max requests per second per bearer token. Set together with
+    /// `--max-request-burst-per-token`; `0`/`0` disables per-token rate limiting.
+    #[arg(long, default_value_t = 20)]
+    max_requests_per_second_per_token: u64,
+
+    /// Max immediate request burst per bearer token. Set together with
+    /// `--max-requests-per-second-per-token`; `0`/`0` disables per-token rate limiting.
+    #[arg(long, default_value_t = 40)]
+    max_request_burst_per_token: u64,
 }
 
 /// Parser default for `--approval-timeout-secs`.
@@ -396,13 +429,13 @@ fn validate_sbom_file(package_dir: &Path) -> Result<()> {
 
     // Check mecmcp-* components
     let expected_mecmcp_components = [
-        ("mecmcp-audit", "0.23.1"),
-        ("mecmcp-auth", "0.23.1"),
-        ("mecmcp-changeset", "0.23.1"),
-        ("mecmcp-runtime", "0.23.1"),
-        ("mecmcp-secret", "0.23.1"),
-        ("mecmcp-server", "0.23.1"),
-        ("mecmcp-transport", "0.23.1"),
+        ("mecmcp-audit", "0.24.0"),
+        ("mecmcp-auth", "0.24.0"),
+        ("mecmcp-changeset", "0.24.0"),
+        ("mecmcp-runtime", "0.24.0"),
+        ("mecmcp-secret", "0.24.0"),
+        ("mecmcp-server", "0.24.0"),
+        ("mecmcp-transport", "0.24.0"),
     ];
 
     let mut found_mecmcp: Vec<(String, String)> = Vec::new();
@@ -507,6 +540,11 @@ async fn main() -> Result<()> {
         state_file: cli_state_file,
         approval_timeout_secs: cli_approval_timeout_secs,
         validate_package: _,
+        enable_metrics,
+        max_requests_per_second_per_ip,
+        max_request_burst_per_ip,
+        max_requests_per_second_per_token,
+        max_request_burst_per_token,
     } = parsed.cli;
     mecmcp_runtime::cli_validate::validate(&args).map_err(|error| anyhow::anyhow!("{error}"))?;
 
@@ -778,14 +816,24 @@ async fn main() -> Result<()> {
                     ),
                     _ => None,
                 };
+                let limits = mecmcp_transport::LimitsConfig {
+                    max_requests_per_second_per_ip,
+                    max_request_burst_per_ip,
+                    max_requests_per_second_per_token,
+                    max_request_burst_per_token,
+                    ..mecmcp_transport::LimitsConfig::default()
+                };
+                limits
+                    .validate()
+                    .map_err(|error| anyhow::anyhow!("{error}"))?;
                 serve_http(
                     handler,
                     address,
                     token_store,
                     args.allowed_host,
                     args.allowed_origin,
-                    mecmcp_transport::LimitsConfig::default(),
-                    false,
+                    limits,
+                    enable_metrics,
                     args.allow_insecure_bind,
                     tls,
                     shutdown,
@@ -941,6 +989,46 @@ mod tests {
             ),
             Some(PathBuf::from("/tmp/other.json"))
         );
+    }
+
+    #[test]
+    fn fresh_install_gets_nonzero_rate_limits_without_operator_action() {
+        // MEC-347: a fresh install must not silently run unrate-limited.
+        let parsed = parse(&["rustsdcmcp", "--transport", "stdio"]);
+        assert!(parsed.cli.max_requests_per_second_per_ip > 0);
+        assert!(parsed.cli.max_request_burst_per_ip > 0);
+        assert!(parsed.cli.max_requests_per_second_per_token > 0);
+        assert!(parsed.cli.max_request_burst_per_token > 0);
+    }
+
+    #[test]
+    fn metrics_are_off_by_default_but_operator_configurable() {
+        let parsed = parse(&["rustsdcmcp", "--transport", "stdio"]);
+        assert!(!parsed.cli.enable_metrics);
+
+        let parsed = parse(&["rustsdcmcp", "--transport", "stdio", "--enable-metrics"]);
+        assert!(parsed.cli.enable_metrics);
+    }
+
+    #[test]
+    fn rate_limits_are_operator_configurable() {
+        let parsed = parse(&[
+            "rustsdcmcp",
+            "--transport",
+            "stdio",
+            "--max-requests-per-second-per-ip",
+            "5",
+            "--max-request-burst-per-ip",
+            "10",
+            "--max-requests-per-second-per-token",
+            "2",
+            "--max-request-burst-per-token",
+            "4",
+        ]);
+        assert_eq!(parsed.cli.max_requests_per_second_per_ip, 5);
+        assert_eq!(parsed.cli.max_request_burst_per_ip, 10);
+        assert_eq!(parsed.cli.max_requests_per_second_per_token, 2);
+        assert_eq!(parsed.cli.max_request_burst_per_token, 4);
     }
 
     #[test]

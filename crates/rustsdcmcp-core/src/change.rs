@@ -1518,12 +1518,13 @@ impl ChangeManager {
             .map_err(|error| SdcError::ChangeControl(error.to_string()))
     }
 
-    /// Record an independent principal's approval of one exact plan digest.
+    /// Record an independent human principal's approval of one exact plan digest.
     pub async fn approve(
         &self,
         change_set_id: String,
         approver: String,
         expected_digest: String,
+        approver_actor_type: mecmcp_audit::ActorType,
     ) -> Result<ChangeSetOutput, SdcError> {
         self.coordinator
             .approve_change_set(
@@ -1531,6 +1532,7 @@ impl ChangeManager {
                 self.tenant.clone(),
                 approver,
                 expected_digest,
+                approver_actor_type,
             )
             .await
             .map_err(|error| SdcError::ChangeControl(error.to_string()))
@@ -2044,17 +2046,31 @@ mod tests {
                 prepared.change_set.change_set_id.clone(),
                 "alice".to_owned(),
                 prepared.change_set.digest.clone(),
+                mecmcp_audit::ActorType::Human,
             )
             .await;
         assert!(self_approval.is_err());
+        let non_human_approval = manager
+            .approve(
+                prepared.change_set.change_set_id.clone(),
+                "bob".to_owned(),
+                prepared.change_set.digest.clone(),
+                mecmcp_audit::ActorType::Agent,
+            )
+            .await;
+        assert!(
+            non_human_approval.is_err(),
+            "an agent actor type must not be able to stand in as the second approver"
+        );
         manager
             .approve(
                 prepared.change_set.change_set_id.clone(),
                 "bob".to_owned(),
                 prepared.change_set.digest.clone(),
+                mecmcp_audit::ActorType::Human,
             )
             .await
-            .expect("independent approval");
+            .expect("independent human approval");
 
         let result = manager
             .apply(
