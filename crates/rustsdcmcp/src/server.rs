@@ -992,7 +992,10 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(audit, self.client.tenant_scope(&cancellation).await))
+        Ok(finish_redacted(
+            audit,
+            self.client.tenant_scope(&cancellation).await,
+        ))
     }
 
     #[tool(
@@ -1022,7 +1025,7 @@ impl SdcHandler {
             Ok(page) => self.client.list_devices(page, &cancellation).await,
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1041,7 +1044,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_device(&args.device_uuid, &cancellation)
@@ -1070,7 +1073,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .list_config_versions(&args.device_uuid, &cancellation)
@@ -1330,7 +1333,7 @@ impl SdcHandler {
             }
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1354,7 +1357,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_firewall_policy(&args.policy_id, &cancellation)
@@ -1389,7 +1392,7 @@ impl SdcHandler {
             Ok(page) => self.client.list_nat_policies(page, &cancellation).await,
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1413,7 +1416,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_nat_policy(&args.policy_id, &cancellation)
@@ -1452,7 +1455,7 @@ impl SdcHandler {
             }
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1476,7 +1479,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_firewall_rule(
@@ -1520,7 +1523,7 @@ impl SdcHandler {
             }
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1544,7 +1547,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_firewall_hierarchy(&args.policy_uuid, &args.scope, &cancellation)
@@ -1583,7 +1586,7 @@ impl SdcHandler {
             }
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1607,7 +1610,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_nat_rule(&args.policy_id, &args.rule_id, &cancellation)
@@ -1646,7 +1649,7 @@ impl SdcHandler {
             }
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1670,7 +1673,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_nat_hierarchy(&args.policy_id, &cancellation)
@@ -1705,7 +1708,7 @@ impl SdcHandler {
             Ok(page) => self.client.list_nat_pools(page, &cancellation).await,
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1739,7 +1742,7 @@ impl SdcHandler {
             }
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1763,7 +1766,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_device_group(&args.group_uuid, &cancellation)
@@ -1789,7 +1792,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client.get_nat_pool(&args.pool_id, &cancellation).await,
         ))
@@ -1826,7 +1829,7 @@ impl SdcHandler {
                 .and_then(project_ca_certificates),
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1860,7 +1863,7 @@ impl SdcHandler {
                 .and_then(project_local_certificates),
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1895,7 +1898,7 @@ impl SdcHandler {
                 .and_then(project_ca_certificates),
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1931,7 +1934,7 @@ impl SdcHandler {
                 .and_then(project_local_certificates),
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1965,7 +1968,7 @@ impl SdcHandler {
                 .and_then(project_licenses),
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1984,7 +1987,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_license(&args.device_uuid, &args.license_uuid, &cancellation)
@@ -2234,7 +2237,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_firewall_policy_state(
@@ -2713,7 +2716,7 @@ impl SdcHandler {
             Ok(page) => self.client.list_tunnels(page, &cancellation).await,
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -2732,7 +2735,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client.get_tunnel(&args.tunnel_id, &cancellation).await,
         ))
@@ -2759,7 +2762,10 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(audit, self.client.tunnel_count(&cancellation).await))
+        Ok(finish_redacted(
+            audit,
+            self.client.tunnel_count(&cancellation).await,
+        ))
     }
 
     #[tool(
@@ -2830,7 +2836,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .preview_status(&args.job_id, &cancellation)
@@ -2859,7 +2865,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client.deploy_status(&args.job_id, &cancellation).await,
         ))
@@ -2886,7 +2892,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .preview_device_result(&args.job_id, &args.device_id, &cancellation)
@@ -2915,7 +2921,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .deploy_device_result(&args.job_id, &args.device_id, &cancellation)
@@ -3184,7 +3190,10 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(audit, self.changes.status(args.change_set_id).await))
+        Ok(finish_redacted(
+            audit,
+            self.changes.status(args.change_set_id).await,
+        ))
     }
 
     #[tool(
@@ -3243,7 +3252,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes.prepared_change(args.change_set_id).await,
         ))
