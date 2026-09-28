@@ -2943,7 +2943,7 @@ impl SdcHandler {
 
     #[tool(
         name = "approve_sdc_change_set",
-        description = "Approve an exact SDC change-set digest as a principal distinct from its owner."
+        description = "Approve an exact SDC change-set digest as an independent human principal distinct from its owner."
     )]
     async fn approve_sdc_change_set(
         &self,
@@ -2961,10 +2961,16 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
+        let approver_actor_type = attribution(caller, None).actor_type;
         Ok(finish(
             audit,
             self.changes
-                .approve(args.change_set_id, owner(caller), args.expected_digest)
+                .approve(
+                    args.change_set_id,
+                    owner(caller),
+                    args.expected_digest,
+                    approver_actor_type,
+                )
                 .await,
         ))
     }
@@ -3396,6 +3402,34 @@ mod tests {
                 "tenant-a"
             )
             .is_err()
+        );
+    }
+
+    /// `approve_sdc_change_set` derives `approver_actor_type` from
+    /// `attribution(caller, None).actor_type`. mecmcp v0.24.0 refuses the
+    /// approval unless that value is `Human`, so this pins the mapping an
+    /// agent-minted or unattributed caller cannot bypass by way of a
+    /// silently-defaulted actor type.
+    #[test]
+    fn approver_actor_type_is_taken_from_the_caller_not_defaulted_to_human() {
+        let human = caller(ScopeSet::Wildcard, ScopeSet::Wildcard);
+        assert_eq!(
+            attribution(Some(&human), None).actor_type,
+            mecmcp_audit::ActorType::Human
+        );
+
+        let mut agent = caller(ScopeSet::Wildcard, ScopeSet::Wildcard);
+        agent.actor_type = ActorType::Agent;
+        assert_eq!(
+            attribution(Some(&agent), None).actor_type,
+            mecmcp_audit::ActorType::Agent,
+            "an agent-minted token must not be attributed as human"
+        );
+
+        assert_eq!(
+            attribution(None, None).actor_type,
+            mecmcp_audit::ActorType::Unknown,
+            "a stdio caller with no context must not be attributed as human"
         );
     }
 

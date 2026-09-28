@@ -12,6 +12,13 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
 ## Unreleased
 
 ### Security
+- Bumped `mecmcp` to v0.24.0. `approve_sdc_change_set` now refuses an
+  approval unless the approver's actor type is `Human` — an agent-minted
+  token or an unattributed stdio caller can no longer stand in as the
+  independent second principal on a change set, closing the gap where only
+  self-approval (not actor type) was checked. `/healthz` and `/readyz` are
+  now mounted, both unauthenticated and returning no device or customer
+  data.
 - ICAP server passwords (`password_ascii`, `password_base64`) are redacted from
   `list_sdc_resources` / `get_sdc_resource`. The spec declares them; the lab
   tenant has not been checked for them.
