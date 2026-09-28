@@ -42,6 +42,7 @@ pub struct SdcClient {
     concurrency: Arc<Semaphore>,
     poll: crate::config::PollSettings,
     max_page_size: u32,
+    list_page_budget_bytes: usize,
     shutdown: CancellationToken,
 }
 
@@ -106,6 +107,7 @@ impl SdcClient {
                 .poll_settings()
                 .map_err(|error| SdcError::Config(error.to_string()))?,
             max_page_size: config.max_page_size,
+            list_page_budget_bytes: config.list_page_budget_bytes,
             shutdown: CancellationToken::new(),
         })
     }
@@ -141,6 +143,7 @@ impl SdcClient {
             max_response_bytes,
             max_concurrency: 2,
             max_page_size,
+            list_page_budget_bytes: 131_072,
             poll_initial_ms: 1,
             poll_max_ms: 2,
             poll_deadline_ms: 50,
@@ -157,6 +160,12 @@ impl SdcClient {
     #[must_use]
     pub const fn max_page_size(&self) -> u32 {
         self.max_page_size
+    }
+
+    /// Byte budget for one page of a budget-paginated list result.
+    #[must_use]
+    pub const fn list_page_budget_bytes(&self) -> usize {
+        self.list_page_budget_bytes
     }
 
     /// Fetch the credential tenant scope.
@@ -2383,6 +2392,9 @@ pub enum SdcError {
     /// Invalid bounded list request.
     #[error(transparent)]
     List(#[from] ListRequestError),
+    /// Invalid budget-paginated list request.
+    #[error(transparent)]
+    Page(#[from] crate::paging::PageError),
     /// Credential tenant scope differed from operator configuration.
     #[error("credential tenant scope does not match expected_tenant_id")]
     TenantMismatch,
@@ -3178,6 +3190,58 @@ mod tests {
             .await
             .expect("list succeeds");
         assert_eq!(result["count"], 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_ten_thousand_version_device_pages_through_the_mcp_layer_without_the_8mib_refusal() {
+        // `list_config_versions` has no upstream pagination (SDC's endpoint
+        // takes no query parameters), so a large tenant's archive used to
+        // come back as one response and be refused outright once it crossed
+        // `max_response_bytes`. This drives the real HTTP fetch, bounded to a
+        // production-sized `max_response_bytes`, then pages the fetched value
+        // the way `list_sdc_config_versions` does.
+        let app = Router::new().route(
+            "/api/v1/devices/{device_uuid}/config/versions",
+            get(|| async move {
+                let items: Vec<serde_json::Value> = (0..10_000)
+                    .map(|index| {
+                        serde_json::json!({
+                            "version": index,
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "author": "operator",
+                            "comment": "routine archive entry with enough text to matter",
+                        })
+                    })
+                    .collect();
+                Json(serde_json::json!({"items": items, "count": 10_000}))
+            }),
+        );
+        let (base_url, server) = serve(app).await;
+        // Production-sized cap: the fetch itself must succeed under it.
+        let sdc = client(base_url, 8 * 1024 * 1024);
+        let fetched = sdc
+            .list_config_versions("dev-archive", &CancellationToken::new())
+            .await
+            .expect("fetch under max_response_bytes succeeds");
+
+        let mut token: Option<String> = None;
+        let mut collected = 0usize;
+        let mut pages = 0usize;
+        loop {
+            let page = crate::paging::page_list(&fetched, "items", None, token.as_deref(), 65_536)
+                .expect("page succeeds");
+            assert_eq!(page.total_item_count, 10_000);
+            collected += page.page_item_count;
+            pages += 1;
+            assert!(pages < 10_000, "paging did not converge");
+            match page.continuation_token {
+                Some(next) => token = Some(next),
+                None => break,
+            }
+        }
+        assert_eq!(collected, 10_000);
+        assert!(pages > 1, "10,000 versions must not fit in one 64 KiB page");
         server.abort();
     }
 
