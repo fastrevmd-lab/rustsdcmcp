@@ -11,6 +11,15 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
 
 ## Unreleased
 
+### Added
+- `--enable-metrics`, `--max-requests-per-second-per-ip`,
+  `--max-request-burst-per-ip`, `--max-requests-per-second-per-token`, and
+  `--max-request-burst-per-token` flags (MEC-347). Metrics and rate limits
+  were previously hardcoded (`false`, unbounded) with no way for an operator
+  to change them. Rate limits are now on by default without operator
+  action; `/metrics` stays off by default and is an explicit opt-in. See
+  `docs/operations.md`.
+
 ### Security
 - Bumped `mecmcp` to v0.24.0. `approve_sdc_change_set` now refuses an
   approval unless the approver's actor type is `Human` — an agent-minted
