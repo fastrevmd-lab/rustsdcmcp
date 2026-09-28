@@ -18,7 +18,7 @@ test "${#archives[@]}" -eq 1
 
 Current source pins all six shared `mecmcp` crates — `mecmcp-audit`,
 `mecmcp-auth`, `mecmcp-changeset`, `mecmcp-runtime`, `mecmcp-server`, and
-`mecmcp-transport` — to `v0.23.1`. The immutable acceptance record for the
+`mecmcp-transport` — to `v0.24.0`. The immutable acceptance record for the
 original lab deployment, built before any of the tagged releases, is
 [`lab-deployment-606.md`](lab-deployment-606.md).
 
@@ -72,6 +72,19 @@ rather than hand-rolling a unit from the command above. A unit with
 `Restart=on-failure` and `RestartSec=5s` never trips systemd's default start
 limit, so a tunnel pointed at a name that no longer resolves retries every five
 seconds indefinitely and reports no failure anyone notices.
+
+## Rate limits and metrics
+
+A fresh install rate-limits the Streamable HTTP listener without any operator
+action: `--max-requests-per-second-per-ip 50 --max-request-burst-per-ip 100`
+and `--max-requests-per-second-per-token 20 --max-request-burst-per-token 40`.
+Set the paired rate and burst flag for either axis to `0`/`0` to disable that
+axis; a rate/burst pair that is only partly zero is refused at startup.
+
+`/metrics` is **off by default** (`--enable-metrics` to turn it on). It is
+never protected by an MCP bearer token — see `mecmcp-transport`'s
+`docs/METRICS.md` for what it exposes and how to gate it for a non-loopback
+peer. Enabling it is an operator decision made per deployment, not a default.
 
 ## Egress policy
 
@@ -435,6 +448,13 @@ token name, and self-approval is refused, so minting `you-prepare` and
 `you-approve` gives one person the complete lifecycle with the control intact.
 Lab mode is for when that ceremony has no value; it is not a convenience to
 reach for on a shared or production tenant.
+
+The approving token must be minted with `--actor-type human`
+(`token add --actor-type human you-approve ...`). Since mecmcp 0.24.0,
+`approve_sdc_change_set` refuses any approver whose actor type is not
+`Human`, including the `Unknown` default a token minted without the flag
+gets. Preparing a change set does not require the flag; only the approving
+token does.
 
 ### Standard change-set flags and precedence
 

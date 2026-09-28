@@ -180,6 +180,34 @@ async fn origin_allowlist_is_passed_through() {
     );
 }
 
+/// `/healthz` reports the process is up, unauthenticated and with no bearer token.
+#[tokio::test]
+async fn healthz_responds_ok_without_auth() {
+    let server = TestServer::start(Vec::new(), Vec::new(), None).await;
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("{}/healthz", server.url))
+        .header(header::HOST, "localhost")
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+/// `/readyz` reports ready, unauthenticated, when no readiness checks are configured.
+#[tokio::test]
+async fn readyz_responds_ok_without_auth() {
+    let server = TestServer::start(Vec::new(), Vec::new(), None).await;
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("{}/readyz", server.url))
+        .header(header::HOST, "localhost")
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
 /// Router requires bearer token when authentication is configured.
 #[tokio::test]
 async fn router_requires_bearer() {

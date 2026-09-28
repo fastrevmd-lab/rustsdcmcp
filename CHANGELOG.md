@@ -16,6 +16,13 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
   outbound SDC traffic. Unset by default — the client never autodiscovers a
   proxy from environment variables, and the SDC endpoint stays fixed either
   way. See `docs/operations.md#explicit-egress-proxy`.
+- `--enable-metrics`, `--max-requests-per-second-per-ip`,
+  `--max-request-burst-per-ip`, `--max-requests-per-second-per-token`, and
+  `--max-request-burst-per-token` flags (MEC-347). Metrics and rate limits
+  were previously hardcoded (`false`, unbounded) with no way for an operator
+  to change them. Rate limits are now on by default without operator
+  action; `/metrics` stays off by default and is an explicit opt-in. See
+  `docs/operations.md`.
 
 ### Fixed
 - A `GET` rate-limited or overloaded by SDC (`429`/`503`) is now retried,
@@ -25,6 +32,16 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
   resent into an unknown state.
 
 ### Security
+- Bumped `mecmcp` to v0.24.0. `approve_sdc_change_set` now refuses an
+  approval unless the approver's actor type is `Human` — an agent-minted
+  token or an unattributed stdio caller can no longer stand in as the
+  independent second principal on a change set, closing the gap where only
+  self-approval (not actor type) was checked. `/healthz` and `/readyz` are
+  now mounted, both unauthenticated and returning no device or customer
+  data.
+  **Upgrade note:** existing approver tokens minted without
+  `--actor-type human` will be refused; re-mint them with the flag before
+  they are next used to approve a change set.
 - ICAP server passwords (`password_ascii`, `password_base64`) are redacted from
   `list_sdc_resources` / `get_sdc_resource`. The spec declares them; the lab
   tenant has not been checked for them.
