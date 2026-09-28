@@ -135,7 +135,7 @@ impl SdcClient {
             expected_tenant_id: "tenant-test".to_owned(),
             credential_env: "TEST_SDC_TOKEN".to_owned(),
             auth_scheme: crate::AuthScheme::ApiKey,
-            endpoint: "https://example.invalid/".to_owned(),
+            endpoint: "https://api.sdcloud.juniperclouds.net/".to_owned(),
             connect_timeout_ms: 1_000,
             request_timeout_ms: 2_000,
             max_response_bytes,
