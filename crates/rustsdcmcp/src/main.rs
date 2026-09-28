@@ -592,12 +592,17 @@ async fn main() -> Result<()> {
         .install_default()
         .map_err(|_| anyhow::anyhow!("failed to install the rustls ring crypto provider"))?;
 
-    let credential = std::env::var(&config.credential_env).map_err(|_| {
-        anyhow::anyhow!(
-            "credential environment variable '{}' is not set or is not valid Unicode",
-            config.credential_env
-        )
-    })?;
+    // 16 KiB, not mecmcp-secret's 8 KiB default: matches the ceiling `SdcClient`
+    // has always enforced, so adopting the hardened loader does not silently
+    // tighten what credential length operators may already be running with.
+    let credential = mecmcp_secret::load_from_env(
+        &config.credential_env,
+        mecmcp_secret::SecretLimits {
+            max_bytes: 16 * 1024,
+        },
+    )
+    .map_err(anyhow::Error::from)
+    .context("loading SDC credential")?;
     // `GracefulShutdown` installs a Ctrl-C handler only. systemd stops this
     // unit with SIGTERM (`KillSignal=SIGTERM`), which that coordinator does not
     // observe, so feed SIGTERM into the same trigger rather than standing up a

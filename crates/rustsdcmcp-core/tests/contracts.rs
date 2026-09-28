@@ -1,5 +1,6 @@
 //! Product contract tests against the pinned SDC OpenAPI shapes.
 
+use mecmcp_secret::OutboundSecret;
 use rustsdcmcp_core::{
     AuthScheme, DeploymentStatus, DeviceDeploymentStatus, JobStatus, ListRequest, PolicyOperation,
     PolicyType, SdcClient, SdcConfig, Target,
@@ -57,7 +58,11 @@ fn a_credential_never_reaches_the_client_debug_representation() {
     const SECRET: &str = "sdc-credential-that-must-never-be-rendered";
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    let client = SdcClient::new(&test_config(), SECRET.to_owned()).expect("client builds");
+    let client = SdcClient::new(
+        &test_config(),
+        OutboundSecret::new_unchecked(SECRET.to_owned()),
+    )
+    .expect("client builds");
     let rendered = format!("{client:?}");
     assert!(
         !rendered.contains(SECRET),
