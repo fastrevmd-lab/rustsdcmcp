@@ -2046,7 +2046,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .prepare_firewall_write(
@@ -2082,7 +2082,7 @@ impl SdcHandler {
             return Ok(tool_error(error));
         }
         let attribution = attribution(caller, args.change_ref);
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .apply_firewall_write(
@@ -2121,7 +2121,7 @@ impl SdcHandler {
         // The projected view, not the raw result: `before` is captured from the
         // same endpoints the read tools serve, and returning it verbatim would
         // disclose through the write tools what the read tools drop (#55).
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .prepare_license_write(
@@ -2158,7 +2158,7 @@ impl SdcHandler {
             return Ok(tool_error(error));
         }
         let attribution = attribution(caller, args.change_ref);
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .apply_license_write(
@@ -2199,7 +2199,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .prepare_device_sync(owner(caller), args.device_uuids, &cancellation)
@@ -2230,7 +2230,7 @@ impl SdcHandler {
             return Ok(tool_error(error));
         }
         let attribution = attribution(caller, args.change_ref);
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .apply_device_sync(
@@ -2979,7 +2979,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .prepare(owner(caller), args.policies, &cancellation)
@@ -3007,7 +3007,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .approve(args.change_set_id, owner(caller), args.expected_digest)
@@ -3037,7 +3037,7 @@ impl SdcHandler {
             return Ok(tool_error(error));
         }
         let attribution = attribution(caller, args.change_ref);
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .apply(
@@ -3073,7 +3073,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .prepare_object_write(
@@ -3110,7 +3110,7 @@ impl SdcHandler {
             return Ok(tool_error(error));
         }
         let attribution = attribution(caller, args.change_ref);
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .apply_object_write(
@@ -3146,7 +3146,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .prepare_nat_write(
@@ -3184,7 +3184,7 @@ impl SdcHandler {
             return Ok(tool_error(error));
         }
         let attribution = attribution(caller, args.change_ref);
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .apply_nat_write(
@@ -3246,7 +3246,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .discard(
