@@ -1,0 +1,46 @@
+name: Bug report
+description: Report something that isn't working as expected
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. If this is a security vulnerability, please use "Report a vulnerability" below instead — do not file it here.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: rustsdcmcp version (or commit SHA) you're using
+      placeholder: "0.0.5"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal CLI invocation, tool call, or config that reproduces the issue. Please sanitize any output — no real SDC tenant IDs, API tokens, hostnames, device serials, or real device/policy configuration.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: rustsdcmcp version/commit, OS, transport (stdio or streamable-http), and how it's deployed (binary, package, container)
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Sanitized `tracing`/audit output or error text, if any. Redact any tenant identifiers, tokens, or device data.
+      render: shell
+    validations:
+      required: false

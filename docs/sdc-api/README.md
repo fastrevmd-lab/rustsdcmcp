@@ -371,7 +371,7 @@ Also confirmed: the spec misspells the firewall hierarchy path segment as
 ### 7. Certificate and licence reads carry no key material (2026-08-12)
 
 Captured from the live tenant against `vsrx-ci`
-(`a0f049c4-903a-471e-93c2-f8d19d30cebc`). All six read endpoints returned
+(`00000000-0000-4000-8000-000000000003`). All six read endpoints returned
 `200`. This answers the structural concern in #50, which was explicit that key
 material had been *neither observed nor ruled out*.
 
@@ -563,9 +563,9 @@ it is an edge proxy, not the API. Isolated by probe:
 
 | Body contains | Result |
 |---|---|
-| `url http://192.168.1.206/bundle.tgz` | **403 HTML** |
+| `url http://203.0.113.206/bundle.tgz` | **403 HTML** |
 | `url https://example.com/bundle.tgz` | 400 (reaches the API) |
-| `server 192.168.1.206` (no scheme) | 400 (reaches the API) |
+| `server 203.0.113.206` (no scheme) | 400 (reaches the API) |
 | the word `url` alone | 400 (reaches the API) |
 
 This matters because it is exactly the shape of a `dynamic-address feed-server`

@@ -19,7 +19,7 @@
 - Any tool that mutates state must be listed in `WRITE_TOOLS` (`crates/rustsdcmcp/src/server.rs:88`). A wildcard token scope grants no write tool; that is enforced upstream in `mecmcp-auth` and must not be worked around.
 - Adding or removing a tool changes `KNOWN_TOOLS` and breaks `crates/rustsdcmcp/tests/tool_contract.rs`, which asserts an exact count. Update the count and its comment in the same commit.
 - **Any tool-surface change forces a token re-mint.** Token tool scopes are explicit allowlists, so existing tokens will not see new tools. Call this out in the PR description.
-- Live verification uses `vsrx-ci` — VMID **907**, node **pve2**, tag `ci`. It is the SDC test device and is meant to be used. Reach pve2 directly (`ssh root@pve2.mechub.org`); pve3 may be down. Snapshot with `qm snapshot 907 <name>` before any device mutation.
+- Live verification uses `vsrx-ci` — VMID **907**, node **pve2**, tag `ci`. It is the SDC test device and is meant to be used. Reach pve2 directly (`ssh root@pve2.example.net`); pve3 may be down. Snapshot with `qm snapshot 907 <name>` before any device mutation.
 - Deploy order for anything reaching a container is **606 (test) first, then 951 (production)**.
 
 ---
@@ -55,7 +55,7 @@ This is an investigation, not a code change. It gates Task 6. Do not design a mi
 Snapshot first:
 
 ```bash
-ssh root@pve2.mechub.org "qm snapshot 907 pre-66-investigation --description 'before #66 preview-format investigation'"
+ssh root@pve2.example.net "qm snapshot 907 pre-66-investigation --description 'before #66 preview-format investigation'"
 ```
 
 Upload a template that places an unreferenced object. The YAML schema is recorded in `docs/sdc-api/README.md` §10:
@@ -76,7 +76,7 @@ spec:
 Upload and deploy it, using the credential inside container 951:
 
 ```bash
-ssh root@pve2.mechub.org "pct exec 951 -- sh -c 'set -a; . /etc/rustsdcmcp/credentials.env; set +a; \
+ssh root@pve2.example.net "pct exec 951 -- sh -c 'set -a; . /etc/rustsdcmcp/credentials.env; set +a; \
   curl -s -X POST -H \"x-api-key: \$SDC_API_TOKEN\" \
   -F \"definition_file=@/tmp/probe.yaml\" \
   https://api.sdcloud.juniperclouds.net/api/v1/templates/workflow_definitions'"
@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn a_device_target_is_accepted() {
-        let targets = vec![Target::device("a0f049c4-903a-471e-93c2-f8d19d30cebc")];
+        let targets = vec![Target::device("00000000-0000-4000-8000-000000000003")];
         assert!(validate_deploy_targets(&targets).is_ok());
     }
 

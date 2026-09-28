@@ -256,7 +256,7 @@ sudo systemctl edit rustsdcmcp.service
 
 ```ini
 [Service]
-IPAddressAllow=192.168.1.1
+IPAddressAllow=203.0.113.1
 IPAddressDeny=10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 fc00::/7
 ```
 

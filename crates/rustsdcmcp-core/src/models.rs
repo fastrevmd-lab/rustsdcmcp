@@ -470,7 +470,7 @@ mod tests {
 
     #[test]
     fn a_device_target_is_accepted() {
-        let targets = vec![Target::device("a0f049c4-903a-471e-93c2-f8d19d30cebc")];
+        let targets = vec![Target::device("00000000-0000-4000-8000-000000000003")];
         assert!(validate_deploy_targets(&targets).is_ok());
     }
 

@@ -243,9 +243,9 @@ The deployment target is:
 | Proxmox node | `pve2` |
 | VMID | `606` |
 | Hostname | `rustsdcmcp-606` |
-| DNS name | `rustsdcmcp.mechub.org` |
-| Address | `192.168.1.211/24` |
-| Gateway | `192.168.1.1` |
+| DNS name | `rustsdcmcp.example.net` |
+| Address | `203.0.113.11/24` |
+| Gateway | `203.0.113.1` |
 | Bridge | `vmbr0` |
 | OS | Debian 13 |
 | Root filesystem | 4 GiB on `local-lvm` |
@@ -260,7 +260,7 @@ The deployment target is:
 VMID 606, the address, and the DNS name will be checked again immediately
 before creation. The static address is outside the DHCP pool. After the LXC MAC
 is known, UniFi will receive the reservation and exact DNS record
-`rustsdcmcp.mechub.org`.
+`rustsdcmcp.example.net`.
 
 The service will run as a dedicated, non-root `rustsdcmcp` user. MCP will bind
 only to `127.0.0.1:30032`; testing will use an SSH tunnel or `pct exec`.
@@ -278,7 +278,7 @@ not available. Remote forwarding remains a documented lab limitation.
 ## Secret Handling
 
 The source SDC credential is
-`/home/mharman/.config/rustsdcmcp/credentials.env`. Its directory is mode
+`/home/opuser/.config/rustsdcmcp/credentials.env`. Its directory is mode
 `0700`, and the file is mode `0600`.
 
 The credential will be transferred without printing its value and installed as

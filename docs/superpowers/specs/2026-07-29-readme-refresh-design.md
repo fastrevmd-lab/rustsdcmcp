@@ -50,7 +50,7 @@ The refreshed README must preserve these verified project facts:
   Streamable HTTP service on port `30032`, and follows the file ownership and
   mode requirements in `docs/operations.md`.
 - The deployed lab instance is VMID 606 on `pve2`, reachable for operators as
-  `rustsdcmcp.mechub.org` and serving MCP only on `127.0.0.1:30032`.
+  `rustsdcmcp.example.net` and serving MCP only on `127.0.0.1:30032`.
 - The package pins the `mecmcp` `changeset-v0.3.6` release. All 59 temporary
   compatibility declarations remain tied to upstream mecmcp issues through the
   compatibility ledger.

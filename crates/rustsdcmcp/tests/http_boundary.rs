@@ -118,15 +118,15 @@ async fn probe(url: &str, host: &str, origin: Option<&str>) -> StatusCode {
     req.body("{}").send().await.expect("request").status()
 }
 
-/// The 609 production shape: `--allowed-host 192.168.1.194` while bound to `:30031`.
+/// The 609 production shape: `--allowed-host 203.0.113.194` while bound to `:30031`.
 ///
 /// A portless Host allowlist entry must match ANY port. Matching the port exactly
 /// here would return 421 on every request the live server receives.
 #[tokio::test]
 async fn portless_allowed_host_matches_any_port() {
-    let server = TestServer::start(vec!["192.168.1.194".to_owned()], Vec::new(), None).await;
+    let server = TestServer::start(vec!["203.0.113.194".to_owned()], Vec::new(), None).await;
     assert_eq!(
-        probe(&server.url, "192.168.1.194:30031", None).await,
+        probe(&server.url, "203.0.113.194:30031", None).await,
         PASSED_THE_GUARD,
         "a portless --allowed-host entry must match the port the server is bound to"
     );
@@ -135,7 +135,7 @@ async fn portless_allowed_host_matches_any_port() {
 /// The allowlist extends rmcp's loopback default rather than replacing it.
 #[tokio::test]
 async fn loopback_stays_allowed_when_a_host_is_added() {
-    let server = TestServer::start(vec!["192.168.1.194".to_owned()], Vec::new(), None).await;
+    let server = TestServer::start(vec!["203.0.113.194".to_owned()], Vec::new(), None).await;
     assert_eq!(
         probe(&server.url, "localhost", None).await,
         PASSED_THE_GUARD
@@ -145,7 +145,7 @@ async fn loopback_stays_allowed_when_a_host_is_added() {
 /// The DNS-rebinding guard (RUSTSEC-2026-0189). There is no way to turn it off.
 #[tokio::test]
 async fn unlisted_host_is_rejected() {
-    let server = TestServer::start(vec!["192.168.1.194".to_owned()], Vec::new(), None).await;
+    let server = TestServer::start(vec!["203.0.113.194".to_owned()], Vec::new(), None).await;
     assert_eq!(
         probe(&server.url, "attacker.example.com", None).await,
         StatusCode::MISDIRECTED_REQUEST,
