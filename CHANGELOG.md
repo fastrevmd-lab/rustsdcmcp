@@ -11,6 +11,19 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
 
 ## Unreleased
 
+### Added
+- `egress_proxy`: optional explicit HTTP(S) forward-proxy setting for
+  outbound SDC traffic. Unset by default — the client never autodiscovers a
+  proxy from environment variables, and the SDC endpoint stays fixed either
+  way. See `docs/operations.md#explicit-egress-proxy`.
+
+### Fixed
+- A `GET` rate-limited or overloaded by SDC (`429`/`503`) is now retried,
+  honouring `Retry-After` when SDC sends one, with jitter and a capped
+  number of attempts, instead of failing immediately. Writes are unaffected
+  and still never retry automatically — a mutation must not be silently
+  resent into an unknown state.
+
 ### Security
 - ICAP server passwords (`password_ascii`, `password_base64`) are redacted from
   `list_sdc_resources` / `get_sdc_resource`. The spec declares them; the lab

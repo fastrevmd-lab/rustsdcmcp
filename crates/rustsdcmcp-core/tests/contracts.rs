@@ -216,3 +216,33 @@ fn endpoint_must_be_the_exact_sdc_host_without_port() {
         "non-default port should be rejected"
     );
 }
+
+#[test]
+fn egress_proxy_is_unset_by_default_and_validated_when_configured() {
+    let unset = test_config();
+    assert_eq!(unset.egress_proxy, None);
+    assert!(unset.validate().is_ok());
+
+    let mut with_proxy = test_config();
+    with_proxy.egress_proxy = Some("http://proxy.example.internal:3128".to_owned());
+    assert!(
+        with_proxy.validate().is_ok(),
+        "a plain http(s) proxy URL with a host must be accepted"
+    );
+
+    // The SDC endpoint itself stays fixed; the proxy setting only routes
+    // outbound connections through an intermediary, so no scheme other than
+    // http/https and no missing host is accepted.
+    for invalid in [
+        "not a url",
+        "socks5://proxy.example.internal:1080",
+        "ftp://proxy.example.internal",
+    ] {
+        let mut bad_proxy = test_config();
+        bad_proxy.egress_proxy = Some(invalid.to_owned());
+        assert!(
+            bad_proxy.validate().is_err(),
+            "{invalid} should be rejected as an egress proxy"
+        );
+    }
+}

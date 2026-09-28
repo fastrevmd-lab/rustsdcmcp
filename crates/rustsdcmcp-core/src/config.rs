@@ -90,6 +90,14 @@ pub struct SdcConfig {
     /// Two-person approval lifetime in seconds.
     #[serde(default = "default_approval_ttl_secs")]
     pub approval_ttl_secs: u64,
+    /// Optional explicit HTTP(S) egress proxy for all outbound SDC traffic.
+    ///
+    /// Unset by default: the client never autodiscovers a proxy from
+    /// environment variables. When set, every request goes through this one
+    /// proxy; the fixed SDC endpoint is unaffected, so this cannot be used to
+    /// redirect requests to an unintended host.
+    #[serde(default)]
+    pub egress_proxy: Option<String>,
 }
 
 impl SdcConfig {
@@ -140,12 +148,28 @@ impl SdcConfig {
             ));
         }
         self.poll_settings()?;
+        self.egress_proxy_url()?;
         Ok(())
     }
 
     /// Validated API base URL.
     pub(crate) fn base_url(&self) -> Result<Url, ConfigError> {
         validate_endpoint(&self.endpoint)
+    }
+
+    /// Validated egress proxy URL, if the operator configured one.
+    pub(crate) fn egress_proxy_url(&self) -> Result<Option<Url>, ConfigError> {
+        let Some(raw) = self.egress_proxy.as_deref() else {
+            return Ok(None);
+        };
+        let url =
+            Url::parse(raw).map_err(|_| ConfigError::Invalid("egress_proxy is not a valid URL"))?;
+        if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none_or(str::is_empty) {
+            return Err(ConfigError::Invalid(
+                "egress_proxy must be an http(s) URL with a host",
+            ));
+        }
+        Ok(Some(url))
     }
 
     /// Validated product-owned job polling settings.

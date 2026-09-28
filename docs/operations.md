@@ -280,6 +280,24 @@ sudo journalctl -u rustsdcmcp.service -n 20 --no-pager
 A startup that fails at `verifying SDC credential tenant scope` is the symptom
 of a denied resolver.
 
+### Explicit egress proxy
+
+The client never autodiscovers a proxy from `HTTP_PROXY`/`HTTPS_PROXY`/
+`NO_PROXY` or any other environment variable — an unset `egress_proxy` means
+every request goes direct. Sites that require all outbound traffic to
+transit a forward proxy set it explicitly in `sdc.json`:
+
+```json
+{
+  "egress_proxy": "http://proxy.example.internal:3128"
+}
+```
+
+`egress_proxy` must be a plain `http://` or `https://` URL with a host; SDC's
+own API address stays fixed either way (`api.sdcloud.juniperclouds.net`,
+never derived from operator input), so setting a proxy changes how requests
+leave the host, not which service they ultimately reach.
+
 ## Initial read-only token
 
 Create the initial token as root, and redirect the one-time token value to a
@@ -332,9 +350,17 @@ Every list tool requires an explicit positive `size` no larger than
 Responses are streamed under `max_response_bytes`; oversized bodies fail
 without returning partial JSON.
 
-SDC HTTP 429 is surfaced as resource exhaustion. It is not automatically
-retried because the API uses the same status for rate limiting and responses
-that exceed service limits.
+SDC HTTP 429 or 503 on a read is retried automatically, honouring
+`Retry-After` when SDC sends one (capped so a hostile or unreasonable value
+cannot stall a call), with jitter and a bounded number of attempts. Once
+retries are exhausted, or on any other read failure, it is surfaced as
+resource exhaustion for operator review — the API uses the same 429 status
+for rate limiting and responses that exceed service limits, and the two call
+for different remedies (back off vs. paginate/filter).
+
+Writes are never retried: a mutation must not be silently resent into an
+unknown state, so a write rate-limited by SDC fails immediately with the same
+resource-exhaustion error and no automatic retry.
 
 ## Policy deployment
 
