@@ -257,7 +257,7 @@ mod tests {
     fn injected_private_key_is_dropped_from_local_certificates() {
         let response = json!({
             "items": [{
-                "uuid": "d0e9c237-7e45-4565-a36b-f8115bd88b9e",
+                "uuid": "00000000-0000-4000-8000-000000000001",
                 "name": "sd_cloud_local",
                 "private_key": "-----BEGIN PRIVATE KEY-----AAAA-----END PRIVATE KEY-----",
                 "passphrase": "hunter2",
@@ -294,9 +294,9 @@ mod tests {
     fn every_observed_ca_certificate_field_survives() {
         let response = json!({
             "items": [{
-                "uuid": "54fd5da0-22c5-44ec-a774-27888d4d6d4b",
+                "uuid": "00000000-0000-4000-8000-000000000002",
                 "name": "ISRG_Root_X1",
-                "device_uuid": "a0f049c4-903a-471e-93c2-f8d19d30cebc",
+                "device_uuid": "00000000-0000-4000-8000-000000000003",
                 "common_name": "ISRG Root X1",
                 "distinguished_name": "C=US, O=Internet Security Research Group, CN=ISRG Root X1",
                 "organization_name": "Internet Security Research Group",
@@ -323,7 +323,7 @@ mod tests {
     #[test]
     fn every_observed_licence_field_survives() {
         let licence = json!({
-            "uuid": "7f1a926a-655b-4240-8e33-1cab3c426de1",
+            "uuid": "00000000-0000-4000-8000-000000000004",
             "name": "E20210617001",
             "version": "4",
             "state": "valid",
