@@ -202,6 +202,13 @@ fn attribution(caller: Option<&CallerCtx<NoGrant>>, change_ref: Option<String>) 
     attribution
 }
 
+/// The actor type `approve_sdc_change_set` hands mecmcp for its human-approver
+/// check. Pulled out of the handler so the enforcement wiring itself — not
+/// just the underlying `attribution()` mapping — has a direct unit test.
+fn approver_actor_type(caller: Option<&CallerCtx<NoGrant>>) -> mecmcp_audit::ActorType {
+    attribution(caller, None).actor_type
+}
+
 fn finish<T: Serialize>(mut audit: AuditScope, result: Result<T, SdcError>) -> CallToolResult {
     match &result {
         Ok(_) => audit.succeed(),
@@ -211,8 +218,19 @@ fn finish<T: Serialize>(mut audit: AuditScope, result: Result<T, SdcError>) -> C
 }
 
 /// `finish`, for reads whose upstream shape may carry credentials.
-fn finish_redacted(audit: AuditScope, result: Result<Value, SdcError>) -> CallToolResult {
-    finish(audit, result.map(redact_secrets))
+///
+/// Every credential-bearing family goes through this, with no per-family
+/// exemption: the response is serialized to `Value` so `redact_secrets` can
+/// scan it regardless of the handler's return type. A serialization failure
+/// fails closed as [`SdcError::InvalidJson`] rather than falling back to the
+/// unredacted value.
+fn finish_redacted<T: Serialize>(audit: AuditScope, result: Result<T, SdcError>) -> CallToolResult {
+    let result = result.and_then(|value| {
+        serde_json::to_value(value)
+            .map(redact_secrets)
+            .map_err(|_| SdcError::InvalidJson)
+    });
+    finish(audit, result)
 }
 
 /// Arguments shared by tenant-level tools.
@@ -1000,7 +1018,10 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(audit, self.client.tenant_scope(&cancellation).await))
+        Ok(finish_redacted(
+            audit,
+            self.client.tenant_scope(&cancellation).await,
+        ))
     }
 
     #[tool(
@@ -1030,7 +1051,7 @@ impl SdcHandler {
             Ok(page) => self.client.list_devices(page, &cancellation).await,
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1049,7 +1070,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_device(&args.device_uuid, &cancellation)
@@ -1093,7 +1114,7 @@ impl SdcHandler {
                 )
                 .map_err(SdcError::from)
             });
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1348,7 +1369,7 @@ impl SdcHandler {
             }
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1372,7 +1393,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_firewall_policy(&args.policy_id, &cancellation)
@@ -1407,7 +1428,7 @@ impl SdcHandler {
             Ok(page) => self.client.list_nat_policies(page, &cancellation).await,
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1431,7 +1452,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_nat_policy(&args.policy_id, &cancellation)
@@ -1470,7 +1491,7 @@ impl SdcHandler {
             }
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1494,7 +1515,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_firewall_rule(
@@ -1538,7 +1559,7 @@ impl SdcHandler {
             }
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1562,7 +1583,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_firewall_hierarchy(&args.policy_uuid, &args.scope, &cancellation)
@@ -1601,7 +1622,7 @@ impl SdcHandler {
             }
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1625,7 +1646,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_nat_rule(&args.policy_id, &args.rule_id, &cancellation)
@@ -1664,7 +1685,7 @@ impl SdcHandler {
             }
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1688,7 +1709,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_nat_hierarchy(&args.policy_id, &cancellation)
@@ -1723,7 +1744,7 @@ impl SdcHandler {
             Ok(page) => self.client.list_nat_pools(page, &cancellation).await,
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1757,7 +1778,7 @@ impl SdcHandler {
             }
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1781,7 +1802,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_device_group(&args.group_uuid, &cancellation)
@@ -1807,7 +1828,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client.get_nat_pool(&args.pool_id, &cancellation).await,
         ))
@@ -1844,7 +1865,7 @@ impl SdcHandler {
                 .and_then(project_ca_certificates),
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1878,7 +1899,7 @@ impl SdcHandler {
                 .and_then(project_local_certificates),
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1913,7 +1934,7 @@ impl SdcHandler {
                 .and_then(project_ca_certificates),
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1949,7 +1970,7 @@ impl SdcHandler {
                 .and_then(project_local_certificates),
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -1983,7 +2004,7 @@ impl SdcHandler {
                 .and_then(project_licenses),
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -2002,7 +2023,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_license(&args.device_uuid, &args.license_uuid, &cancellation)
@@ -2032,7 +2053,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .prepare_firewall_write(
@@ -2068,7 +2089,7 @@ impl SdcHandler {
             return Ok(tool_error(error));
         }
         let attribution = attribution(caller, args.change_ref);
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .apply_firewall_write(
@@ -2107,7 +2128,7 @@ impl SdcHandler {
         // The projected view, not the raw result: `before` is captured from the
         // same endpoints the read tools serve, and returning it verbatim would
         // disclose through the write tools what the read tools drop (#55).
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .prepare_license_write(
@@ -2144,7 +2165,7 @@ impl SdcHandler {
             return Ok(tool_error(error));
         }
         let attribution = attribution(caller, args.change_ref);
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .apply_license_write(
@@ -2185,7 +2206,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .prepare_device_sync(owner(caller), args.device_uuids, &cancellation)
@@ -2216,7 +2237,7 @@ impl SdcHandler {
             return Ok(tool_error(error));
         }
         let attribution = attribution(caller, args.change_ref);
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .apply_device_sync(
@@ -2252,7 +2273,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_firewall_policy_state(
@@ -2482,7 +2503,7 @@ impl SdcHandler {
             }
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -2506,7 +2527,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_ips_rule(&args.profile_uuid, &args.rule_uuid, &cancellation)
@@ -2545,7 +2566,7 @@ impl SdcHandler {
             }
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -2569,7 +2590,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_ips_exempt_rule(&args.profile_uuid, &args.rule_uuid, &cancellation)
@@ -2608,7 +2629,7 @@ impl SdcHandler {
             }
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -2642,7 +2663,7 @@ impl SdcHandler {
             }
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -2672,7 +2693,7 @@ impl SdcHandler {
             Ok(page) => self.client.list_ipsec_profiles(page, &cancellation).await,
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -2696,7 +2717,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .get_ipsec_profile(&args.profile_name, &cancellation)
@@ -2731,7 +2752,7 @@ impl SdcHandler {
             Ok(page) => self.client.list_tunnels(page, &cancellation).await,
             Err(error) => Err(error),
         };
-        Ok(finish(audit, result))
+        Ok(finish_redacted(audit, result))
     }
 
     #[tool(
@@ -2750,7 +2771,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client.get_tunnel(&args.tunnel_id, &cancellation).await,
         ))
@@ -2777,7 +2798,10 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(audit, self.client.tunnel_count(&cancellation).await))
+        Ok(finish_redacted(
+            audit,
+            self.client.tunnel_count(&cancellation).await,
+        ))
     }
 
     #[tool(
@@ -2848,7 +2872,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .preview_status(&args.job_id, &cancellation)
@@ -2877,7 +2901,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client.deploy_status(&args.job_id, &cancellation).await,
         ))
@@ -2904,7 +2928,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .preview_device_result(&args.job_id, &args.device_id, &cancellation)
@@ -2933,7 +2957,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.client
                 .deploy_device_result(&args.job_id, &args.device_id, &cancellation)
@@ -2962,7 +2986,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .prepare(owner(caller), args.policies, &cancellation)
@@ -2972,7 +2996,7 @@ impl SdcHandler {
 
     #[tool(
         name = "approve_sdc_change_set",
-        description = "Approve an exact SDC change-set digest as a principal distinct from its owner."
+        description = "Approve an exact SDC change-set digest as an independent human principal distinct from its owner."
     )]
     async fn approve_sdc_change_set(
         &self,
@@ -2990,10 +3014,16 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        let approver_actor_type = approver_actor_type(caller);
+        Ok(finish_redacted(
             audit,
             self.changes
-                .approve(args.change_set_id, owner(caller), args.expected_digest)
+                .approve(
+                    args.change_set_id,
+                    owner(caller),
+                    args.expected_digest,
+                    approver_actor_type,
+                )
                 .await,
         ))
     }
@@ -3020,7 +3050,7 @@ impl SdcHandler {
             return Ok(tool_error(error));
         }
         let attribution = attribution(caller, args.change_ref);
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .apply(
@@ -3056,7 +3086,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .prepare_object_write(
@@ -3093,7 +3123,7 @@ impl SdcHandler {
             return Ok(tool_error(error));
         }
         let attribution = attribution(caller, args.change_ref);
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .apply_object_write(
@@ -3129,7 +3159,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .prepare_nat_write(
@@ -3167,7 +3197,7 @@ impl SdcHandler {
             return Ok(tool_error(error));
         }
         let attribution = attribution(caller, args.change_ref);
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .apply_nat_write(
@@ -3202,7 +3232,10 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(audit, self.changes.status(args.change_set_id).await))
+        Ok(finish_redacted(
+            audit,
+            self.changes.status(args.change_set_id).await,
+        ))
     }
 
     #[tool(
@@ -3226,7 +3259,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes
                 .discard(
@@ -3261,7 +3294,7 @@ impl SdcHandler {
             audit.deny("scope");
             return Ok(tool_error(error));
         }
-        Ok(finish(
+        Ok(finish_redacted(
             audit,
             self.changes.prepared_change(args.change_set_id).await,
         ))
@@ -3367,6 +3400,47 @@ mod tests {
         }
     }
 
+    /// `finish_redacted` must work for handlers whose client call returns a
+    /// typed struct, not just `serde_json::Value`: IPS/ECF handlers were
+    /// exempted from redaction precisely because their result types weren't
+    /// `Value`. Proves a non-`Value` `Serialize` result carrying a `community`
+    /// field comes out scrubbed.
+    #[test]
+    fn finish_redacted_scrubs_non_value_serializable_results() {
+        #[derive(Serialize)]
+        struct IpsRuleLike {
+            uuid: String,
+            community: String,
+        }
+
+        let audit = AuditScope::new(Attribution::stdio(), "get_sdc_ips_rule", "read", vec![]);
+        let result: Result<IpsRuleLike, SdcError> = Ok(IpsRuleLike {
+            uuid: "r1".to_owned(),
+            community: "public-secret".to_owned(),
+        });
+        let call_result = finish_redacted(audit, result);
+        let serialized = serde_json::to_string(&call_result).expect("CallToolResult serializes");
+        assert!(!serialized.contains("public-secret"));
+        assert!(serialized.contains("REDACTED"));
+    }
+
+    /// Fails closed: a value that cannot serialize to JSON must not fall back
+    /// to passing the original, unredacted value through.
+    #[test]
+    fn finish_redacted_fails_closed_on_serialize_error() {
+        struct Unserializable;
+        impl Serialize for Unserializable {
+            fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+                Err(serde::ser::Error::custom("boom"))
+            }
+        }
+
+        let audit = AuditScope::new(Attribution::stdio(), "get_sdc_ips_rule", "read", vec![]);
+        let result: Result<Unserializable, SdcError> = Ok(Unserializable);
+        let call_result = finish_redacted(audit, result);
+        assert_eq!(call_result.is_error, Some(true));
+    }
+
     fn caller(targets: ScopeSet, tools: ScopeSet) -> CallerCtx<NoGrant> {
         CallerCtx {
             token_name: "alice".to_owned(),
@@ -3425,6 +3499,36 @@ mod tests {
                 "tenant-a"
             )
             .is_err()
+        );
+    }
+
+    /// `approve_sdc_change_set` calls `approver_actor_type()` — not
+    /// `attribution()` directly — to get the value it hands mecmcp's
+    /// human-approver check. Testing `approver_actor_type()` itself, rather
+    /// than the `attribution()` helper it happens to be built on, means a
+    /// future edit that changes what the handler passes (say, defaulting to
+    /// `Human` instead of calling through) fails this test even though
+    /// `attribution()` is untouched.
+    #[test]
+    fn approver_actor_type_is_taken_from_the_caller_not_defaulted_to_human() {
+        let human = caller(ScopeSet::Wildcard, ScopeSet::Wildcard);
+        assert_eq!(
+            approver_actor_type(Some(&human)),
+            mecmcp_audit::ActorType::Human
+        );
+
+        let mut agent = caller(ScopeSet::Wildcard, ScopeSet::Wildcard);
+        agent.actor_type = ActorType::Agent;
+        assert_eq!(
+            approver_actor_type(Some(&agent)),
+            mecmcp_audit::ActorType::Agent,
+            "an agent-minted token must not be attributed as human"
+        );
+
+        assert_eq!(
+            approver_actor_type(None),
+            mecmcp_audit::ActorType::Unknown,
+            "a stdio caller with no context must not be attributed as human"
         );
     }
 

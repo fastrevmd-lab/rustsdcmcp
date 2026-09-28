@@ -118,6 +118,66 @@ fn redacted_tools_call_finish_redacted() {
         "get_sdc_mnha_sync_status",
         "get_sdc_rma_state",
         "get_sdc_rma_reactivation_status",
+        "list_sdc_ips_rules",
+        "get_sdc_ips_rule",
+        "list_sdc_ips_exempt_rules",
+        "get_sdc_ips_exempt_rule",
+        "list_sdc_ecf_rule_sets",
+        "list_sdc_ecf_rules",
+        "list_sdc_ipsec_profiles",
+        "get_sdc_ipsec_profile",
+        "get_sdc_tenant_scope",
+        "list_sdc_devices",
+        "get_sdc_device",
+        "list_sdc_config_versions",
+        "list_sdc_firewall_policies",
+        "get_sdc_firewall_policy",
+        "list_sdc_nat_policies",
+        "get_sdc_nat_policy",
+        "list_sdc_firewall_rules",
+        "get_sdc_firewall_rule",
+        "list_sdc_firewall_rule_groups",
+        "get_sdc_firewall_hierarchy",
+        "list_sdc_nat_rules",
+        "get_sdc_nat_rule",
+        "list_sdc_nat_rule_groups",
+        "get_sdc_nat_hierarchy",
+        "list_sdc_nat_pools",
+        "list_sdc_device_groups",
+        "get_sdc_device_group",
+        "get_sdc_nat_pool",
+        "list_sdc_ca_certificates",
+        "list_sdc_local_certificates",
+        "list_sdc_device_ca_certificates",
+        "list_sdc_device_local_certificates",
+        "list_sdc_licenses",
+        "get_sdc_license",
+        "get_sdc_firewall_policy_state",
+        "list_sdc_tunnels",
+        "get_sdc_tunnel",
+        "get_sdc_tunnel_count",
+        "get_sdc_preview_status",
+        "get_sdc_deploy_status",
+        "get_sdc_preview_device_result",
+        "get_sdc_deploy_device_result",
+        "get_sdc_change_set",
+        "get_sdc_change_set_details",
+        // Write tools (Percy B2, MEC-440): prepare/apply echo raw upstream
+        // before-state, so their output is redacted too.
+        "prepare_sdc_policy_deploy",
+        "prepare_sdc_firewall_write",
+        "prepare_sdc_license_write",
+        "prepare_sdc_device_inventory_sync",
+        "prepare_sdc_object_write",
+        "prepare_sdc_nat_write",
+        "approve_sdc_change_set",
+        "apply_sdc_change_set",
+        "apply_sdc_firewall_write",
+        "apply_sdc_license_write",
+        "apply_sdc_device_inventory_sync",
+        "apply_sdc_object_write",
+        "apply_sdc_nat_write",
+        "discard_sdc_operation",
     ];
 
     // Every REDACTED_TOOLS entry must be a known tool.
@@ -241,5 +301,28 @@ fn redacted_tools_call_finish_redacted() {
         "tripwire parser found {} tool methods but KNOWN_TOOLS has {}",
         all_tool_methods.len(),
         KNOWN_TOOLS.len()
+    );
+}
+
+/// Percy B2 (MEC-440): write tools echo raw upstream before-state
+/// (`prepared_change`, `plan`), so every tool handler — read or write — must
+/// return through `finish_redacted`. The only plain `finish(` call allowed in
+/// server.rs is the one inside `finish_redacted` itself.
+#[test]
+fn every_tool_handler_output_is_redacted() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let server_rs = std::fs::read_to_string(format!("{manifest_dir}/src/server.rs"))
+        .expect("server.rs must be readable");
+    let plain_calls = server_rs
+        .match_indices("finish(")
+        .filter(|(i, _)| {
+            let prev = server_rs[..*i].chars().next_back();
+            !matches!(prev, Some(c) if c == '_' || c.is_ascii_alphanumeric())
+        })
+        .count();
+    assert_eq!(
+        plain_calls, 1,
+        "server.rs must call plain `finish(` only inside `finish_redacted`; \
+         route every tool handler through `finish_redacted`"
     );
 }
