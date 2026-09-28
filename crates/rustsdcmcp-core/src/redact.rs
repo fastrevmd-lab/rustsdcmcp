@@ -13,10 +13,28 @@
 //!
 //! ## Redaction policy
 //!
-//! `finish_redacted` is used for every family whose response shape has not been
-//! observed live, or whose schema declares a credential or rendered-config field.
-//! IPS and ECF families use plain `finish` because the spec declares no such
-//! fields for them.
+//! `finish_redacted` is used for every read tool, with no per-family
+//! exemption. IPS and ECF families previously used plain `finish` on the
+//! reasoning that the spec declares no credential fields for them; that
+//! reasoning didn't hold up (mecmcp's threat model rates "tool output leaks
+//! secrets to the model provider" as unmitigated, T8) because a spec omission
+//! is not a guarantee upstream never adds a credential-bearing field, and the
+//! denylist below is now wide enough to catch upstream additions (SNMP
+//! `community` strings, API tokens, private keys) that a family-by-family
+//! carve-out would miss. Every read tool that forwards an upstream SDC
+//! response now routes through `finish_redacted`; see `REDACTED_TOOLS` in
+//! `tests/tool_contract.rs` for the enforced, exhaustive list.
+//!
+//! Write tools (`prepare_*`/`apply_*`/`approve_*`/`discard_*`) go through
+//! `finish_redacted` too: `prepare_*` results echo the raw upstream
+//! before-state in `prepared_change`, and `apply_*` results return a
+//! `plan: {before, after}`, so they carry the same upstream fields the read
+//! path redacts. Only the tool output is redacted — the stored action, the
+//! plan digest and the change-set id are untouched, so approve/apply work
+//! unchanged.
+//!
+//! [`NON_SECRET_KEYS`] exempts our own opaque paging tokens from the
+//! compound `*token` match; redacting them breaks paging.
 
 use serde_json::Value;
 
@@ -29,6 +47,11 @@ pub const REDACTED: &str = "[REDACTED]";
 /// rendered device configuration bodies, and SDC-generated IPsec config carries
 /// the IKE pre-shared key, so both are withheld as a whole.
 ///
+/// `private_key` guards certificate private-key fields (see the
+/// `injected_private_key_is_dropped_from_local_certificates` test in
+/// `projection.rs` for the observed field name); this denylist entry is
+/// defence in depth for any endpoint the certificate allowlists don't cover.
+///
 /// Each key is normalized (lowercased, `_` and `-` removed) before comparison,
 /// so `preSharedKey`, `pre_shared_key`, and `PRE-SHARED-KEY` all match.
 const SECRET_KEYS: &[&str] = &[
@@ -40,7 +63,34 @@ const SECRET_KEYS: &[&str] = &[
     "pre_shared_key",
     "site_config",
     "cpe_config",
+    "secret",
+    "token",
+    "api_key",
+    "private_key",
+    "community",
 ];
+
+/// Base terms that also match as a prefix or suffix of a normalized key, so
+/// compound names like `accessToken`, `snmpCommunity`, `communityString`, and
+/// `privateKeyPem` are caught even though they never equal an entry in
+/// [`SECRET_KEYS`] outright.
+///
+/// Exact-only matching lets a vendor rename `token` to `accessToken` and slip
+/// past the denylist entirely; `psk` is deliberately excluded here since it is
+/// short enough that prefix/suffix matching would catch unrelated words.
+const COMPOUND_KEY_TERMS: &[&str] = &[
+    "token",
+    "secret",
+    "password",
+    "privatekey",
+    "community",
+    "apikey",
+];
+
+/// Keys that match a [`COMPOUND_KEY_TERMS`] suffix but are not credentials:
+/// opaque paging cursors the caller must echo back. Exact match after
+/// normalization, checked before the denylist.
+const NON_SECRET_KEYS: &[&str] = &["continuation_token", "next_page_token"];
 
 /// Normalize a key for comparison: lowercase and remove `_` and `-`.
 fn normalize_key(key: &str) -> String {
@@ -48,6 +98,23 @@ fn normalize_key(key: &str) -> String {
         .chars()
         .filter(|c| *c != '_' && *c != '-')
         .collect()
+}
+
+/// Whether a normalized key is credential-bearing: an exact [`SECRET_KEYS`]
+/// match, or a [`COMPOUND_KEY_TERMS`] prefix/suffix match.
+fn is_secret_key(normalized: &str) -> bool {
+    if NON_SECRET_KEYS
+        .iter()
+        .any(|allowed| normalize_key(allowed) == normalized)
+    {
+        return false;
+    }
+    SECRET_KEYS
+        .iter()
+        .any(|secret| normalize_key(secret) == normalized)
+        || COMPOUND_KEY_TERMS
+            .iter()
+            .any(|term| normalized.starts_with(term) || normalized.ends_with(term))
 }
 
 /// Replace every credential-bearing value in `value`, at any depth.
@@ -93,10 +160,7 @@ fn redact_in_place(value: &mut Value) {
         Value::Object(map) => {
             for (key, child) in map.iter_mut() {
                 let normalized = normalize_key(key);
-                let is_secret = SECRET_KEYS
-                    .iter()
-                    .any(|secret| normalize_key(secret) == normalized);
-                if is_secret {
+                if is_secret_key(&normalized) {
                     if !child.is_null() {
                         *child = Value::String(REDACTED.to_owned());
                     }
@@ -112,6 +176,32 @@ fn redact_in_place(value: &mut Value) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn paging_tokens_survive_redaction() {
+        // Percy B1 (MEC-440): the compound `*token` match redacted #172's
+        // ListPage.continuation_token, breaking paging past page 1.
+        let items: Vec<Value> = (0..2)
+            .map(|i| serde_json::json!({ "id": i, "blob": "x".repeat(40 * 1024) }))
+            .collect();
+        let page = crate::paging::page_list(
+            &serde_json::json!({ "versions": items }),
+            "versions",
+            None,
+            None,
+            64 * 1024,
+        )
+        .expect("page");
+        let token = page.continuation_token.clone().expect("a next page");
+        let redacted = redact_secrets(serde_json::to_value(&page).expect("serialize"));
+        assert_eq!(redacted["continuation_token"], Value::String(token));
+
+        let upstream = redact_secrets(serde_json::json!({
+            "nextPageToken": "abc", "accessToken": "QQsecret"
+        }));
+        assert_eq!(upstream["nextPageToken"], "abc");
+        assert_eq!(upstream["accessToken"], REDACTED);
+    }
+
     use super::*;
     use serde_json::json;
 
@@ -179,6 +269,105 @@ mod tests {
         // These should NOT be redacted
         assert_eq!(out["keysize"], "2048");
         assert_eq!(out["pskHint"], "not-a-secret");
+    }
+
+    #[test]
+    fn secret_key_is_redacted() {
+        let out = redact_secrets(json!({"secret": "hunter2", "name": "a"}));
+        assert_eq!(out["secret"], REDACTED);
+        assert_eq!(out["name"], "a");
+    }
+
+    #[test]
+    fn token_key_is_redacted() {
+        let out = redact_secrets(json!({"token": "abc123", "name": "a"}));
+        assert_eq!(out["token"], REDACTED);
+        assert_eq!(out["name"], "a");
+    }
+
+    #[test]
+    fn api_key_is_redacted() {
+        let out = redact_secrets(json!({"api_key": "abc123", "apiKey": "def456", "name": "a"}));
+        assert_eq!(out["api_key"], REDACTED);
+        assert_eq!(out["apiKey"], REDACTED);
+        assert_eq!(out["name"], "a");
+    }
+
+    #[test]
+    fn private_key_is_redacted() {
+        // A synthetic, non-PEM-shaped placeholder: a real PEM body here trips
+        // the full-history Gitleaks scan on every future squash merge (a new
+        // commit SHA needs a new `.gitleaksignore` entry each time).
+        let out = redact_secrets(json!({
+            "private_key": "synthetic-private-key-material",
+            "public_key_algorithm": "rsa"
+        }));
+        assert_eq!(out["private_key"], REDACTED);
+        // Public key metadata is not a secret and must survive.
+        assert_eq!(out["public_key_algorithm"], "rsa");
+    }
+
+    #[test]
+    fn community_string_is_redacted() {
+        let out = redact_secrets(json!({"community": "public", "name": "a"}));
+        assert_eq!(out["community"], REDACTED);
+        assert_eq!(out["name"], "a");
+    }
+
+    /// Compound key names, which never equal a `SECRET_KEYS` entry exactly,
+    /// are still caught by the prefix/suffix match in `is_secret_key`.
+    #[test]
+    fn compound_credential_key_names_are_redacted() {
+        let out = redact_secrets(json!({
+            "accessToken": "a",
+            "authToken": "b",
+            "apiToken": "c",
+            "clientSecret": "d",
+            "snmpCommunity": "e",
+            "communityString": "f",
+            "privateKeyPem": "g",
+            "current_password": "h",
+            "name": "unaffected",
+        }));
+        for key in [
+            "accessToken",
+            "authToken",
+            "apiToken",
+            "clientSecret",
+            "snmpCommunity",
+            "communityString",
+            "privateKeyPem",
+            "current_password",
+        ] {
+            assert_eq!(out[key], REDACTED, "{key} should be redacted");
+        }
+        assert_eq!(out["name"], "unaffected");
+    }
+
+    /// Proves IPS/ECF-shaped output is now redacted. Before this change,
+    /// IPS/ECF handlers called plain `finish` and skipped `redact_secrets`
+    /// entirely, so an SNMP `community` string on an IPS rule, or a `token`
+    /// on an ECF rule set, would have reached the model unredacted.
+    #[test]
+    fn ips_and_ecf_shaped_responses_are_redacted() {
+        let ips_rule = json!({
+            "uuid": "r1",
+            "name": "block-scan",
+            "community": "public",
+            "action": "drop"
+        });
+        let out = redact_secrets(ips_rule);
+        assert_eq!(out["community"], REDACTED);
+        assert_eq!(out["action"], "drop");
+
+        let ecf_rule_set = json!({
+            "items": [{"uuid": "s1", "name": "blocklist", "token": "ecf-abc123"}],
+            "count": 1
+        });
+        let out = redact_secrets(ecf_rule_set);
+        assert_eq!(out["items"][0]["token"], REDACTED);
+        assert_eq!(out["items"][0]["name"], "blocklist");
+        assert_eq!(out["count"], 1);
     }
 
     #[test]
