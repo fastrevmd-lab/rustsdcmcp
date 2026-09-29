@@ -35,8 +35,20 @@ jobs:
         run: cargo audit --deny warnings
       - name: Install cargo-deny 0.20.2
         run: cargo install cargo-deny --version 0.20.2 --locked
-      - name: Check licenses, bans, and sources
-        run: cargo deny check licenses bans sources
+      - name: Check advisories, licenses, bans, and sources
+        run: cargo deny check advisories licenses bans sources
+      - name: Self-check -- advisories check must fail on a known-vulnerable dependency
+        # This is not exercising the workspace: it is proving the check above
+        # is not a no-op. `tests/fixtures/deny-known-advisory` pins time 0.1.45
+        # (RUSTSEC-2020-0071) in a standalone crate that is deliberately
+        # excluded from the workspace, so this regresses loudly if `cargo deny`
+        # is ever pointed at the wrong manifest or its advisories DB goes stale.
+        run: |
+          if cargo deny --manifest-path tests/fixtures/deny-known-advisory/Cargo.toml check advisories; then
+            echo "FAIL: cargo deny check advisories passed on a fixture with a known RUSTSEC advisory (RUSTSEC-2020-0071)"
+            exit 1
+          fi
+          echo "PASS: cargo deny check advisories correctly rejected the known-vulnerable fixture"
 
   trivy:
     name: Trivy filesystem scan
