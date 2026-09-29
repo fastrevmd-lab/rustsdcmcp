@@ -2,7 +2,7 @@
 
 Thanks for considering a contribution. `rustsdcmcp` is an async Rust Model
 Context Protocol server for HPE Juniper Security Director Cloud (SDC) — part
-of the [mechub](https://github.com/fastrevmd-lab) family of open-source,
+of the [mechub](https://github.com/mechubsec) family of open-source,
 self-hosted network-security automation tooling. See [README.md](README.md)
 for what the server does and its current status.
 
