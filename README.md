@@ -84,7 +84,7 @@ connection. A `.sha256` carried alongside the tarball only proves that the two
 files agree, so it is not independent evidence of either.
 
 A `linux/amd64` container image is published for the same tag to
-`ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.5`.
+`ghcr.io/mechubsec/rustsdcmcp:0.0.5`.
 
 ## Build from approved source
 

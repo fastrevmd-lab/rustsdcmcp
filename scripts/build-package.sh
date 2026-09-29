@@ -53,7 +53,7 @@ Packaging a pre-built binary without recording its true source commit produces a
 package that fails installation with 'BUILD-INFO commit is invalid'.
 
 Obtain the commit from the release image's OCI label or the release tag:
-  docker inspect ghcr.io/fastrevmd-lab/rustsdcmcp:<version> --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+  docker inspect ghcr.io/mechubsec/rustsdcmcp:<version> --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
 or (peel annotated tags to the commit):
   git rev-parse v<version>^{commit}
 
@@ -155,7 +155,7 @@ if [[ ${SDCMCP_PACKAGE_SKIP_BUILD:-0} == 1 ]]; then
         printf '%s\n' \
             'SDCMCP_PACKAGE_SKIP_BUILD=1 but target/release/rustsdcmcp is missing or not executable.' \
             'Place the binary there first, e.g. from the release image:' \
-            '  docker create --name sx ghcr.io/fastrevmd-lab/rustsdcmcp:<version>' \
+            '  docker create --name sx ghcr.io/mechubsec/rustsdcmcp:<version>' \
             '  docker cp sx:/usr/local/bin/rustsdcmcp target/release/rustsdcmcp' \
             '  docker rm sx' >&2
         exit 1

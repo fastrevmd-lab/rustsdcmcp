@@ -51,13 +51,13 @@ cd /path/to/rustsdcmcp
 mkdir -p target/release
 
 # Pull and extract the binary from the release image
-docker pull ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.5
-docker create --name sx ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.5
+docker pull ghcr.io/mechubsec/rustsdcmcp:0.0.5
+docker create --name sx ghcr.io/mechubsec/rustsdcmcp:0.0.5
 docker cp sx:/usr/local/bin/rustsdcmcp target/release/rustsdcmcp
 docker rm sx
 
 # Obtain the binary's source commit from the image OCI label
-source_commit=$(docker inspect ghcr.io/fastrevmd-lab/rustsdcmcp:0.0.5 \
+source_commit=$(docker inspect ghcr.io/mechubsec/rustsdcmcp:0.0.5 \
     --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
 # Or from the release tag if the image label is unavailable (peel annotated tags):
 # source_commit=$(git rev-parse v0.0.5^{commit})
