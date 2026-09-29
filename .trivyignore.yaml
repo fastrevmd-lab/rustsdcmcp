@@ -11,3 +11,15 @@ misconfigurations:
       that it contains one. Container orchestrators (Compose healthcheck,
       Kubernetes liveness probes) supervise the process through the runtime
       instead. Same position as RustJunosMCP's Dockerfile.
+
+vulnerabilities:
+  - id: CVE-2020-26235
+    paths:
+      - "tests/fixtures/deny-known-advisory/Cargo.lock"
+    statement: >-
+      Deliberate. This standalone fixture crate (excluded from the workspace
+      and never built into any artifact) pins time 0.1.45 so the security
+      workflow can prove `cargo deny check advisories` is not a no-op: it must
+      fail on this known advisory (RUSTSEC-2020-0071 / CVE-2020-26235). Scoped
+      to the fixture's lock file only; the workspace Cargo.lock is still
+      scanned for this and every other CVE.
