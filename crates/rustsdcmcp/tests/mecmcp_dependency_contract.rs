@@ -3,10 +3,11 @@
 use std::{fs, path::Path};
 
 /// Declared directly in the workspace manifest. Each must appear verbatim.
-const PACKAGES: [&str; 6] = [
+const PACKAGES: [&str; 7] = [
     "mecmcp-audit",
     "mecmcp-auth",
     "mecmcp-changeset",
+    "mecmcp-redact",
     "mecmcp-runtime",
     "mecmcp-server",
     "mecmcp-transport",
@@ -19,22 +20,26 @@ const PACKAGES: [&str; 6] = [
 /// come from the one approved tag. Checking only the declared six would let a
 /// transitive mecmcp crate enter from a different source unnoticed, which is
 /// the exact thing this file exists to prevent.
-const LOCKED_PACKAGES: [&str; 7] = [
+const LOCKED_PACKAGES: [&str; 8] = [
     "mecmcp-audit",
     "mecmcp-auth",
     "mecmcp-changeset",
+    "mecmcp-redact",
     "mecmcp-runtime",
     "mecmcp-secret",
     "mecmcp-server",
     "mecmcp-transport",
 ];
-const VERSION: &str = "0.24.0";
-const TAG: &str = "v0.24.0";
-const COMMIT: &str = "f34612a105efb80d6753641158e6dadb73272173";
+const VERSION: &str = "0.24.1";
+// TEMPORARY: pinned to a rev on mechubsec/mecmcp main, not a released tag --
+// see the workspace Cargo.toml comment above the mecmcp-* declarations
+// (MEC-14). Replace with a `tag`-based COMMIT once mecmcp-redact ships in a
+// release.
+const COMMIT: &str = "2e157e0f09894e2a5309408523c0911425eebd20";
 const REPOSITORY: &str = "https://github.com/mechubsec/mecmcp";
 
 fn validate_mecmcp_lockfile(lock: &str) -> Result<(), String> {
-    let source = format!("git+{REPOSITORY}?tag={TAG}#{COMMIT}");
+    let source = format!("git+{REPOSITORY}?rev={COMMIT}#{COMMIT}");
     let mut expected = LOCKED_PACKAGES
         .map(|package| (package.to_owned(), VERSION.to_owned(), source.clone()))
         .to_vec();
@@ -94,7 +99,7 @@ fn all_mecmcp_crates_use_one_released_tag_and_commit() {
 
     for package in PACKAGES {
         let declaration = format!(
-            r#"{package} = {{ version = "{VERSION}", git = "{REPOSITORY}", tag = "{TAG}" }}"#
+            r#"{package} = {{ version = "{VERSION}", git = "{REPOSITORY}", rev = "{COMMIT}" }}"#
         );
         assert!(
             manifest.lines().any(|line| line == declaration),
@@ -177,7 +182,7 @@ fn rejects_any_non_exact_mecmcp_package_set() {
     let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let lock =
         fs::read_to_string(crate_root.join("../../Cargo.lock")).expect("read workspace lockfile");
-    let approved_source = format!("git+{REPOSITORY}?tag={TAG}#{COMMIT}");
+    let approved_source = format!("git+{REPOSITORY}?rev={COMMIT}#{COMMIT}");
     let auth_block = lock
         .split("[[package]]")
         .find(|block| block.contains("\nname = \"mecmcp-auth\"\n"))

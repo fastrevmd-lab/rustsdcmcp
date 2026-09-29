@@ -2668,7 +2668,7 @@ impl SdcHandler {
 
     #[tool(
         name = "list_sdc_ipsec_profiles",
-        description = "List IPsec profiles with bounded pagination. This is a /api/v2/ endpoint."
+        description = "List IPsec profiles with bounded pagination. This is a /api/v2/ endpoint. Pre-shared keys and rendered configuration bodies are redacted."
     )]
     async fn list_sdc_ipsec_profiles(
         &self,
@@ -2698,7 +2698,7 @@ impl SdcHandler {
 
     #[tool(
         name = "get_sdc_ipsec_profile",
-        description = "Get one IPsec profile by name. Profiles are addressed by profile_name, not UUID."
+        description = "Get one IPsec profile by name. Profiles are addressed by profile_name, not UUID. Pre-shared keys and rendered configuration bodies are redacted."
     )]
     async fn get_sdc_ipsec_profile(
         &self,
@@ -2909,7 +2909,7 @@ impl SdcHandler {
 
     #[tool(
         name = "get_sdc_preview_device_result",
-        description = "Read one per-device SDC preview result in CLI format."
+        description = "Read one per-device SDC preview result in CLI format. Credential fields in the diff are redacted."
     )]
     async fn get_sdc_preview_device_result(
         &self,

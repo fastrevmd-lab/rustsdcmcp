@@ -1063,6 +1063,9 @@ name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d98f6fed1fde3f8c21bc40a1abb88dd75e67924f9cffc3ef95607bad8017f8e2"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "is_terminal_polyfill"
@@ -1216,8 +1219,8 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "mecmcp-audit"
-version = "0.24.0"
-source = "git+https://github.com/mechubsec/mecmcp?tag=v0.24.0#f34612a105efb80d6753641158e6dadb73272173"
+version = "0.24.1"
+source = "git+https://github.com/mechubsec/mecmcp?rev=2e157e0f09894e2a5309408523c0911425eebd20#2e157e0f09894e2a5309408523c0911425eebd20"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -1246,8 +1249,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-auth"
-version = "0.24.0"
-source = "git+https://github.com/mechubsec/mecmcp?tag=v0.24.0#f34612a105efb80d6753641158e6dadb73272173"
+version = "0.24.1"
+source = "git+https://github.com/mechubsec/mecmcp?rev=2e157e0f09894e2a5309408523c0911425eebd20#2e157e0f09894e2a5309408523c0911425eebd20"
 dependencies = [
  "arc-swap",
  "chrono",
@@ -1265,29 +1268,46 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-changeset"
-version = "0.24.0"
-source = "git+https://github.com/mechubsec/mecmcp?tag=v0.24.0#f34612a105efb80d6753641158e6dadb73272173"
+version = "0.24.1"
+source = "git+https://github.com/mechubsec/mecmcp?rev=2e157e0f09894e2a5309408523c0911425eebd20#2e157e0f09894e2a5309408523c0911425eebd20"
 dependencies = [
  "async-trait",
  "getrandom 0.4.3",
  "hex",
+ "hmac",
  "mecmcp-audit",
+ "mecmcp-redact",
  "mecmcp-secret",
  "rustix",
  "serde",
  "serde_json",
  "sha2",
+ "subtle",
  "tempfile",
  "tokio",
  "tokio-util",
  "tracing",
  "url",
+ "zeroize",
+]
+
+[[package]]
+name = "mecmcp-redact"
+version = "0.24.1"
+source = "git+https://github.com/mechubsec/mecmcp?rev=2e157e0f09894e2a5309408523c0911425eebd20#2e157e0f09894e2a5309408523c0911425eebd20"
+dependencies = [
+ "hmac",
+ "quick-xml",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]
 name = "mecmcp-runtime"
-version = "0.24.0"
-source = "git+https://github.com/mechubsec/mecmcp?tag=v0.24.0#f34612a105efb80d6753641158e6dadb73272173"
+version = "0.24.1"
+source = "git+https://github.com/mechubsec/mecmcp?rev=2e157e0f09894e2a5309408523c0911425eebd20#2e157e0f09894e2a5309408523c0911425eebd20"
 dependencies = [
  "anyhow",
  "clap",
@@ -1304,8 +1324,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-secret"
-version = "0.24.0"
-source = "git+https://github.com/mechubsec/mecmcp?tag=v0.24.0#f34612a105efb80d6753641158e6dadb73272173"
+version = "0.24.1"
+source = "git+https://github.com/mechubsec/mecmcp?rev=2e157e0f09894e2a5309408523c0911425eebd20#2e157e0f09894e2a5309408523c0911425eebd20"
 dependencies = [
  "rustix",
  "thiserror",
@@ -1314,12 +1334,13 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-server"
-version = "0.24.0"
-source = "git+https://github.com/mechubsec/mecmcp?tag=v0.24.0#f34612a105efb80d6753641158e6dadb73272173"
+version = "0.24.1"
+source = "git+https://github.com/mechubsec/mecmcp?rev=2e157e0f09894e2a5309408523c0911425eebd20#2e157e0f09894e2a5309408523c0911425eebd20"
 dependencies = [
  "http",
  "mecmcp-audit",
  "mecmcp-auth",
+ "mecmcp-redact",
  "rmcp",
  "serde",
  "serde_json",
@@ -1328,8 +1349,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-transport"
-version = "0.24.0"
-source = "git+https://github.com/mechubsec/mecmcp?tag=v0.24.0#f34612a105efb80d6753641158e6dadb73272173"
+version = "0.24.1"
+source = "git+https://github.com/mechubsec/mecmcp?rev=2e157e0f09894e2a5309408523c0911425eebd20#2e157e0f09894e2a5309408523c0911425eebd20"
 dependencies = [
  "axum",
  "axum-server",
@@ -1338,6 +1359,7 @@ dependencies = [
  "http",
  "http-body",
  "http-body-util",
+ "ipnet",
  "mecmcp-audit",
  "mecmcp-auth",
  "metrics",
@@ -1544,6 +1566,15 @@ dependencies = [
  "wasi",
  "web-sys",
  "winapi",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.41.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -1928,6 +1959,7 @@ dependencies = [
  "http",
  "mecmcp-audit",
  "mecmcp-changeset",
+ "mecmcp-redact",
  "mecmcp-secret",
  "mecmcp-server",
  "reqwest",
