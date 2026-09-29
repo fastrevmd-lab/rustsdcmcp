@@ -42,6 +42,7 @@ The installer creates the service account and these paths:
 | `/etc/rustsdcmcp/tokens.json` | Digest-only bearer-token store; `0600 rustsdcmcp:rustsdcmcp` |
 | `/etc/rustsdcmcp/audit-hmac.key` | Audit redaction key; `0600 rustsdcmcp:rustsdcmcp` |
 | `/var/lib/rustsdcmcp/changeset-state.json` | Durable change-set state under the `0700 rustsdcmcp:rustsdcmcp` state directory |
+| `/var/lib/rustsdcmcp/audit.jsonl` | JSON audit sink (`--audit-log-file`), reopened by path on `SIGHUP`; see [Audit retention and forwarding](#audit-retention-and-forwarding) |
 
 The package supplies only `sdc.json.example`; an operator must create the live
 configuration and credentials before manually starting the service. Never put
@@ -341,6 +342,29 @@ before production traffic. The approved lab deployment has a temporary
 exception: it may retain the persistent local journal without remote forwarding
 while it remains lab-only; review that exception before any promotion.
 
+When `--audit-log-file` is also set (the packaged unit passes
+`$STATE_DIRECTORY/audit.jsonl`), JSON events are appended to that file too.
+The server keeps the file handle `mecmcp_audit::init_tracing` returns and
+reopens it by path on `SIGHUP`, alongside the token store reload described in
+[Token reload](#token-reload), so rotation is lossless as long as the rotator
+renames the file and signals the process — the server never truncates it
+itself. A ready-to-install fragment ships at
+[`packaging/logrotate/rustsdcmcp-audit`](../packaging/logrotate/rustsdcmcp-audit);
+install it as `/etc/logrotate.d/rustsdcmcp-audit`. It rotates by rename
+(`postrotate` sends `SIGHUP` via `systemctl kill`), not `copytruncate`:
+nothing written before the rename is truncated and nothing written after it
+is lost, unlike `copytruncate`, which drops whatever lands between its copy
+and its truncate. The SIGHUP handler installs whenever either the audit file
+sink or the token store is configured — a deployment running with only
+`--audit-log-file` set (no `--tokens-file`) still needs one, or SIGHUP's
+default disposition (terminate) kills the process on the signal logrotate
+sends it.
+
+Built-in log rotation is out of scope by design: the server does not decide
+when to rotate, it only reopens the file on `SIGHUP`. In-process size/age
+rotation is not planned; retention is handled by the shipped `logrotate`
+fragment.
+
 ## Startup
 
 `rustsdcmcp` loads one JSON tenant configuration through the shared runtime's
@@ -586,4 +610,8 @@ Rollback is therefore reported as unsupported rather than guessed.
 ## Token reload
 
 On Unix, SIGHUP reloads the digest-only bearer-token file atomically. A failed
-reload keeps the previous verified snapshot.
+reload keeps the previous verified snapshot. This runs in the same SIGHUP
+handler as the audit-log reopen described in
+[Audit retention and forwarding](#audit-retention-and-forwarding), and always
+after it: the audit reopen is attempted first, and a failure there does not
+block the token reload.

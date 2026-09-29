@@ -33,6 +33,7 @@ mecmcp-transport.workspace = true
 
 [dev-dependencies]
 reqwest.workspace = true
+rustix = { version = "1", features = ["process"] }
 tempfile = "3"
 syn = { version = "3", features = ["full"] }
 quote = "1"
