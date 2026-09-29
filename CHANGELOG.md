@@ -31,6 +31,11 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
   and still never retry automatically — a mutation must not be silently
   resent into an unknown state.
 
+### Changed
+- **Container images now publish to `ghcr.io/mechubsec/rustsdcmcp`** —
+  the repo moved to the mechubsec organization, and images are renamed to
+  match. Older tags were copied from the previous name.
+
 ### Security
 - Bumped `mecmcp` to v0.24.0. `approve_sdc_change_set` now refuses an
   approval unless the approver's actor type is `Human` — an agent-minted
