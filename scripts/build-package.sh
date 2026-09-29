@@ -333,7 +333,7 @@ two-principal prepare → approve → apply change control.
 MIT — see \`LICENSE\` in this directory.
 
 Full project documentation:
-<https://github.com/fastrevmd-lab/rustsdcmcp>
+<https://github.com/mechubsec/rustsdcmcp>
 EOF
 chmod 0644 "$stage_dir/README.md"
 

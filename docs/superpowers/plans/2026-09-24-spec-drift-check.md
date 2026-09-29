@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3 stdlib (json, re, hashlib, argparse, unittest), GitHub Actions, `gh`.
 
-**Spec:** GitHub issue fastrevmd-lab/rustsdcmcp#154.
+**Spec:** GitHub issue mechubsec/rustsdcmcp#154.
 
 ## Global Constraints
 

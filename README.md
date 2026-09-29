@@ -21,7 +21,7 @@
 clients as a bounded, auditable tool surface. SDC is the HPE Juniper SASE
 portal for an SRX estate, so this server talks to that management plane rather
 than to any single firewall. Where
-[`rustjunosmcp`](https://github.com/fastrevmd-lab/rustjunosmcp) talks NETCONF to
+[`rustjunosmcp`](https://github.com/mechubsec/rustjunosmcp) talks NETCONF to
 individual SRX devices, `rustsdcmcp` talks HTTPS REST to the portal that governs
 them.
 
@@ -69,12 +69,12 @@ Observed response shapes and the remaining endpoint questions are tracked in
 ## Download
 
 Assets for the current release are on the
-[`v0.0.5` release page](https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.0.5).
+[`v0.0.5` release page](https://github.com/mechubsec/rustsdcmcp/releases/tag/v0.0.5).
 The Debian archive is commit-addressed and ships with a sibling `.sha256`:
 
 ```console
 gh release download v0.0.5 \
-  --repo fastrevmd-lab/rustsdcmcp \
+  --repo mechubsec/rustsdcmcp \
   --pattern 'rustsdcmcp_0.0.5.*_amd64.tar.gz*'
 sha256sum -c rustsdcmcp_0.0.5.*_amd64.tar.gz.sha256
 ```
@@ -346,7 +346,7 @@ already adopted (#54). What remains:
 
 ## Relationship to `mecmcp`
 
-[`mecmcp`](https://github.com/fastrevmd-lab/mecmcp) is the vendor-neutral Rust
+[`mecmcp`](https://github.com/mechubsec/mecmcp) is the vendor-neutral Rust
 foundation shared by the mechub MCP server family. This repository consumes it,
 rather than forking it. `v0.0.1` pins all six shared crates — `mecmcp-audit`,
 `mecmcp-auth`, `mecmcp-changeset`, `mecmcp-runtime`, `mecmcp-server`, and
@@ -374,7 +374,7 @@ Primary references:
 ## Audit forwarding to the event store
 
 The audit trail does not stay on this host. This server follows the family
-standard — [AUDIT-FORWARDING-STANDARD.md](https://github.com/fastrevmd-lab/mecmcp/blob/main/docs/AUDIT-FORWARDING-STANDARD.md).
+standard — [AUDIT-FORWARDING-STANDARD.md](https://github.com/mechubsec/mecmcp/blob/main/docs/AUDIT-FORWARDING-STANDARD.md).
 
 An audit record that only exists on the machine that produced it is not an audit
 trail: it is a log file on a box whose operator is the party the record is about.
@@ -394,7 +394,7 @@ server never truncates it.
 
 Records are written directly into SSDF's `ssdf.audit` as **hash-chained** rows,
 per SSDF's merged evidence contract, so that deleting or editing a row is
-detectable. Tracked in [mecmcp#292](https://github.com/fastrevmd-lab/mecmcp/issues/292).
+detectable. Tracked in [mecmcp#292](https://github.com/mechubsec/mecmcp/issues/292).
 
 A cheaper syslog path was designed and rejected: it works, but the records are
 unchained, and every other link here is tamper-evident by construction — plan

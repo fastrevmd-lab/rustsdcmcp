@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust 1.89 (MSRV), rmcp, reqwest, serde_json, axum (test-only fake SDC), `mecmcp-*` 0.23.0.
 
-**Spec:** GitHub issue fastrevmd-lab/rustsdcmcp#156, plus the two defects below. Pinned API facts come from `docs/sdc-api/security-director-cloud-apis-openapi3.json`. Read `docs/sdc-api/README.md` before writing any client code.
+**Spec:** GitHub issue mechubsec/rustsdcmcp#156, plus the two defects below. Pinned API facts come from `docs/sdc-api/security-director-cloud-apis-openapi3.json`. Read `docs/sdc-api/README.md` before writing any client code.
 
 ## Defects found while planning (verified against the vendored spec, 2026-09-24)
 

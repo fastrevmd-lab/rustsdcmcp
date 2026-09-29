@@ -8,7 +8,7 @@ version = "0.0.5"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
-repository = "https://github.com/fastrevmd-lab/rustsdcmcp"
+repository = "https://github.com/mechubsec/rustsdcmcp"
 authors = ["fastrevmd-lab"]
 
 [workspace.lints.rust]
@@ -47,13 +47,13 @@ url = "2"
 uuid = { version = "1", features = ["v4"] }
 zeroize = "1"
 
-mecmcp-audit = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
-mecmcp-auth = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
-mecmcp-changeset = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
-mecmcp-runtime = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
-mecmcp-secret = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
-mecmcp-server = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
-mecmcp-transport = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
+mecmcp-audit = { version = "0.24.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.24.0" }
+mecmcp-auth = { version = "0.24.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.24.0" }
+mecmcp-changeset = { version = "0.24.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.24.0" }
+mecmcp-runtime = { version = "0.24.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.24.0" }
+mecmcp-secret = { version = "0.24.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.24.0" }
+mecmcp-server = { version = "0.24.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.24.0" }
+mecmcp-transport = { version = "0.24.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.24.0" }
 
 [profile.release]
 lto = "thin"

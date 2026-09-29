@@ -31,7 +31,7 @@ const LOCKED_PACKAGES: [&str; 7] = [
 const VERSION: &str = "0.24.0";
 const TAG: &str = "v0.24.0";
 const COMMIT: &str = "f34612a105efb80d6753641158e6dadb73272173";
-const REPOSITORY: &str = "https://github.com/fastrevmd-lab/mecmcp";
+const REPOSITORY: &str = "https://github.com/mechubsec/mecmcp";
 
 fn validate_mecmcp_lockfile(lock: &str) -> Result<(), String> {
     let source = format!("git+{REPOSITORY}?tag={TAG}#{COMMIT}");

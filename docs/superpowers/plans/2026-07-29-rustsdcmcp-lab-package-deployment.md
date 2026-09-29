@@ -12,7 +12,7 @@
 
 - Work only in `/home/mharman/Projects/rustsdcmcp/.worktrees/lab-release-deployment-design`; keep the main checkout untouched.
 - Rename the branch to `feat/lab-package-deploy` before the first implementation commit.
-- Do not modify mecmcp code, documentation, branches, or pull requests. Only create issues in `fastrevmd-lab/mecmcp`.
+- Do not modify mecmcp code, documentation, branches, or pull requests. Only create issues in `mechubsec/mecmcp`.
 - Every temporary function, method, and reusable type gets one unique dedicated mecmcp issue. Two symbols may not share an issue.
 - Every temporary declaration contains `mecmcp-compat:` with its full issue URL and target upstream symbol.
 - SDC endpoints, headers, models, polling, tenant validation, preview/deploy behavior, and sanitized errors remain in this repository.
@@ -82,7 +82,7 @@ Expected: branch `feat/lab-package-deploy`, clean status, and worktree root endi
 
 - [ ] **Step 2: Search mecmcp issues for exact-title duplicates**
 
-Use the connected GitHub issue search against `fastrevmd-lab/mecmcp` for every exact title in Appendix A. Reuse an issue only if it is already dedicated to that one symbol and has matching acceptance criteria. General issues such as #32, #90, and #91 are references, not substitutes for symbol-specific issues.
+Use the connected GitHub issue search against `mechubsec/mecmcp` for every exact title in Appendix A. Reuse an issue only if it is already dedicated to that one symbol and has matching acceptance criteria. General issues such as #32, #90, and #91 are references, not substitutes for symbol-specific issues.
 
 Expected: a 59-row local inventory in which every row is either “create” or one exact reusable issue.
 
@@ -169,7 +169,7 @@ symbols = [row[1] for row in data]
 urls = [row[2] for row in data]
 assert len(symbols) == len(set(symbols))
 assert len(urls) == len(set(urls))
-assert all(url.startswith("https://github.com/fastrevmd-lab/mecmcp/issues/") for url in urls)
+assert all(url.startswith("https://github.com/mechubsec/mecmcp/issues/") for url in urls)
 assert all(url.rsplit("/", 1)[1].isdigit() for url in urls)
 print("59 unique symbols and issue URLs")
 PY
@@ -285,11 +285,11 @@ Expected: compilation fails because the compatibility modules and symbols do not
 Replace every mecmcp workspace dependency with:
 
 ```toml
-mecmcp-audit = { version = "0.3.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.6" }
-mecmcp-auth = { version = "0.3.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.6" }
-mecmcp-changeset = { version = "0.3.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.6" }
-mecmcp-runtime = { version = "0.3.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.6" }
-mecmcp-transport = { version = "0.3.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.6" }
+mecmcp-audit = { version = "0.3.6", git = "https://github.com/mechubsec/mecmcp", tag = "changeset-v0.3.6" }
+mecmcp-auth = { version = "0.3.6", git = "https://github.com/mechubsec/mecmcp", tag = "changeset-v0.3.6" }
+mecmcp-changeset = { version = "0.3.6", git = "https://github.com/mechubsec/mecmcp", tag = "changeset-v0.3.6" }
+mecmcp-runtime = { version = "0.3.6", git = "https://github.com/mechubsec/mecmcp", tag = "changeset-v0.3.6" }
+mecmcp-transport = { version = "0.3.6", git = "https://github.com/mechubsec/mecmcp", tag = "changeset-v0.3.6" }
 ```
 
 Delete `mecmcp-server` from the workspace and both consumer manifests. Regenerate only through:
