@@ -1,0 +1,15 @@
+# Standalone fixture, deliberately NOT a member of the workspace at the repo
+# root (see the root Cargo.toml `members` list). It exists only so CI can
+# prove `cargo deny check advisories` actually rejects a known-vulnerable
+# dependency instead of silently passing. `time = "=0.1.45"` carries
+# RUSTSEC-2020-0071.
+[workspace]
+
+[package]
+name = "deny-known-advisory-fixture"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+time = "=0.1.45"
