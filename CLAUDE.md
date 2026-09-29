@@ -57,7 +57,10 @@ here so an absence reads as a decision rather than as work nobody got to.
 **Out of scope — do not implement.**
 
 - **IAM** (user and role administration, 9 operations beyond the `GetTokenScope`
-  used for startup tenant validation)
+  used for startup tenant validation). Narrowed 2026-09-29 (MEC-224, below):
+  `ListUsers`/`GetUser`/`ListRoles`/`GetRole` are read-only, metadata-only, and
+  in scope. `CreateUser`, `EditUser`, `DeleteUser`, `ChangePassword`, and
+  `SendActivateUserEmail` stay excluded under this decision.
 - **Subscriptions** (tenant entitlement, 3 operations)
 - **`GET /api/v1/devices/{device_id}/rma/reactivation_config`** — returns
   `config_contents`, a full bootstrap device configuration. A credential-bearing
@@ -79,6 +82,45 @@ with no networking value and a large blast radius — the same reasoning that pu
 Mist's portal identity flows in `ExecuteClass::Excluded` over in rustmistmcp.
 If a future need appears, it needs its own decision recorded here, not a quiet
 addition.
+
+### IAM read-only exception: `list_users_and_roles`
+
+Decided 2026-09-29 (MEC-224). #34 excluded IAM outright — no networking value,
+large blast radius. The need that reopened it is narrower than #34 addressed:
+SOC incident review (MEC-38-style "who has access") needs a read of who has
+what role, not any ability to change it.
+
+**In scope, read-only, metadata-only:** `ListUsers`, `GetUser`, `ListRoles`,
+`GetRole` (`/api/v2/users`, `/api/v2/user/{user_id}`, `/api/v2/roles`,
+`/api/v2/role/{ID}` — all `/api/v2/`, confirmed against the vendored spec;
+there is no `/api/v1/` IAM path). The `list_users_and_roles` tool wires up
+`ListUsers` and `ListRoles`; `GetUser`/`GetRole` are in scope for a future
+single-lookup tool but are not implemented by this one.
+
+SDC's `ListUsers` response has no `created`/`created_by` field — only
+`user_id`, `email`, `name`, `status`, `last_login`, `role[].role_name`.
+`ListRoles` has `UUID`, `name`, `capabilities`, `predefined`, and no timestamp
+at all. Neither carries key or secret material; SDC's IAM surface has no
+API-key concept. `list_users_and_roles` returns exactly these fields — it does
+not synthesize a `created`/`created_by` value the API does not have.
+
+**Still excluded under #34, unchanged:** `CreateUser`, `EditUser`,
+`DeleteUser`, `ChangePassword`, `SendActivateUserEmail` — the five operations
+that can alter a user's access rather than report it.
+
+`list_users_and_roles` is in `SCOPED_READ_TOOLS`
+(`crates/rustsdcmcp/src/server.rs`), excluded from a wildcard tool scope the
+same way `WRITE_TOOLS` is: an existing wildcard-scoped bearer token does not
+gain it automatically, and a caller must name it explicitly. Unlike a write
+tool, stdio access is unaffected — stdio has no bearer token to scope.
+
+`get_audit_log` and `get_device_connection_history` were considered alongside
+this tool for the same SOC incident-review need and dropped: no matching
+endpoint exists anywhere in the vendored OpenAPI export, and inventing one
+would fail `scripts/spec-drift.py self-check`. That need is tracked separately
+as a research question into whether SDC exposes audit/connection data through
+a different surface (webhook/syslog export, SIEM integration, a different API
+version), not as unfinished work on this decision.
 
 **Deferred with SASE**, if this repo ever grows a SASE remit: PAC Manager (2),
 Service Location Management (1).

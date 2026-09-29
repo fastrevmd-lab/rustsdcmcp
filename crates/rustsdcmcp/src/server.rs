@@ -108,6 +108,7 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "get_sdc_firewall_global_profile",
     "get_sdc_content_security_settings",
     "list_sdc_device_global_settings",
+    "list_users_and_roles",
 ];
 
 /// Tools that can cause an SDC deployment or object lifecycle mutation.
@@ -127,6 +128,26 @@ pub const WRITE_TOOLS: &[&str] = &[
     "apply_sdc_device_inventory_sync",
     "discard_sdc_operation",
 ];
+
+/// Reads with a smaller blast radius than a write, but that disclose tenant
+/// identity/access data (who has access) rather than network configuration.
+///
+/// Excluded from wildcard tool grants alongside [`WRITE_TOOLS`] — see
+/// CLAUDE.md's IAM decision log — so an existing wildcard-scoped token does
+/// not silently gain this surface; a token must name these tools explicitly.
+/// Unlike `WRITE_TOOLS`, an unauthenticated stdio caller may still use them:
+/// stdio has no bearer token to scope in the first place.
+pub const SCOPED_READ_TOOLS: &[&str] = &["list_users_and_roles"];
+
+/// Tool names excluded from a wildcard tool scope: [`WRITE_TOOLS`] plus
+/// [`SCOPED_READ_TOOLS`].
+fn wildcard_exclusions() -> Vec<&'static str> {
+    WRITE_TOOLS
+        .iter()
+        .chain(SCOPED_READ_TOOLS.iter())
+        .copied()
+        .collect()
+}
 
 /// Security Director Cloud MCP handler.
 #[derive(Clone)]
@@ -174,7 +195,7 @@ fn authorize_request(
             "SDC write tools require an authenticated bearer token".to_owned(),
         ));
     }
-    authorize_call(caller, tool, Some(tenant), WRITE_TOOLS)
+    authorize_call(caller, tool, Some(tenant), &wildcard_exclusions())
         .map_err(|error| HandlerAuthorizationError(error.to_string()))?;
     if tenant != configured_tenant {
         return Err(HandlerAuthorizationError(
@@ -812,6 +833,28 @@ pub struct TunnelListArgs {
     pub from: u64,
     /// Explicit positive page size.
     pub size: u32,
+}
+
+/// Arguments for listing users and roles.
+///
+/// Users and roles paginate independently: a tenant can have far more users
+/// than roles, and coupling their page sizes would force either truncating
+/// users or over-fetching roles.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UsersAndRolesListArgs {
+    /// Configured tenant alias.
+    pub tenant: String,
+    /// Zero-based offset into the user list.
+    #[serde(default)]
+    pub users_from: u64,
+    /// Explicit positive page size for users.
+    pub users_size: u32,
+    /// Zero-based offset into the role list.
+    #[serde(default)]
+    pub roles_from: u64,
+    /// Explicit positive page size for roles.
+    pub roles_size: u32,
 }
 
 /// Arguments for one tunnel.
@@ -2410,6 +2453,45 @@ impl SdcHandler {
     }
 
     #[tool(
+        name = "list_users_and_roles",
+        description = "List tenant users and roles, metadata only: user_id, email, name, status, last_login, and role names; role UUID, name, capabilities, and whether it is predefined. SDC's IAM surface has no API-key concept and no created/created_by field on either resource, so neither is returned. Gated separately from a wildcard tool scope — a token must name this tool explicitly."
+    )]
+    async fn list_users_and_roles(
+        &self,
+        Parameters(args): Parameters<UsersAndRolesListArgs>,
+        extensions: Extensions,
+        cancellation: CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let caller = caller_from_extensions::<NoGrant>(&extensions);
+        let mut audit = audit_scope(
+            caller,
+            "list_users_and_roles",
+            "read",
+            vec![args.tenant.clone()],
+        );
+        if let Err(error) = self.authorize(caller, "list_users_and_roles", &args.tenant) {
+            audit.deny("scope");
+            return Ok(tool_error(error));
+        }
+        let max_page_size = self.client.max_page_size();
+        let pages = ListRequest::new(args.users_from, args.users_size, max_page_size)
+            .and_then(|users_page| {
+                ListRequest::new(args.roles_from, args.roles_size, max_page_size)
+                    .map(|roles_page| (users_page, roles_page))
+            })
+            .map_err(SdcError::from);
+        let result = match pages {
+            Ok((users_page, roles_page)) => {
+                self.client
+                    .list_users_and_roles(users_page, roles_page, &cancellation)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        Ok(finish_redacted(audit, result))
+    }
+
+    #[tool(
         name = "list_sdc_resources",
         description = "List one allowlisted SDC resource collection. The `resource` enum in this schema is the catalog of available families. Credential fields are redacted."
     )]
@@ -3362,7 +3444,7 @@ impl ServerHandler for SdcHandler {
             filter_tools_for_scope(
                 self.tool_router.list_all(),
                 caller_from_extensions::<NoGrant>(&context.extensions),
-                WRITE_TOOLS,
+                &wildcard_exclusions(),
             ),
             cache_hints,
         ))
@@ -3499,6 +3581,40 @@ mod tests {
                 "tenant-a"
             )
             .is_err()
+        );
+    }
+
+    /// `list_users_and_roles` must not be silently reachable by a token that
+    /// pre-dates it. A wildcard tool scope is the common shape for read-only
+    /// automation, and CLAUDE.md's IAM decision requires that a wildcard
+    /// grant not extend to this tool without an explicit, named change to the
+    /// token's scope.
+    #[test]
+    fn a_wildcard_tool_scope_does_not_reach_list_users_and_roles() {
+        let wildcard = caller(ScopeSet::Wildcard, ScopeSet::Wildcard);
+        assert!(
+            authorize_request(
+                Some(&wildcard),
+                "list_users_and_roles",
+                "tenant-a",
+                "tenant-a"
+            )
+            .is_err(),
+            "a wildcard tool scope must not silently reach a scoped-read tool"
+        );
+
+        let named = caller(
+            ScopeSet::Wildcard,
+            ScopeSet::Allowlist(vec!["list_users_and_roles".to_owned()]),
+        );
+        assert!(
+            authorize_request(Some(&named), "list_users_and_roles", "tenant-a", "tenant-a").is_ok(),
+            "an explicit allowlist entry must still reach the tool"
+        );
+
+        assert!(
+            authorize_request(None, "list_users_and_roles", "tenant-a", "tenant-a").is_ok(),
+            "stdio has no bearer token to scope, so it stays authorized like any other read"
         );
     }
 

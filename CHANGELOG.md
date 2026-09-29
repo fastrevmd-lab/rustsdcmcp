@@ -12,6 +12,13 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
 ## Unreleased
 
 ### Added
+- `list_users_and_roles` (MEC-224): read-only, metadata-only tenant users and
+  roles (`ListUsers`/`ListRoles`), for SOC incident review ("who has
+  access") without a portal session. Narrows CLAUDE.md's IAM exclusion
+  (decision #34) to these two read operations only; `CreateUser`, `EditUser`,
+  `DeleteUser`, `ChangePassword`, and `SendActivateUserEmail` stay excluded.
+  Excluded from a wildcard tool scope like a write tool — an existing bearer
+  token must name it explicitly.
 - `egress_proxy`: optional explicit HTTP(S) forward-proxy setting for
   outbound SDC traffic. Unset by default — the client never autodiscovers a
   proxy from environment variables, and the SDC endpoint stays fixed either
