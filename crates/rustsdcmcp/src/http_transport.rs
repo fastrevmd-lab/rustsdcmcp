@@ -1,6 +1,6 @@
 //! SDC parameters for the shared MCP Streamable HTTP transport.
 
-use crate::{SdcHandler, WRITE_TOOLS};
+use crate::{SdcHandler, WILDCARD_EXCLUDED_TOOLS};
 use anyhow::{Context, Result};
 use mecmcp_auth::{BearerSyntax, CallerCtx, NoGrant, TokenStoreFile};
 use mecmcp_transport::{
@@ -34,7 +34,7 @@ pub fn build_http_router(
             snapshot.authenticate(candidate).map(CallerCtx::from)
         });
         let preflight = ToolScopePreflight::new(
-            WRITE_TOOLS,
+            WILDCARD_EXCLUDED_TOOLS,
             [TargetField::scalar("tenant")],
             MalformedArgumentsPolicy::Deny,
         );

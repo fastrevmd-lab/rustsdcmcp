@@ -1076,6 +1076,55 @@ impl SdcClient {
         .await
     }
 
+    /// List tenant users with bounded pagination (`ListUsers`, `/api/v2/`).
+    ///
+    /// CLAUDE.md's IAM decision (see the decision log) reopens exactly
+    /// `ListUsers`/`GetUser`/`ListRoles`/`GetRole` for read-only, metadata-only
+    /// access; the other five IAM operations (`CreateUser`, `EditUser`,
+    /// `DeleteUser`, `ChangePassword`, `SendActivateUserEmail`) stay excluded.
+    /// SDC's `ListUsers` response has no `created`/`created_by` field — only
+    /// `user_id`, `email`, `name`, `status`, `last_login`, and `role[].role_name`.
+    /// It carries no key or secret material at all; there is no API-key
+    /// concept anywhere in this surface.
+    pub async fn list_users(
+        &self,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        self.list_v2(&["api", "v2", "users"], page, cancellation)
+            .await
+    }
+
+    /// List tenant roles with bounded pagination (`ListRoles`, `/api/v2/`).
+    ///
+    /// Each role carries `UUID`, `name`, `capabilities`, and `predefined` —
+    /// no timestamp field of any kind, and no key or secret material.
+    pub async fn list_roles(
+        &self,
+        page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        self.list_v2(&["api", "v2", "roles"], page, cancellation)
+            .await
+    }
+
+    /// Combined read of [`Self::list_users`] and [`Self::list_roles`] for the
+    /// `list_users_and_roles` tool.
+    ///
+    /// Fails closed: if either call errors, the whole call errors rather than
+    /// returning a partial users-only or roles-only result labeled as
+    /// complete.
+    pub async fn list_users_and_roles(
+        &self,
+        users_page: ListRequest,
+        roles_page: ListRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, SdcError> {
+        let users = self.list_users(users_page, cancellation).await?;
+        let roles = self.list_roles(roles_page, cancellation).await?;
+        Ok(serde_json::json!({ "users": users, "roles": roles }))
+    }
+
     /// Create one object in an allowlisted generic resource family.
     ///
     /// Takes [`WritableResource`], not [`ResourceKind`]: adding a family to the
@@ -3821,6 +3870,91 @@ mod tests {
             .await
             .expect("list succeeds");
         assert_eq!(result["total"], 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn list_users_and_roles_uses_the_v2_page_parameters_for_each_collection() {
+        // ListUsers and ListRoles both take `spec.from`/`spec.size`, and each
+        // collection paginates independently: a tenant with many users but
+        // few roles must not be forced to over-fetch roles to match.
+        let app = Router::new()
+            .route(
+                "/api/v2/users",
+                get(|Query(query): Query<HashMap<String, String>>| async move {
+                    assert_eq!(query.get("spec.from").map(String::as_str), Some("5"));
+                    assert_eq!(query.get("spec.size").map(String::as_str), Some("7"));
+                    Json(serde_json::json!({
+                        "users": [{
+                            "user_id": "u1",
+                            "email": "soc@example.com",
+                            "name": "SOC Reader",
+                            "status": "active",
+                            "last_login": "2026-09-01T00:00:00Z",
+                            "role": [{"role_name": "viewer"}],
+                        }],
+                        "user_count": "1",
+                    }))
+                }),
+            )
+            .route(
+                "/api/v2/roles",
+                get(|Query(query): Query<HashMap<String, String>>| async move {
+                    assert_eq!(query.get("spec.from").map(String::as_str), Some("0"));
+                    assert_eq!(query.get("spec.size").map(String::as_str), Some("2"));
+                    Json(serde_json::json!({
+                        "roles": [{
+                            "UUID": "r1",
+                            "name": "viewer",
+                            "capabilities": ["read"],
+                            "predefined": true,
+                        }],
+                        "role_count": "1",
+                    }))
+                }),
+            );
+        let (base_url, server) = serve(app).await;
+        let result = client(base_url, 4096)
+            .list_users_and_roles(
+                ListRequest::new(5, 7, 100).expect("test page"),
+                ListRequest::new(0, 2, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("combined list succeeds");
+        assert_eq!(result["users"]["users"][0]["name"], "SOC Reader");
+        assert_eq!(result["users"]["users"][0]["user_id"], "u1");
+        assert_eq!(result["roles"]["roles"][0]["name"], "viewer");
+        assert!(result["users"]["users"][0].get("api_key").is_none());
+        assert!(result["users"]["users"][0].get("password").is_none());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn list_users_and_roles_fails_closed_when_either_call_errors() {
+        // A roles-side failure must not surface as a users-only "clean" list;
+        // the whole call errors rather than returning partial data unlabeled.
+        let app = Router::new()
+            .route(
+                "/api/v2/users",
+                get(|| async move { Json(serde_json::json!({"users": [], "user_count": "0"})) }),
+            )
+            .route(
+                "/api/v2/roles",
+                get(|| async move { (StatusCode::INTERNAL_SERVER_ERROR, "boom").into_response() }),
+            );
+        let (base_url, server) = serve(app).await;
+        let result = client(base_url, 4096)
+            .list_users_and_roles(
+                ListRequest::new(0, 5, 100).expect("test page"),
+                ListRequest::new(0, 5, 100).expect("test page"),
+                &CancellationToken::new(),
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "a roles-side error must fail the whole call"
+        );
         server.abort();
     }
 

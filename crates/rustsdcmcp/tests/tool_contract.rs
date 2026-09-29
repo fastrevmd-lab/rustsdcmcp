@@ -1,19 +1,23 @@
 //! Security tripwires for MCP tool and HTTP preflight registries.
 
-use rustsdcmcp::{KNOWN_TOOLS, WRITE_TOOLS};
+use rustsdcmcp::{KNOWN_TOOLS, SCOPED_READ_TOOLS, WILDCARD_EXCLUDED_TOOLS, WRITE_TOOLS};
 use std::collections::BTreeSet;
 
 #[test]
 fn tool_registry_has_expected_unique_surface() {
-    // 59 reads / 14 writes. #32 added 6 license/certificate reads (PR #49) and
+    // 60 reads / 14 writes. #32 added 6 license/certificate reads (PR #49) and
     // 2 license/certificate writes; #34 added device-group list and get; #63
     // added discard_sdc_operation, which must be a write tool so a wildcard
     // scope cannot reach it; #21 added list_sdc_config_versions (read) and the
     // device-sync prepare/apply pair. #156 added 12 reads: sites (redacted),
     // IPS rules and exempt-rules, ECF rule-sets and rules, and global-settings.
     // #155 added 7 reads: device config sections and revision, image definitions
-    // and job status, MNHA sync and RMA status.
-    assert_eq!(KNOWN_TOOLS.len(), 73);
+    // and job status, MNHA sync and RMA status. MEC-224 added
+    // list_users_and_roles, a read-only metadata-only IAM tool reopening
+    // CLAUDE.md's IAM decision narrowly (see the decision log entry there);
+    // it is a `SCOPED_READ_TOOLS` entry, excluded from wildcard tool grants
+    // like a write tool, but not itself a write.
+    assert_eq!(KNOWN_TOOLS.len(), 74);
     assert_eq!(
         KNOWN_TOOLS.iter().copied().collect::<BTreeSet<_>>().len(),
         KNOWN_TOOLS.len()
@@ -51,6 +55,48 @@ fn read_tools_remain_the_majority_of_the_surface() {
     assert!(
         reads > writes,
         "{reads} read tools must outnumber {writes} write tools"
+    );
+}
+
+/// Every scoped-read tool is registered, and none doubles as a write tool.
+///
+/// `SCOPED_READ_TOOLS` and `WRITE_TOOLS` share one property — excluded from a
+/// wildcard tool grant — but for different reasons (mutation risk vs. tenant
+/// identity disclosure), and a tool conflating the two would blur that in the
+/// audit log's `action` field.
+#[test]
+fn scoped_read_tools_are_registered_and_disjoint_from_write_tools() {
+    for tool in SCOPED_READ_TOOLS {
+        assert!(
+            KNOWN_TOOLS.contains(tool),
+            "{tool} is a scoped-read tool but is not registered"
+        );
+        assert!(
+            !WRITE_TOOLS.contains(tool),
+            "{tool} is in both SCOPED_READ_TOOLS and WRITE_TOOLS"
+        );
+    }
+}
+
+/// `WILDCARD_EXCLUDED_TOOLS` backs the HTTP preflight
+/// (`mecmcp_transport::ToolScopePreflight`, which needs a `&'static` slice
+/// and so can't be built from `WRITE_TOOLS`/`SCOPED_READ_TOOLS` at runtime).
+/// It is a hand-written literal for that reason; this pins it equal to their
+/// union so the preflight and the handler's own `authorize_request` check
+/// can't silently drift apart again.
+#[test]
+fn wildcard_excluded_tools_equals_write_tools_union_scoped_read_tools() {
+    let expected: BTreeSet<&str> = WRITE_TOOLS
+        .iter()
+        .chain(SCOPED_READ_TOOLS.iter())
+        .copied()
+        .collect();
+    let actual: BTreeSet<&str> = WILDCARD_EXCLUDED_TOOLS.iter().copied().collect();
+    assert_eq!(actual, expected);
+    assert_eq!(
+        WILDCARD_EXCLUDED_TOOLS.len(),
+        actual.len(),
+        "WILDCARD_EXCLUDED_TOOLS must not contain duplicates"
     );
 }
 
@@ -178,6 +224,7 @@ fn redacted_tools_call_finish_redacted() {
         "apply_sdc_object_write",
         "apply_sdc_nat_write",
         "discard_sdc_operation",
+        "list_users_and_roles",
     ];
 
     // Every REDACTED_TOOLS entry must be a known tool.
