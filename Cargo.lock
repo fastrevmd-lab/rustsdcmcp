@@ -1900,6 +1900,7 @@ dependencies = [
  "quote",
  "reqwest",
  "rmcp",
+ "rustix",
  "rustls",
  "rustsdcmcp-core",
  "schemars",

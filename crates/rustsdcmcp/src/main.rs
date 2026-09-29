@@ -572,7 +572,7 @@ async fn main() -> Result<()> {
             .map_err(|error| anyhow::anyhow!("invalid --audit-redact: {error}"))?,
         )
     };
-    mecmcp_audit::init_tracing(&mecmcp_audit::AuditConfig {
+    let audit_sink = mecmcp_audit::init_tracing(&mecmcp_audit::AuditConfig {
         format: mecmcp_audit::AuditFormat::parse(&args.audit_format),
         audit_log_file: args.audit_log_file.clone(),
         redaction,
@@ -762,15 +762,15 @@ async fn main() -> Result<()> {
         }
     };
 
-    if let Some(store) = token_store.clone() {
-        mecmcp_runtime::signals::install_hup_handler(move || match store.reload() {
-            Ok(()) => tracing::info!(tokens = store.store().len(), "token store reloaded"),
-            Err(error) => {
-                tracing::error!(%error, "token reload failed; retaining previous snapshot");
-            }
-        })
-        .context("installing token reload handler")?;
-    }
+    // SIGHUP hot reload (unix only): reopen the audit file for lossless log
+    // rotation, then — when configured — re-read the token store and swap it
+    // in. Gated on the audit sink OR the token store, not the token store
+    // alone: a deployment with only `--audit-log-file` set (no
+    // `--tokens-file`) still needs a handler, or SIGHUP's default
+    // disposition (terminate) kills the process on the very signal logrotate
+    // sends it.
+    rustsdcmcp::install_sighup_handler(audit_sink, token_store.clone())
+        .context("installing SIGHUP handler")?;
 
     // Bound rather than propagated with `?`, so the flush below runs whichever
     // way serving ended. `EvidenceService::Drop` deliberately does not spool --
