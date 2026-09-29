@@ -77,7 +77,7 @@ Add a private-release section that includes:
 
 ```console
 gh release download v0.1.0-lab.1 \
-  --repo fastrevmd-lab/rustsdcmcp \
+  --repo mechubsec/rustsdcmcp \
   --pattern 'rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz*'
 sha256sum -c rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz.sha256
 sha256sum rustsdcmcp_0.1.0-lab.20260729.65135e29484b_amd64.tar.gz
@@ -92,7 +92,7 @@ f3497192cb6fe8c83cfad8014fadc787ff16de7bca89a2302b565331e4f21848  rustsdcmcp_0.1
 Link the release name to:
 
 ```text
-https://github.com/fastrevmd-lab/rustsdcmcp/releases/tag/v0.1.0-lab.1
+https://github.com/mechubsec/rustsdcmcp/releases/tag/v0.1.0-lab.1
 ```
 
 Retain a source-build section with:

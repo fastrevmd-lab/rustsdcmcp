@@ -7,7 +7,7 @@ Please **do not** open a public GitHub issue for a security vulnerability.
 Instead, use GitHub's private vulnerability reporting for this repository
 (Security tab → Report a vulnerability, or the link below):
 
-https://github.com/fastrevmd-lab/rustsdcmcp/security/advisories/new
+https://github.com/mechubsec/rustsdcmcp/security/advisories/new
 
 Include what you'd include in a bug report — affected version or commit,
 reproduction steps, and impact — but keep it in the private report, not a

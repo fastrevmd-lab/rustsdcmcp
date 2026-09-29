@@ -56,7 +56,7 @@ COPY --from=builder /build/target/release/rustsdcmcp /usr/local/bin/rustsdcmcp
 # Metadata
 LABEL org.opencontainers.image.title="rustsdcmcp"
 LABEL org.opencontainers.image.description="Security Director Cloud MCP server"
-LABEL org.opencontainers.image.source="https://github.com/fastrevmd-lab/rustsdcmcp"
+LABEL org.opencontainers.image.source="https://github.com/mechubsec/rustsdcmcp"
 LABEL org.opencontainers.image.licenses="MIT OR Apache-2.0"
 
 # ENTRYPOINT carries what must always hold: config paths and anything security-

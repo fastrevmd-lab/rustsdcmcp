@@ -21,7 +21,7 @@
 
 [Unit]
 Description=SSH tunnel to the rustsdcmcp MCP listener
-Documentation=https://github.com/fastrevmd-lab/rustsdcmcp/blob/main/docs/operations.md
+Documentation=https://github.com/mechubsec/rustsdcmcp/blob/main/docs/operations.md
 # Deliberately no `Wants=network-online.target`. This is a *user* unit, and the
 # user manager has its own unit namespace -- that target lives in the system
 # manager, so the dependency resolves to nothing and delays nothing. Naming it

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust 1.89, rmcp, reqwest, serde/schemars, axum (test-only fake SDC).
 
-**Spec:** GitHub issue fastrevmd-lab/rustsdcmcp#155; the `CLAUDE.md` scope section; `docs/sdc-api/security-director-cloud-apis-openapi3.json`.
+**Spec:** GitHub issue mechubsec/rustsdcmcp#155; the `CLAUDE.md` scope section; `docs/sdc-api/security-director-cloud-apis-openapi3.json`.
 
 **Depends on:** `2026-09-24-read-gaps-and-secret-redaction.md` being merged first. This plan uses its `finish_redacted` helper, and the tool counts below continue from its final 66.
 

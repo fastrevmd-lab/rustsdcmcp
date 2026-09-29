@@ -10,7 +10,7 @@
 
 - Date: 2026-07-29
 - Operator: `opuser`, assisted by Codex
-- Draft pull request: https://github.com/fastrevmd-lab/rustsdcmcp/pull/1
+- Draft pull request: https://github.com/mechubsec/rustsdcmcp/pull/1
 - Release status: lab-only; no Git tag or GitHub release was created
 - Source commit from `BUILD-INFO`:
   `44a28f55598ad038389d9f734e11e0f520b82837`
@@ -21,7 +21,7 @@
 - mecmcp reference: `changeset-v0.3.6`
 - Compatibility boundary: 59 temporary, issue-linked Rust symbols were recorded
   one-to-one in a compatibility ledger. Their upstream issues were
-  `fastrevmd-lab/mecmcp` issues 96 through 154.
+  `mechubsec/mecmcp` issues 96 through 154.
 
 > **Superseded 2026-08-12.** This file is the immutable acceptance record for
 > the 2026-07-29 deployment and the statements above were true then. They no

@@ -12,7 +12,7 @@ warnings`, and `cargo fmt --all --check`.
 
 ## The one architectural rule
 
-This repo is a **consumer** of [`mecmcp`](https://github.com/fastrevmd-lab/mecmcp)
+This repo is a **consumer** of [`mecmcp`](https://github.com/mechubsec/mecmcp)
 (local checkout: `~/Projects/mecmcp`), the vendor-neutral Rust foundation shared
 across the mechub MCP server family. The split is not negotiable:
 
