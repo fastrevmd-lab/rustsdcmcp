@@ -20,7 +20,7 @@ use rustsdcmcp_core::{
     ChangeManager, DeviceConfigSection, ImageJob, ListRequest, NatWriteOperation,
     ObjectWriteAction, PolicyOperation, ResourceKind, SdcClient, SdcError, WritableResource,
     page_list, project_ca_certificates, project_license, project_licenses,
-    project_local_certificates, redact_rma_state, redact_secrets,
+    project_local_certificates, project_users_and_roles, redact_rma_state, redact_secrets,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -141,12 +141,33 @@ pub const SCOPED_READ_TOOLS: &[&str] = &["list_users_and_roles"];
 
 /// Tool names excluded from a wildcard tool scope: [`WRITE_TOOLS`] plus
 /// [`SCOPED_READ_TOOLS`].
+///
+/// A `&'static [&'static str]`, not a `Vec`, because
+/// [`mecmcp_transport::ToolScopePreflight::new`] (used by the HTTP
+/// transport's preflight, in `http_transport.rs`) requires a `'static`
+/// slice. Kept as an explicit literal rather than built from `WRITE_TOOLS`
+/// and `SCOPED_READ_TOOLS` at runtime, since a `const` can't concatenate two
+/// slices; a test below pins it equal to their union so the two can't drift.
+pub const WILDCARD_EXCLUDED_TOOLS: &[&str] = &[
+    "prepare_sdc_policy_deploy",
+    "approve_sdc_change_set",
+    "apply_sdc_change_set",
+    "prepare_sdc_object_write",
+    "apply_sdc_object_write",
+    "prepare_sdc_nat_write",
+    "apply_sdc_nat_write",
+    "prepare_sdc_firewall_write",
+    "apply_sdc_firewall_write",
+    "prepare_sdc_license_write",
+    "apply_sdc_license_write",
+    "prepare_sdc_device_inventory_sync",
+    "apply_sdc_device_inventory_sync",
+    "discard_sdc_operation",
+    "list_users_and_roles",
+];
+
 fn wildcard_exclusions() -> Vec<&'static str> {
-    WRITE_TOOLS
-        .iter()
-        .chain(SCOPED_READ_TOOLS.iter())
-        .copied()
-        .collect()
+    WILDCARD_EXCLUDED_TOOLS.to_vec()
 }
 
 /// Security Director Cloud MCP handler.
@@ -2481,11 +2502,11 @@ impl SdcHandler {
             })
             .map_err(SdcError::from);
         let result = match pages {
-            Ok((users_page, roles_page)) => {
-                self.client
-                    .list_users_and_roles(users_page, roles_page, &cancellation)
-                    .await
-            }
+            Ok((users_page, roles_page)) => self
+                .client
+                .list_users_and_roles(users_page, roles_page, &cancellation)
+                .await
+                .and_then(project_users_and_roles),
             Err(error) => Err(error),
         };
         Ok(finish_redacted(audit, result))

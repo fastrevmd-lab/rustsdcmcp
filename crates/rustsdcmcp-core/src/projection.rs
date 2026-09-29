@@ -105,22 +105,56 @@ const LICENSE_FIELDS: &[&str] = &[
     "end_date",
 ];
 
-/// Envelope keys observed on every collection response.
+/// Envelope keys observed on every certificate/licence collection response.
 const ENVELOPE_FIELDS: &[&str] = &["items", "count"];
+
+/// Fields observed on `ListUsers` items (`/api/v2/users`).
+///
+/// No `created`/`created_by` field exists anywhere on this resource — see
+/// `SdcClient::list_users`. `role` is a nested list of role references,
+/// further restricted to [`USER_ROLE_REF_FIELDS`] after this allowlist runs.
+const USER_FIELDS: &[&str] = &["user_id", "email", "name", "status", "last_login", "role"];
+
+/// Fields observed on each `role[]` entry nested inside a `ListUsers` item.
+///
+/// A user's `role` entries are role *references*, not the full role object
+/// `ListRoles` returns, and carry only a name in the vendored spec.
+const USER_ROLE_REF_FIELDS: &[&str] = &["role_name"];
+
+/// Fields observed on `ListRoles` items (`/api/v2/roles`).
+const ROLE_FIELDS: &[&str] = &["UUID", "name", "capabilities", "predefined"];
+
+/// Envelope keys observed on the `ListUsers` response.
+const USER_ENVELOPE_FIELDS: &[&str] = &["users", "user_count"];
+
+/// Envelope keys observed on the `ListRoles` response.
+const ROLE_ENVELOPE_FIELDS: &[&str] = &["roles", "role_count"];
 
 /// Project a CA-certificate collection onto its allowlist.
 pub fn project_ca_certificates(value: Value) -> Result<Value, SdcError> {
-    project_collection(value, CA_CERTIFICATE_FIELDS, "ca_certificates")
+    project_collection(
+        value,
+        "items",
+        ENVELOPE_FIELDS,
+        CA_CERTIFICATE_FIELDS,
+        "ca_certificates",
+    )
 }
 
 /// Project a local-certificate collection onto its allowlist.
 pub fn project_local_certificates(value: Value) -> Result<Value, SdcError> {
-    project_collection(value, LOCAL_CERTIFICATE_FIELDS, "local_certificates")
+    project_collection(
+        value,
+        "items",
+        ENVELOPE_FIELDS,
+        LOCAL_CERTIFICATE_FIELDS,
+        "local_certificates",
+    )
 }
 
 /// Project a licence collection onto its allowlist.
 pub fn project_licenses(value: Value) -> Result<Value, SdcError> {
-    project_collection(value, LICENSE_FIELDS, "licenses")
+    project_collection(value, "items", ENVELOPE_FIELDS, LICENSE_FIELDS, "licenses")
 }
 
 /// Project a single licence object onto its allowlist.
@@ -138,13 +172,19 @@ pub fn project_license(value: Value) -> Result<Value, SdcError> {
     }
 }
 
-/// Project each member of an `{"items": [...], "count": N}` envelope.
+/// Project each member of an `{"<items_key>": [...], ...}` envelope.
 ///
-/// An empty tenant returns a bare `{}`, which has no `items` and is returned
-/// as-is. Any other departure from the expected shape fails closed with
-/// [`SdcError::InvalidJson`] rather than passing unprojected content through
-/// the boundary this module exists to guard.
-fn project_collection(value: Value, allowed: &[&str], surface: &str) -> Result<Value, SdcError> {
+/// An empty tenant returns a bare `{}`, which has no `items_key` and is
+/// returned as-is. Any other departure from the expected shape fails closed
+/// with [`SdcError::InvalidJson`] rather than passing unprojected content
+/// through the boundary this module exists to guard.
+fn project_collection(
+    value: Value,
+    items_key: &str,
+    envelope_fields: &[&str],
+    allowed: &[&str],
+    surface: &str,
+) -> Result<Value, SdcError> {
     let Value::Object(mut envelope) = value else {
         return Err(SdcError::InvalidJson);
     };
@@ -152,19 +192,20 @@ fn project_collection(value: Value, allowed: &[&str], surface: &str) -> Result<V
     let unknown_envelope: Vec<&str> = envelope
         .keys()
         .map(String::as_str)
-        .filter(|key| !ENVELOPE_FIELDS.contains(key))
+        .filter(|key| !envelope_fields.contains(key))
         .collect();
     if !unknown_envelope.is_empty() {
         report_preserved_envelope(surface, &unknown_envelope);
     }
 
-    let items = match envelope.remove("items") {
+    let items = match envelope.remove(items_key) {
         Some(Value::Array(items)) => items,
-        // `items` present but not an array. Fail closed rather than passing it
-        // through: an object-valued `items` would carry arbitrary unprojected
-        // content to the caller, defeating the allowlist entirely.
+        // `items_key` present but not an array. Fail closed rather than
+        // passing it through: an object-valued collection would carry
+        // arbitrary unprojected content to the caller, defeating the
+        // allowlist entirely.
         Some(_) => return Err(SdcError::InvalidJson),
-        // An empty tenant returns a bare `{}` with no `items` at all.
+        // An empty tenant returns a bare `{}` with no items key at all.
         None => return Ok(Value::Object(envelope)),
     };
 
@@ -172,8 +213,8 @@ fn project_collection(value: Value, allowed: &[&str], surface: &str) -> Result<V
     let mut projected: Vec<Value> = Vec::with_capacity(items.len());
     for item in items {
         // Fail closed on a non-object member for the same reason as a
-        // non-array `items`: it cannot be projected, and a nested array could
-        // carry objects the allowlist never inspects.
+        // non-array collection: it cannot be projected, and a nested array
+        // could carry objects the allowlist never inspects.
         let Value::Object(object) = item else {
             return Err(SdcError::InvalidJson);
         };
@@ -190,8 +231,82 @@ fn project_collection(value: Value, allowed: &[&str], surface: &str) -> Result<V
         report_dropped(surface, "item", &names);
     }
 
-    envelope.insert("items".to_owned(), Value::Array(projected));
+    envelope.insert(items_key.to_owned(), Value::Array(projected));
     Ok(Value::Object(envelope))
+}
+
+/// Project a `ListUsers` response onto [`USER_FIELDS`], further restricting
+/// each nested `role[]` reference to [`USER_ROLE_REF_FIELDS`].
+fn project_users(value: Value) -> Result<Value, SdcError> {
+    let projected = project_collection(value, "users", USER_ENVELOPE_FIELDS, USER_FIELDS, "users")?;
+    let Value::Object(mut envelope) = projected else {
+        return Err(SdcError::InvalidJson);
+    };
+    if let Some(Value::Array(items)) = envelope.get_mut("users") {
+        for item in items.iter_mut() {
+            let Value::Object(object) = item else {
+                return Err(SdcError::InvalidJson);
+            };
+            if let Some(role_refs) = object.remove("role") {
+                object.insert("role".to_owned(), project_role_refs(role_refs)?);
+            }
+        }
+    }
+    Ok(Value::Object(envelope))
+}
+
+/// Project one user's `role[]` array onto [`USER_ROLE_REF_FIELDS`].
+fn project_role_refs(value: Value) -> Result<Value, SdcError> {
+    let Value::Array(refs) = value else {
+        return Err(SdcError::InvalidJson);
+    };
+    let mut dropped: Vec<String> = Vec::new();
+    let mut projected: Vec<Value> = Vec::with_capacity(refs.len());
+    for entry in refs {
+        let Value::Object(object) = entry else {
+            return Err(SdcError::InvalidJson);
+        };
+        for key in object.keys() {
+            if !USER_ROLE_REF_FIELDS.contains(&key.as_str()) && !dropped.contains(key) {
+                dropped.push(key.clone());
+            }
+        }
+        projected.push(Value::Object(retain_only(object, USER_ROLE_REF_FIELDS)));
+    }
+    if !dropped.is_empty() {
+        let names: Vec<&str> = dropped.iter().map(String::as_str).collect();
+        report_dropped("users", "role_ref", &names);
+    }
+    Ok(Value::Array(projected))
+}
+
+/// Project a `ListRoles` response onto [`ROLE_FIELDS`].
+fn project_roles(value: Value) -> Result<Value, SdcError> {
+    project_collection(value, "roles", ROLE_ENVELOPE_FIELDS, ROLE_FIELDS, "roles")
+}
+
+/// Project the combined `list_users_and_roles` response, `{"users": ...,
+/// "roles": ...}`, onto the users and roles allowlists.
+///
+/// The "metadata only" promise this tool's description makes rests on this
+/// allowlist, not on [`crate::redact_secrets`]'s key-name denylist alone: an
+/// upstream field the vendored spec doesn't declare (an activation link, an
+/// MFA seed, a recovery code) would pass a denylist unless its key happened
+/// to match a known secret pattern. This projects onto exactly the fields
+/// the tool's description promises, and drops everything else.
+pub fn project_users_and_roles(value: Value) -> Result<Value, SdcError> {
+    let Value::Object(mut outer) = value else {
+        return Err(SdcError::InvalidJson);
+    };
+    let users = match outer.remove("users") {
+        Some(users) => project_users(users)?,
+        None => return Err(SdcError::InvalidJson),
+    };
+    let roles = match outer.remove("roles") {
+        Some(roles) => project_roles(roles)?,
+        None => return Err(SdcError::InvalidJson),
+    };
+    Ok(serde_json::json!({ "users": users, "roles": roles }))
 }
 
 /// Retain allowed keys on one object, reporting the names of any dropped.
@@ -456,5 +571,103 @@ mod tests {
     fn non_object_response_fails_closed() {
         assert!(project_licenses(json!([1, 2])).is_err());
         assert!(project_license(json!("nope")).is_err());
+    }
+
+    #[test]
+    fn iam_fields_outside_the_allowlist_are_dropped_from_users_and_roles() {
+        // A denylist keyed on secret-shaped names would miss all of these:
+        // `activation_link` and `note` don't look like secrets by key name,
+        // and `credentials`/`recovery_codes` carry nested structure a flat
+        // key-name scan wouldn't recurse into consistently. The allowlist
+        // must drop them regardless of what they're named.
+        let response = json!({
+            "users": {
+                "users": [{
+                    "user_id": "u1",
+                    "email": "soc@example.com",
+                    "name": "SOC Reader",
+                    "status": "pending",
+                    "last_login": "2026-09-01T00:00:00Z",
+                    "activation_link": "https://sdc.example.com/activate?code=abc123",
+                    "mfa_seed": "JBSWY3DPEHPK3PXP",
+                    "recovery_codes": ["11112222", "33334444"],
+                    "credentials": {"key": "$9$abcXYZ"},
+                    "note": "backup pw $9$abcXYZ",
+                    "role": [{"role_name": "viewer", "role_id": "r1", "scope": "internal"}],
+                }],
+                "user_count": "1",
+            },
+            "roles": {
+                "roles": [{
+                    "UUID": "r1",
+                    "name": "viewer",
+                    "capabilities": ["read"],
+                    "predefined": true,
+                    "password": "hunter2",
+                }],
+                "role_count": "1",
+            },
+        });
+
+        let projected = project_users_and_roles(response).expect("projects");
+        let user = &projected["users"]["users"][0];
+        let role_ref = &user["role"][0];
+        let role = &projected["roles"]["roles"][0];
+
+        assert!(user.get("activation_link").is_none());
+        assert!(user.get("mfa_seed").is_none());
+        assert!(user.get("recovery_codes").is_none());
+        assert!(user.get("credentials").is_none());
+        assert!(user.get("note").is_none());
+        assert!(role_ref.get("role_id").is_none());
+        assert!(role_ref.get("scope").is_none());
+        assert_eq!(role_ref["role_name"], "viewer");
+        assert!(role.get("password").is_none());
+        assert_eq!(user["name"], "SOC Reader");
+        assert_eq!(user["user_id"], "u1");
+        assert_eq!(projected["users"]["user_count"], "1");
+        assert_eq!(role["name"], "viewer");
+        assert_eq!(projected["roles"]["role_count"], "1");
+    }
+
+    #[test]
+    fn every_observed_iam_field_survives_users_and_roles_projection() {
+        let response = json!({
+            "users": {
+                "users": [{
+                    "user_id": "u1",
+                    "email": "soc@example.com",
+                    "name": "SOC Reader",
+                    "status": "active",
+                    "last_login": "2026-09-01T00:00:00Z",
+                    "role": [{"role_name": "viewer"}],
+                }],
+                "user_count": "1",
+            },
+            "roles": {
+                "roles": [{
+                    "UUID": "r1",
+                    "name": "viewer",
+                    "capabilities": ["read"],
+                    "predefined": true,
+                }],
+                "role_count": "1",
+            },
+        });
+
+        assert_eq!(
+            project_users_and_roles(response.clone()).expect("projects"),
+            response,
+            "a live-shaped users/roles response must survive projection unchanged"
+        );
+    }
+
+    #[test]
+    fn empty_users_and_roles_tenant_is_unchanged() {
+        let response = json!({"users": {}, "roles": {}});
+        assert_eq!(
+            project_users_and_roles(response.clone()).expect("projects"),
+            response
+        );
     }
 }

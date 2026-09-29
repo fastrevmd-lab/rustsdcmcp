@@ -1,6 +1,6 @@
 //! Security tripwires for MCP tool and HTTP preflight registries.
 
-use rustsdcmcp::{KNOWN_TOOLS, SCOPED_READ_TOOLS, WRITE_TOOLS};
+use rustsdcmcp::{KNOWN_TOOLS, SCOPED_READ_TOOLS, WILDCARD_EXCLUDED_TOOLS, WRITE_TOOLS};
 use std::collections::BTreeSet;
 
 #[test]
@@ -76,6 +76,28 @@ fn scoped_read_tools_are_registered_and_disjoint_from_write_tools() {
             "{tool} is in both SCOPED_READ_TOOLS and WRITE_TOOLS"
         );
     }
+}
+
+/// `WILDCARD_EXCLUDED_TOOLS` backs the HTTP preflight
+/// (`mecmcp_transport::ToolScopePreflight`, which needs a `&'static` slice
+/// and so can't be built from `WRITE_TOOLS`/`SCOPED_READ_TOOLS` at runtime).
+/// It is a hand-written literal for that reason; this pins it equal to their
+/// union so the preflight and the handler's own `authorize_request` check
+/// can't silently drift apart again.
+#[test]
+fn wildcard_excluded_tools_equals_write_tools_union_scoped_read_tools() {
+    let expected: BTreeSet<&str> = WRITE_TOOLS
+        .iter()
+        .chain(SCOPED_READ_TOOLS.iter())
+        .copied()
+        .collect();
+    let actual: BTreeSet<&str> = WILDCARD_EXCLUDED_TOOLS.iter().copied().collect();
+    assert_eq!(actual, expected);
+    assert_eq!(
+        WILDCARD_EXCLUDED_TOOLS.len(),
+        actual.len(),
+        "WILDCARD_EXCLUDED_TOOLS must not contain duplicates"
+    );
 }
 
 /// Every write tool is registered, and no read tool is silently a write.
