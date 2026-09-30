@@ -219,9 +219,17 @@ fi
 # Single-sourced from the manifest that actually pins it. Hardcoding this in
 # both generated files is how stale package documentation comes back: the next
 # mecmcp bump updates one literal and silently leaves the other behind.
-mapfile -t mecmcp_refs < <(grep -oP 'tag = "\K[^"]+' Cargo.toml | sort -u)
+#
+# Anchored to the mecmcp-* dependency declarations themselves (not just any
+# `tag = "..."` in the file) so this keeps working across MEC-14's two pin
+# shapes: today's `rev = "<sha>"` while mecmcp-redact is unreleased, and the
+# `tag = "vX.Y.Z"` it reverts to once mecmcp-redact ships in a tagged release.
+# An unanchored search previously matched a `tag = "v0.24.0"` example inside
+# this same file's explanatory comment instead of the actual rev pin below,
+# silently mislabeling every package built while the rev pin was in effect.
+mapfile -t mecmcp_refs < <(grep -oP '^mecmcp-\S+ = \{.*\b(?:tag|rev) = "\K[^"]+' Cargo.toml | sort -u)
 [[ ${#mecmcp_refs[@]} -eq 1 ]] \
-    || fail "expected exactly one mecmcp tag in Cargo.toml, found: ${mecmcp_refs[*]-none}"
+    || fail "expected exactly one mecmcp tag/rev pin in Cargo.toml, found: ${mecmcp_refs[*]-none}"
 mecmcp_ref=${mecmcp_refs[0]}
 binary_sha256=$(sha256sum "$stage_dir/bin/rustsdcmcp" | cut -d' ' -f1)
 cat >"$stage_dir/BUILD-INFO" <<EOF
@@ -365,13 +373,14 @@ jq -e '
             | [.name, .version]
         ] | sort)
         == [
-            ["mecmcp-audit", "0.24.0"],
-            ["mecmcp-auth", "0.24.0"],
-            ["mecmcp-changeset", "0.24.0"],
-            ["mecmcp-runtime", "0.24.0"],
-            ["mecmcp-secret", "0.24.0"],
-            ["mecmcp-server", "0.24.0"],
-            ["mecmcp-transport", "0.24.0"]
+            ["mecmcp-audit", "0.24.1"],
+            ["mecmcp-auth", "0.24.1"],
+            ["mecmcp-changeset", "0.24.1"],
+            ["mecmcp-redact", "0.24.1"],
+            ["mecmcp-runtime", "0.24.1"],
+            ["mecmcp-secret", "0.24.1"],
+            ["mecmcp-server", "0.24.1"],
+            ["mecmcp-transport", "0.24.1"]
         ]
     )
     and (tostring | contains("v0.8.0") | not)

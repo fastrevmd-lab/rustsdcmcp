@@ -158,6 +158,11 @@ impl SdcPreparedNatWrite {
                 "prepared NAT write does not match its digest".to_owned(),
             ));
         }
+        if crate::redact::contains_redaction_marker(&self.request) {
+            return Err(SdcError::InvalidInput(
+                "write body contains a redaction marker; re-read the field value out-of-band",
+            ));
+        }
         if serde_json::to_vec(self)
             .map_err(|_| SdcError::Serialization)?
             .len()
@@ -523,5 +528,27 @@ impl DeviceTransaction for SdcNatTransaction {
         Err(SdcError::InvalidInput(
             "SDC does not support confirmed NAT writes",
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::NatWriteOperation;
+
+    /// Percy F2 (MEC-973): a model that echoes back a redacted read must not
+    /// be able to write the literal marker over a real field.
+    #[test]
+    fn a_request_body_carrying_the_redaction_marker_is_refused() {
+        let error = SdcPreparedNatWrite::new(
+            NatWriteOperation::CreatePolicy,
+            None,
+            None,
+            None,
+            json!({"name": crate::REDACTED}),
+            Value::Null,
+        )
+        .expect_err("a redaction marker in the request body must be refused");
+        assert!(matches!(error, SdcError::InvalidInput(_)), "{error:?}");
     }
 }
