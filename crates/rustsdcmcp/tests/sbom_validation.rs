@@ -29,19 +29,20 @@ const GOOD_CONFIG: &str = r#"{
   "changeset_state_file": "/var/lib/rustsdcmcp/changeset-state.json"
 }"#;
 
-/// The seven `mecmcp-*` components the validator requires, at the pinned version.
+/// The eight `mecmcp-*` components the validator requires, at the pinned version.
 fn mecmcp_components() -> String {
     [
         "mecmcp-audit",
         "mecmcp-auth",
         "mecmcp-changeset",
+        "mecmcp-redact",
         "mecmcp-runtime",
         "mecmcp-secret",
         "mecmcp-server",
         "mecmcp-transport",
     ]
     .iter()
-    .map(|n| format!(r#"{{"name":"{n}","version":"0.24.0"}}"#))
+    .map(|n| format!(r#"{{"name":"{n}","version":"0.24.1"}}"#))
     .collect::<Vec<_>>()
     .join(",")
 }

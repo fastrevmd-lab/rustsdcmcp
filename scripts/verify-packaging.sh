@@ -140,13 +140,14 @@ assert_exact_mecmcp_sbom_set() {
         metadata: {component: {name: "rustsdcmcp"}},
         components: [
             {name: "serde", version: "1.0.0"},
-            {name: "mecmcp-audit", version: "0.24.0"},
-            {name: "mecmcp-auth", version: "0.24.0"},
-            {name: "mecmcp-changeset", version: "0.24.0"},
-            {name: "mecmcp-runtime", version: "0.24.0"},
-            {name: "mecmcp-secret", version: "0.24.0"},
-            {name: "mecmcp-server", version: "0.24.0"},
-            {name: "mecmcp-transport", version: "0.24.0"}
+            {name: "mecmcp-audit", version: "0.24.1"},
+            {name: "mecmcp-auth", version: "0.24.1"},
+            {name: "mecmcp-changeset", version: "0.24.1"},
+            {name: "mecmcp-redact", version: "0.24.1"},
+            {name: "mecmcp-runtime", version: "0.24.1"},
+            {name: "mecmcp-secret", version: "0.24.1"},
+            {name: "mecmcp-server", version: "0.24.1"},
+            {name: "mecmcp-transport", version: "0.24.1"}
         ]
     }')
     jq -e "$filter" <<<"$valid" >/dev/null \
@@ -311,23 +312,23 @@ fi
 # assert the value it actually produces. That is the property this guard wants --
 # a source-text match would pass while the manifest said something else, and it
 # would forbid single-sourcing the ref into the generated package README.
-mapfile -t builder_mecmcp_refs < <(grep -oP 'tag = "\K[^"]+' Cargo.toml | sort -u)
-[[ ${#builder_mecmcp_refs[@]} -eq 1 && ${builder_mecmcp_refs[0]} == 'v0.24.0' ]] \
-    || fail "Cargo.toml must pin exactly one approved mecmcp tag, found: ${builder_mecmcp_refs[*]-none}"
+mapfile -t builder_mecmcp_refs < <(grep -oP '^mecmcp-\S+ = \{.*\b(?:tag|rev) = "\K[^"]+' Cargo.toml | sort -u)
+[[ ${#builder_mecmcp_refs[@]} -eq 1 && ${builder_mecmcp_refs[0]} == '2e157e0f09894e2a5309408523c0911425eebd20' ]] \
+    || fail "Cargo.toml must pin exactly one approved mecmcp tag/rev, found: ${builder_mecmcp_refs[*]-none}"
 # The operations guide is packaged by build-package.sh:110 and must stay
 # consistent with the manifest and the package provenance. This is the eleventh
 # file that pins the mecmcp tag exactly.
 # shellcheck disable=SC2016  # backticks are literal grep pattern, not expansion
-grep -Fq '— to `v0.24.0`.' docs/operations.md \
-    || fail 'docs/operations.md must document the pinned mecmcp tag'
+grep -Fq '— to `2e157e0f09894e2a5309408523c0911425eebd20`.' docs/operations.md \
+    || fail 'docs/operations.md must document the pinned mecmcp tag/rev'
 # shellcheck disable=SC2016  # literal source fragment, not an expansion
 grep -Fq 'mecmcp_ref=$mecmcp_ref' scripts/build-package.sh \
     || fail 'builder must emit the derived mecmcp BUILD-INFO key'
 require_logical_line \
-    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.24.0' \"\$build_info\" || die 'BUILD-INFO mecmcp ref is invalid'" \
+    "has_single_exact_key mecmcp_ref 'mecmcp_ref=2e157e0f09894e2a5309408523c0911425eebd20' \"\$build_info\" || die 'BUILD-INFO mecmcp ref is invalid'" \
     "$installer"
 require_logical_line \
-    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.24.0' \"\$build_info\" || {" \
+    "has_single_exact_key mecmcp_ref 'mecmcp_ref=2e157e0f09894e2a5309408523c0911425eebd20' \"\$build_info\" || {" \
     packaging/tests/package-smoke.sh
 for build_info_consumer in "$installer" packaging/tests/package-smoke.sh; do
     # shellcheck disable=SC2016
@@ -339,7 +340,7 @@ for build_info_consumer in "$installer" packaging/tests/package-smoke.sh; do
         "$build_info_consumer"
 done
 require_logical_line \
-    "printf '%s\n' \"\$build_info\" | awk -F= -v expected='mecmcp_ref=v0.24.0' '\$1 == \"mecmcp_ref\" { count += 1; matches += (\$0 == expected) } END { exit !(count == 1 && matches == 1) }'" \
+    "printf '%s\n' \"\$build_info\" | awk -F= -v expected='mecmcp_ref=2e157e0f09894e2a5309408523c0911425eebd20' '\$1 == \"mecmcp_ref\" { count += 1; matches += (\$0 == expected) } END { exit !(count == 1 && matches == 1) }'" \
     "$ci"
 sbom_validators=(
     scripts/build-package.sh
@@ -347,13 +348,14 @@ sbom_validators=(
     "$ci"
 )
 required_mecmcp_pairs=(
-    '["mecmcp-audit", "0.24.0"],'
-    '["mecmcp-auth", "0.24.0"],'
-    '["mecmcp-changeset", "0.24.0"],'
-    '["mecmcp-runtime", "0.24.0"],'
-    '["mecmcp-secret", "0.24.0"],'
-    '["mecmcp-server", "0.24.0"],'
-    '["mecmcp-transport", "0.24.0"]'
+    '["mecmcp-audit", "0.24.1"],'
+    '["mecmcp-auth", "0.24.1"],'
+    '["mecmcp-changeset", "0.24.1"],'
+    '["mecmcp-redact", "0.24.1"],'
+    '["mecmcp-runtime", "0.24.1"],'
+    '["mecmcp-secret", "0.24.1"],'
+    '["mecmcp-server", "0.24.1"],'
+    '["mecmcp-transport", "0.24.1"]'
 )
 for validator in "${sbom_validators[@]}"; do
     require_logical_line \

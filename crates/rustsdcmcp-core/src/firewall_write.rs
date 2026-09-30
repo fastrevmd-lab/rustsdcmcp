@@ -174,6 +174,11 @@ impl SdcPreparedFirewallWrite {
                 self.action.as_str()
             )));
         }
+        if crate::redact::contains_redaction_marker(&self.request) {
+            return Err(SdcError::InvalidInput(
+                "write body contains a redaction marker; re-read the field value out-of-band",
+            ));
+        }
         if let Some(uuid) = self.uuid.as_deref()
             && (uuid.is_empty()
                 || uuid.len() > 256
@@ -479,4 +484,23 @@ pub struct FirewallApplyResult {
     pub validation: FirewallValidationReport,
     /// Known, detached, or indeterminate commit disposition.
     pub outcome: CommitOutcome,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Percy F2 (MEC-973): a model that echoes back a redacted read must not
+    /// be able to write the literal marker over a real field.
+    #[test]
+    fn a_request_body_carrying_the_redaction_marker_is_refused() {
+        let error = SdcPreparedFirewallWrite::new(
+            FirewallWriteOperation::CreatePolicy,
+            None,
+            json!({"name": crate::REDACTED}),
+            Value::Null,
+        )
+        .expect_err("a redaction marker in the request body must be refused");
+        assert!(matches!(error, SdcError::InvalidInput(_)), "{error:?}");
+    }
 }
