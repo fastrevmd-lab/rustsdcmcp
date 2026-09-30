@@ -178,3 +178,44 @@ jobs:
           name: rustsdcmcp-${{ steps.source.outputs.sha }}
           path: dist/${{ steps.source.outputs.sha }}/*
           if-no-files-found: error
+      - name: Verify skip-build provenance stays honest
+        run: packaging/tests/skip-build-provenance.sh
+
+  conformance:
+    name: Package conformance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@f8be11a05b1d4f3fcebe6410cc16743212b999b0 # 1.98.0
+      - name: Install jq and realpath
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends jq coreutils
+      - name: Install Trivy 0.70.0
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.70.0
+      - name: Build package
+        # Real build, not skip-build: the honest BUILD-INFO this stages is
+        # what R3 checks, and only build-package.sh produces one.
+        run: scripts/build-package.sh
+      - name: Stage the package
+        run: |
+          set -euo pipefail
+          commit=$(git rev-parse HEAD)
+          mapfile -t archives < <(find "dist/$commit" -maxdepth 1 -type f -name 'rustsdcmcp_*_amd64.tar.gz')
+          test "${#archives[@]}" -eq 1
+          mkdir -p staging
+          tar -xzf "${archives[0]}" -C staging --strip-components=1
+          cp packaging/conformance.toml staging/
+      - name: Build image
+        run: docker build --tag rustsdcmcp:ci .
+      - name: Conformance
+        uses: mechubsec/mecmcp/packaging/conformance@433d662d950c5979ba182a6ed110e7d35cae24ee
+        with:
+          staging: staging
+          manifest: staging/conformance.toml
+          image: rustsdcmcp:ci

@@ -208,7 +208,11 @@ could not extract toolchain channel from rust-toolchain.toml at commit $git_comm
 The file may be missing at that commit or the channel field cannot be parsed.
 EOF
 )"
-    rustc_metadata="rustc $toolchain_channel (pinned by rust-toolchain.toml at ${git_commit:0:12}; binary supplied prebuilt, not compiled by this script)"
+    # Must start with "unknown" -- the shared mecmcp packaging-conformance
+    # check's R3 clause 3 treats any other prefix as a toolchain claiming to
+    # have compiled a binary it did not, regardless of how informative the
+    # rest of the string is.
+    rustc_metadata="unknown (binary supplied prebuilt via SDCMCP_PACKAGE_SKIP_BUILD; pinned toolchain $toolchain_channel per rust-toolchain.toml at ${git_commit:0:12}; not compiled by this script)"
 else
     rustc_metadata=$(rustc -vV | tr '\n' ' ' | sed 's/[[:space:]]*$//')
 fi
@@ -219,6 +223,7 @@ mapfile -t mecmcp_refs < <(grep -oP 'tag = "\K[^"]+' Cargo.toml | sort -u)
 [[ ${#mecmcp_refs[@]} -eq 1 ]] \
     || fail "expected exactly one mecmcp tag in Cargo.toml, found: ${mecmcp_refs[*]-none}"
 mecmcp_ref=${mecmcp_refs[0]}
+binary_sha256=$(sha256sum "$stage_dir/bin/rustsdcmcp" | cut -d' ' -f1)
 cat >"$stage_dir/BUILD-INFO" <<EOF
 release_status=release
 version=0.0.5
@@ -229,6 +234,7 @@ target=x86_64-unknown-linux-gnu
 mecmcp_ref=$mecmcp_ref
 glibc_floor=$glibc_floor
 rustc=$rustc_metadata
+binary_sha256=$binary_sha256
 EOF
 
 # The package carries a README describing *itself*, not the repository's,

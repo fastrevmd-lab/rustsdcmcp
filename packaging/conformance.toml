@@ -1,0 +1,19 @@
+binary     = "bin/rustsdcmcp"
+installer  = "packaging/lxc/install.sh"
+service    = "rustsdcmcp"
+config_dir = "/etc/rustsdcmcp"
+tokens     = "/var/lib/rustsdcmcp/tokens.json"
+
+# rustsdcmcp has a supported skip-build path (SDCMCP_PACKAGE_SKIP_BUILD) and
+# its packager emits an honest BUILD-INFO either way -- a real rustc -vV when
+# it compiled the binary, "unknown (...)" when it did not. R3 is therefore
+# fatal rather than a warning. See mecmcp#355.
+build_info     = true
+skip_build_env = "SDCMCP_PACKAGE_SKIP_BUILD"
+
+units = ["packaging/systemd/rustsdcmcp.service"]
+
+# Both confirmed in CI (docker-build job) to survive an operator --host
+# override: Docker replaces CMD wholesale but appends to ENTRYPOINT, and both
+# flags live in ENTRYPOINT.
+must_survive_override = ["--device-mapping", "--tokens-file"]

@@ -95,7 +95,15 @@ validate_build_info() {
     grep -Fqx 'target=x86_64-unknown-linux-gnu' "$build_info" || die 'BUILD-INFO target is invalid'
     has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.24.0' "$build_info" || die 'BUILD-INFO mecmcp ref is invalid'
     grep -Eq '^glibc_floor=[0-9]+(\.[0-9]+)+$' "$build_info" || die 'BUILD-INFO GLIBC floor is invalid'
-    grep -Eq '^rustc=rustc ' "$build_info" || die 'BUILD-INFO rustc metadata is invalid'
+    # A normal build's rustc field names the compiling toolchain; a
+    # skip-build package's names none, and must say so honestly rather than
+    # claim a workstation toolchain that never touched the binary.
+    grep -Eq '^rustc=(rustc |unknown \()' "$build_info" || die 'BUILD-INFO rustc metadata is invalid'
+    local recorded_sha
+    recorded_sha=$(sed -n 's/^binary_sha256=//p' "$build_info")
+    [[ "$recorded_sha" =~ ^[0-9a-f]{64}$ ]] || die 'BUILD-INFO binary_sha256 is invalid'
+    [[ "$recorded_sha" == "$(sha256sum "$package_dir/bin/rustsdcmcp" | cut -d' ' -f1)" ]] \
+        || die 'BUILD-INFO binary_sha256 does not match the shipped binary'
 }
 
 validate_package_json() {
