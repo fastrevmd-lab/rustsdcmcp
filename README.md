@@ -341,8 +341,9 @@ already adopted (#54). What remains:
 3. Broader bounded live validation across the remaining read endpoints, with
    write workflows exercised only through approved change control.
 4. Wider API coverage. The tool surface is a minority of the SDC API by
-   design — IAM and subscriptions are excluded outright — but several in-scope
-   families are simply unbuilt.
+   design — subscriptions are excluded outright, and IAM is excluded except for
+   the read-only, metadata-only `list_users_and_roles` tool (CLAUDE.md,
+   MEC-224) — but several in-scope families are simply unbuilt.
 
 ## Relationship to `mecmcp`
 

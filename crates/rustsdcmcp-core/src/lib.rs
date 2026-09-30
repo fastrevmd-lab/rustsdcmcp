@@ -52,5 +52,6 @@ pub use paging::{ListPage, PageError, page_list};
 pub use prepared::{SdcPreparedChange, SdcPreparedTarget};
 pub use projection::{
     project_ca_certificates, project_license, project_licenses, project_local_certificates,
+    project_users_and_roles,
 };
 pub use redact::{REDACTED, contains_redaction_marker, redact_rma_state, redact_secrets};
