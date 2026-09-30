@@ -22,10 +22,15 @@
 //!   line-oriented scan recognizes every secret shape SDC's CPE templates can
 //!   produce, so the whole body is dropped rather than trusted to a
 //!   best-effort scan. This runs *before* the shared-crate pass.
-//! - [`NON_SECRET_KEYS`] exempts our own opaque paging cursors
-//!   (`continuation_token`, and the upstream `nextPageToken` it mirrors) from
-//!   the shared crate's `token` denylist match; redacting them breaks paging
-//!   (MEC-440 B1). Protected before the shared-crate pass, restored after.
+//! - [`KEY_MATCH_EXEMPTIONS`] exempts specific upstream field names that
+//!   collide with a shared-crate denylist substring but are not secrets: our
+//!   own opaque paging cursors (`continuation_token`, and the upstream
+//!   `nextPageToken` it mirrors — redacting them breaks paging, MEC-440 B1),
+//!   and a set of SDC `session*`/`*session*` fields that are not credentials
+//!   (session-logging flags, session counters, an SSL session cache toggle —
+//!   over-redacting them can hide a policy rule's real logging state from the
+//!   model reviewing a write, MEC-973 F1). Protected before the shared-crate
+//!   pass, restored after.
 //!
 //! ## Redaction policy
 //!
@@ -56,15 +61,44 @@ pub const REDACTED: &str = "[REDACTED]";
 /// comparison, so `siteConfig` and `site-config` match too.
 const WHOLESALE_REDACT_KEYS: &[&str] = &["siteconfig", "cpeconfig"];
 
-/// Keys that must survive the shared crate's `token` denylist match: opaque
-/// paging cursors the caller must echo back to page past the first page.
-/// Exact match after normalization, at any depth.
-const NON_SECRET_KEYS: &[&str] = &["continuationtoken", "nextpagetoken"];
+/// Upstream field names that match a shared-crate denylist substring by
+/// coincidence, not because they carry a secret. Exact match after
+/// normalization, at any depth. Every SDC OpenAPI property name the shared
+/// crate's denylist matches must be either an intentional secret or listed
+/// here — see `spec_property_names_matching_the_denylist_are_accounted_for`
+/// below, which fails if a spec refresh adds a new false positive silently.
+///
+/// - `continuationtoken` / `nextpagetoken`: opaque paging cursors the caller
+///   must echo back to page past the first page (MEC-440 B1).
+/// - The `session`-substring group (`sessioninitiatelog`, `sessioncloselog`,
+///   `maxsessionnumber`, `noofsessions`, `disablesessionresumption`,
+///   `sessionignoredlog`, `sessionsallowedlog`, `sessionsdroppedlog`,
+///   `sessionswhitelistedlog`, `sslsessioncache`, `closesessionaction`,
+///   `maxsessions`): firewall-rule logging flags and NAT/SSL/ICAP session
+///   settings, not credentials. Over-redacting them can hide a policy rule's
+///   real session-logging state from the model reviewing a write (MEC-973
+///   F1).
+const KEY_MATCH_EXEMPTIONS: &[&str] = &[
+    "continuationtoken",
+    "nextpagetoken",
+    "sessioninitiatelog",
+    "sessioncloselog",
+    "maxsessionnumber",
+    "noofsessions",
+    "disablesessionresumption",
+    "sessionignoredlog",
+    "sessionsallowedlog",
+    "sessionsdroppedlog",
+    "sessionswhitelistedlog",
+    "sslsessioncache",
+    "closesessionaction",
+    "maxsessions",
+];
 
-/// Prefix used to hide a paging-token key from the shared crate's denylist
-/// scan for the duration of that pass. Not valid in a normal upstream JSON
-/// key, so it cannot collide with a real field.
-const PAGING_GUARD_PREFIX: &str = "\u{0}mecmcp-paging-guard\u{0}";
+/// Prefix used to hide an exempt key from the shared crate's denylist scan
+/// for the duration of that pass. Not expected in a normal upstream JSON key,
+/// so it cannot collide with a real field.
+const KEY_MATCH_GUARD_PREFIX: &str = "\u{0}mecmcp-key-guard\u{0}";
 
 /// Normalize a key for comparison: lowercase and remove `_` and `-`.
 fn normalize_key(key: &str) -> String {
@@ -81,10 +115,30 @@ fn normalize_key(key: &str) -> String {
 #[must_use]
 pub fn redact_secrets(mut value: Value) -> Value {
     redact_wholesale_fields(&mut value);
-    let paging_tokens = guard_paging_tokens(&mut value);
+    let exempted = guard_exempt_keys(&mut value);
     mecmcp_redact::redact_json_value(&mut value);
-    unguard_paging_tokens(&mut value, &paging_tokens);
+    unguard_exempt_keys(&mut value, &exempted);
     value
+}
+
+/// Whether `value` carries the [`REDACTED`] marker in any string, at any depth.
+///
+/// The shared crate's free-text scan can rewrite only part of a string (for
+/// example `"... token rotation owner=netops"` becomes `"... token
+/// [REDACTED]"`), so this checks for the marker as a substring rather than
+/// requiring the whole string to equal it. Every write path must call this on
+/// the caller-supplied request body and refuse the write if it returns
+/// `true`: a model that echoes back a value it read through
+/// [`redact_secrets`] without re-reading it out-of-band would otherwise write
+/// the literal placeholder over the real field.
+#[must_use]
+pub fn contains_redaction_marker(value: &Value) -> bool {
+    match value {
+        Value::String(text) => text.contains(REDACTED),
+        Value::Object(map) => map.values().any(contains_redaction_marker),
+        Value::Array(items) => items.iter().any(contains_redaction_marker),
+        _ => false,
+    }
 }
 
 /// Redact license keys in an RMA state response.
@@ -137,10 +191,10 @@ fn redact_wholesale_fields(value: &mut Value) {
     }
 }
 
-/// Rename every [`NON_SECRET_KEYS`] key to an opaque, counter-suffixed
-/// placeholder so the shared crate's substring denylist scan never sees a
-/// `token`-shaped name, and record the original names in traversal order so
-/// [`unguard_paging_tokens`] can restore them exactly.
+/// Rename every [`KEY_MATCH_EXEMPTIONS`] key to an opaque, counter-suffixed
+/// placeholder so the shared crate's substring denylist scan never sees the
+/// name it would otherwise match, and record the original names in traversal
+/// order so [`unguard_exempt_keys`] can restore them exactly.
 ///
 /// The placeholder cannot embed the original key text (e.g. by prefixing it):
 /// `continuation_token` normalized is itself `continuationtoken`, which
@@ -148,7 +202,7 @@ fn redact_wholesale_fields(value: &mut Value) {
 /// still trip the scan it exists to dodge. A pure counter carries no such
 /// text.
 #[must_use]
-fn guard_paging_tokens(value: &mut Value) -> Vec<String> {
+fn guard_exempt_keys(value: &mut Value) -> Vec<String> {
     let mut originals = Vec::new();
     guard_inner(value, &mut originals);
     originals
@@ -159,10 +213,10 @@ fn guard_inner(value: &mut Value, originals: &mut Vec<String>) {
         Value::Object(map) => {
             let keys: Vec<String> = map.keys().cloned().collect();
             for key in keys {
-                if NON_SECRET_KEYS.contains(&normalize_key(&key).as_str())
+                if KEY_MATCH_EXEMPTIONS.contains(&normalize_key(&key).as_str())
                     && let Some(v) = map.remove(&key)
                 {
-                    let marker = format!("{PAGING_GUARD_PREFIX}{}", originals.len());
+                    let marker = format!("{KEY_MATCH_GUARD_PREFIX}{}", originals.len());
                     originals.push(key);
                     map.insert(marker, v);
                 }
@@ -176,15 +230,15 @@ fn guard_inner(value: &mut Value, originals: &mut Vec<String>) {
     }
 }
 
-/// Reverse [`guard_paging_tokens`], restoring the original key names from
+/// Reverse [`guard_exempt_keys`], restoring the original key names from
 /// `originals` by the counter each placeholder carries.
-fn unguard_paging_tokens(value: &mut Value, originals: &[String]) {
+fn unguard_exempt_keys(value: &mut Value, originals: &[String]) {
     match value {
         Value::Object(map) => {
             let keys: Vec<String> = map.keys().cloned().collect();
             for key in keys {
                 let Some(index) = key
-                    .strip_prefix(PAGING_GUARD_PREFIX)
+                    .strip_prefix(KEY_MATCH_GUARD_PREFIX)
                     .and_then(|suffix| suffix.parse::<usize>().ok())
                 else {
                     continue;
@@ -197,12 +251,12 @@ fn unguard_paging_tokens(value: &mut Value, originals: &[String]) {
                 }
             }
             for (_, child) in map.iter_mut() {
-                unguard_paging_tokens(child, originals);
+                unguard_exempt_keys(child, originals);
             }
         }
         Value::Array(items) => items
             .iter_mut()
-            .for_each(|v| unguard_paging_tokens(v, originals)),
+            .for_each(|v| unguard_exempt_keys(v, originals)),
         _ => {}
     }
 }
@@ -468,5 +522,127 @@ mod tests {
         let out = redact_rma_state(state);
         assert!(out["missing_licenses"].is_null());
         assert_eq!(out["device_id"], "dev1");
+    }
+
+    /// Percy F1 (MEC-973): the shared denylist's `session` substring caught
+    /// firewall-rule logging flags and NAT/SSL/ICAP session settings that are
+    /// not credentials. Over-redacting them hides a policy rule's real
+    /// logging state from the model reviewing a write.
+    #[test]
+    fn session_logging_and_related_fields_survive_redaction() {
+        let out = redact_secrets(json!({
+            "session_initiate_log": true,
+            "session_close_log": false,
+            "max_session_number": 12,
+            "no_of_sessions": 3,
+            "disable_session_resumption": false,
+            "session_ignored_log": true,
+            "sessions_allowed_log": true,
+            "sessions_dropped_log": true,
+            "sessions_white_listed_log": true,
+            "ssl_session_cache": "enabled",
+            "close_session_action": "drop",
+            "max_sessions": 100,
+            "session_id": "still-a-secret"
+        }));
+        for key in [
+            "session_initiate_log",
+            "session_close_log",
+            "max_session_number",
+            "no_of_sessions",
+            "disable_session_resumption",
+            "session_ignored_log",
+            "sessions_allowed_log",
+            "sessions_dropped_log",
+            "sessions_white_listed_log",
+            "ssl_session_cache",
+            "close_session_action",
+            "max_sessions",
+        ] {
+            assert_ne!(
+                out[key],
+                Value::String(REDACTED.to_owned()),
+                "{key} should not be redacted"
+            );
+        }
+        // Only the exempted names above survive; an unlisted `session*` field
+        // must still be caught by the shared crate's denylist.
+        assert_eq!(out["session_id"], REDACTED);
+    }
+
+    /// Percy F1 (MEC-973): every SDC OpenAPI property name the shared crate's
+    /// denylist matches must be either an intentional secret or on
+    /// [`KEY_MATCH_EXEMPTIONS`], so a spec refresh that adds a new
+    /// denylist-colliding field name cannot silently over-redact it again.
+    #[test]
+    fn spec_property_names_matching_the_denylist_are_accounted_for() {
+        const INTENTIONAL_SECRETS: &[&str] = &[
+            "current_password",
+            "new_password",
+            "pass_phrase",
+            "passphrase",
+            "password",
+            "password_ascii",
+            "password_base64",
+            "pre_shared_key",
+            "psk",
+            "root_pwd",
+            "skip_password_from_config",
+        ];
+
+        let spec_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/sdc-api/security-director-cloud-apis-openapi3.json"
+        );
+        let spec: Value = serde_json::from_str(
+            &std::fs::read_to_string(spec_path).expect("SDC OpenAPI spec must be readable"),
+        )
+        .expect("SDC OpenAPI spec must be valid JSON");
+
+        let mut property_names = std::collections::BTreeSet::new();
+        collect_property_names(&spec, &mut property_names);
+        assert!(
+            property_names.len() > 100,
+            "sanity check: the spec walk should find far more than {} properties",
+            property_names.len()
+        );
+
+        for name in property_names {
+            if !mecmcp_redact::denylist::is_denylisted_key(&name) {
+                continue;
+            }
+            let normalized = normalize_key(&name);
+            let is_intentional_secret = INTENTIONAL_SECRETS
+                .iter()
+                .any(|secret| normalize_key(secret) == normalized);
+            let is_exempted = KEY_MATCH_EXEMPTIONS.contains(&normalized.as_str());
+            assert!(
+                is_intentional_secret || is_exempted,
+                "spec property {name:?} is newly caught by the shared denylist; \
+                 add it to INTENTIONAL_SECRETS in this test if it is a real \
+                 secret, or to KEY_MATCH_EXEMPTIONS in redact.rs if it is not"
+            );
+        }
+    }
+
+    /// Collect every key of every JSON object nested under a `"properties"`
+    /// object, anywhere in `value`.
+    fn collect_property_names(value: &Value, names: &mut std::collections::BTreeSet<String>) {
+        match value {
+            Value::Object(map) => {
+                if let Some(Value::Object(properties)) = map.get("properties") {
+                    names.extend(properties.keys().cloned());
+                }
+                for child in map.values() {
+                    collect_property_names(child, names);
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    collect_property_names(item, names);
+                }
+            }
+            _ => {}
+        }
     }
 }

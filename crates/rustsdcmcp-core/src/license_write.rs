@@ -186,6 +186,11 @@ impl SdcPreparedLicenseWrite {
                 self.action.as_str()
             )));
         }
+        if crate::redact::contains_redaction_marker(&self.request) {
+            return Err(SdcError::InvalidInput(
+                "write body contains a redaction marker; re-read the field value out-of-band",
+            ));
+        }
         let plan = plan_artifact(self.action, &self.device_uuid, &self.request, &self.before);
         if canonical_digest(&plan).map_err(|error| SdcError::PreparedChange(error.to_string()))?
             != self.plan_digest
@@ -893,5 +898,19 @@ mod tests {
             .expect("an unchanged target validates");
         assert!(report.valid && report.target_unchanged);
         server.abort();
+    }
+
+    /// Percy F2 (MEC-973): a model that echoes back a redacted read must not
+    /// be able to write the literal marker over a real field.
+    #[test]
+    fn a_request_body_carrying_the_redaction_marker_is_refused() {
+        let error = SdcPreparedLicenseWrite::new(
+            LicenseWriteOperation::InstallLicense,
+            "device-123".to_owned(),
+            json!({"license_key": crate::REDACTED}),
+            Value::Null,
+        )
+        .expect_err("a redaction marker in the request body must be refused");
+        assert!(matches!(error, SdcError::InvalidInput(_)), "{error:?}");
     }
 }

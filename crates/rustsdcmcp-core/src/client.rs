@@ -2428,6 +2428,11 @@ fn validate_object_body(body: &Value) -> Result<(), SdcError> {
             "object write body exceeds the 1048576-byte limit",
         ));
     }
+    if crate::redact::contains_redaction_marker(body) {
+        return Err(SdcError::InvalidInput(
+            "write body contains a redaction marker; re-read the field value out-of-band",
+        ));
+    }
     Ok(())
 }
 
@@ -3028,6 +3033,25 @@ mod tests {
                 "body {body} produced {error:?}"
             );
         }
+    }
+
+    /// Percy F2 (MEC-973): a model that echoes back a redacted read must not
+    /// be able to write the literal marker over a real field.
+    #[tokio::test]
+    async fn object_writes_reject_bodies_carrying_the_redaction_marker() {
+        let sdc = client(
+            Url::parse("https://example.invalid/").expect("test URL"),
+            1024,
+        );
+        let error = sdc
+            .create_resource(
+                WritableResource::Addresses,
+                &serde_json::json!({"name": "a", "description": crate::REDACTED}),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect_err("a redaction marker in the request body must be refused");
+        assert!(matches!(error, SdcError::InvalidInput(_)), "{error:?}");
     }
 
     #[tokio::test]
