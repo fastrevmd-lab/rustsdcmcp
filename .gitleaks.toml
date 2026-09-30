@@ -21,10 +21,16 @@ targetRules = ["pem-private-key", "private-key"]
 # test (MEC-224 Percy re-review) asserts the users/roles field allowlist drops a
 # "$9$..." string from an unlisted field. The value is a synthetic literal typed
 # directly into the test, not a $9$ hash captured from a real device or config.
+# b8a9cae is the commit on the pre-squash MEC-224 feature branch; 28a3417 is the
+# same change's hash after it landed on main via squash-merge (#200) — both are
+# listed because different branches' histories reach one or the other.
 [[allowlists]]
 description = "Synthetic $9$-shaped literal in projection.rs users/roles allowlist test (MEC-224), not a real device secret"
 condition = "AND"
-commits = ["b8a9cae0ac144b51cbb9d19d2fd85c152920bcc4"]
+commits = [
+  "b8a9cae0ac144b51cbb9d19d2fd85c152920bcc4",
+  "28a3417ae8dbf4806fb58f9fc49c62e73e8c7205",
+]
 paths = [
   '''(^|/)crates/rustsdcmcp-core/src/projection\.rs$''',
 ]
