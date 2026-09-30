@@ -121,6 +121,17 @@ has_single_exact_key mecmcp_ref 'mecmcp_ref=2e157e0f09894e2a5309408523c0911425ee
     printf '%s\n' 'archive BUILD-INFO has the wrong mecmcp ref' >&2
     exit 1
 }
+recorded_sha=$(sed -n 's/^binary_sha256=//p' "$build_info")
+[[ "$recorded_sha" =~ ^[0-9a-f]{64}$ ]] || {
+    printf '%s\n' 'archive BUILD-INFO binary_sha256 is missing or malformed' >&2
+    exit 1
+}
+binary="$work_dir/rustsdcmcp-bin"
+tar -xOf "$archive" "$package_root/bin/rustsdcmcp" >"$binary"
+[[ "$recorded_sha" == "$(sha256sum "$binary" | cut -d' ' -f1)" ]] || {
+    printf '%s\n' 'archive BUILD-INFO binary_sha256 does not match the shipped binary' >&2
+    exit 1
+}
 
 sbom="$work_dir/SBOM.cdx.json"
 tar -xOf "$archive" "$package_root/SBOM.cdx.json" >"$sbom"
