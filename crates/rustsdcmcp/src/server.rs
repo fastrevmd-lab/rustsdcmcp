@@ -3,8 +3,8 @@
 use mecmcp_audit::{Attribution, AuditScope};
 use mecmcp_auth::{CallerCtx, NoGrant};
 use mecmcp_server::{
-    ResultFormat, ResultLimits, audit_scope, authorize_call, caller_from_extensions,
-    filter_tools_for_scope, tool_error, tool_result,
+    OutputRedaction, ResultFormat, ResultLimits, audit_scope, authorize_call,
+    caller_from_extensions, filter_tools_for_scope, tool_error, tool_result,
 };
 use rmcp::{
     RoleServer, ServerHandler,
@@ -251,12 +251,34 @@ fn approver_actor_type(caller: Option<&CallerCtx<NoGrant>>) -> mecmcp_audit::Act
     attribution(caller, None).actor_type
 }
 
+/// `finish`'s sole caller is `finish_redacted`, which has already run every
+/// `Ok` value through `rustsdcmcp_core::redact_secrets` before this point —
+/// that pass guards `KEY_MATCH_EXEMPTIONS` (`continuation_token`,
+/// `nextPageToken`, session-logging flags) around the shared crate's generic
+/// denylist scan so those fields survive the scan intact, then restores the
+/// real key names. `mecmcp_server::tool_result`'s own `OutputRedaction::Apply`
+/// would run that same generic scan a second time with no knowledge of the
+/// guard, re-redacting `continuation_token` (breaking pagination, MEC-440 B1)
+/// and the session-logging fields (MEC-973 F1). `SkipForInternalRead` is the
+/// documented per-call opt-out for exactly this situation — the value is not
+/// unredacted, it was already redacted upstream with exemptions the generic
+/// pass cannot express.
 fn finish<T: Serialize>(mut audit: AuditScope, result: Result<T, SdcError>) -> CallToolResult {
     match &result {
         Ok(_) => audit.succeed(),
         Err(error) => audit.fail(error),
     }
-    tool_result(result, ResultFormat::PrettyJson, RESULT_LIMITS)
+    tool_result(
+        result,
+        ResultFormat::PrettyJson,
+        RESULT_LIMITS,
+        OutputRedaction::SkipForInternalRead {
+            tool: "rustsdcmcp::finish_redacted",
+            reason: "value already redacted by rustsdcmcp_core::redact_secrets, which guards \
+                     continuation_token/nextPageToken/session-logging fields that the generic \
+                     denylist scan would otherwise re-redact (MEC-440 B1, MEC-973 F1)",
+        },
+    )
 }
 
 /// `finish`, for reads whose upstream shape may carry credentials.

@@ -429,14 +429,14 @@ fn validate_sbom_file(package_dir: &Path) -> Result<()> {
 
     // Check mecmcp-* components
     let expected_mecmcp_components = [
-        ("mecmcp-audit", "0.24.1"),
-        ("mecmcp-auth", "0.24.1"),
-        ("mecmcp-changeset", "0.24.1"),
-        ("mecmcp-redact", "0.24.1"),
-        ("mecmcp-runtime", "0.24.1"),
-        ("mecmcp-secret", "0.24.1"),
-        ("mecmcp-server", "0.24.1"),
-        ("mecmcp-transport", "0.24.1"),
+        ("mecmcp-audit", "0.25.0"),
+        ("mecmcp-auth", "0.25.0"),
+        ("mecmcp-changeset", "0.25.0"),
+        ("mecmcp-redact", "0.25.0"),
+        ("mecmcp-runtime", "0.25.0"),
+        ("mecmcp-secret", "0.25.0"),
+        ("mecmcp-server", "0.25.0"),
+        ("mecmcp-transport", "0.25.0"),
     ];
 
     let mut found_mecmcp: Vec<(String, String)> = Vec::new();
@@ -578,6 +578,7 @@ async fn main() -> Result<()> {
         audit_log_file: args.audit_log_file.clone(),
         redaction,
         journald: args.audit_journald,
+        otel: None,
     })
     .context("initializing audit tracing")?;
     mecmcp_audit::install_duration_metric_name("sdcmcp_tool_duration_seconds");
