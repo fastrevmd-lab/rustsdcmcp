@@ -11,6 +11,18 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
 
 ## Unreleased
 
+### Changed
+- **The container image now pre-provisions its audit HMAC key.** The
+  `rustsdcmcp` binary generates `--audit-hmac-key-file` on first run if it
+  is absent or empty (mirroring `packaging/lxc/install.sh`'s own
+  key-generation step), and the Dockerfile's `ENTRYPOINT` now always passes
+  `--audit-hmac-key-file /var/lib/rustsdcmcp/audit-hmac.key`. Previously the
+  container image ran with no HMAC key configured at all, unlike the LXC
+  package of the same binary (mecmcp#376 / MEC-978). `--audit-redact`
+  itself still defaults to empty — redaction stays opt-in — so this alone
+  does not change what is logged; an operator who now turns on `=hmac`
+  redaction no longer hits a key-file error on the first restart.
+
 ### Added
 - `list_users_and_roles` (MEC-224): read-only, metadata-only tenant users and
   roles (`ListUsers`/`ListRoles`), for SOC incident review ("who has
