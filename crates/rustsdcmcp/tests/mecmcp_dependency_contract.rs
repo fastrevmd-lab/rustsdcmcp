@@ -30,16 +30,13 @@ const LOCKED_PACKAGES: [&str; 8] = [
     "mecmcp-server",
     "mecmcp-transport",
 ];
-const VERSION: &str = "0.24.1";
-// TEMPORARY: pinned to a rev on mechubsec/mecmcp main, not a released tag --
-// see the workspace Cargo.toml comment above the mecmcp-* declarations
-// (MEC-14). Replace with a `tag`-based COMMIT once mecmcp-redact ships in a
-// release.
-const COMMIT: &str = "2e157e0f09894e2a5309408523c0911425eebd20";
+const VERSION: &str = "0.25.0";
+const TAG: &str = "v0.25.0";
+const COMMIT: &str = "6bd42f89f8b0311526e773434a811b390557f81f";
 const REPOSITORY: &str = "https://github.com/mechubsec/mecmcp";
 
 fn validate_mecmcp_lockfile(lock: &str) -> Result<(), String> {
-    let source = format!("git+{REPOSITORY}?rev={COMMIT}#{COMMIT}");
+    let source = format!("git+{REPOSITORY}?tag={TAG}#{COMMIT}");
     let mut expected = LOCKED_PACKAGES
         .map(|package| (package.to_owned(), VERSION.to_owned(), source.clone()))
         .to_vec();
@@ -99,7 +96,7 @@ fn all_mecmcp_crates_use_one_released_tag_and_commit() {
 
     for package in PACKAGES {
         let declaration = format!(
-            r#"{package} = {{ version = "{VERSION}", git = "{REPOSITORY}", rev = "{COMMIT}" }}"#
+            r#"{package} = {{ version = "{VERSION}", git = "{REPOSITORY}", tag = "{TAG}" }}"#
         );
         assert!(
             manifest.lines().any(|line| line == declaration),
@@ -182,7 +179,7 @@ fn rejects_any_non_exact_mecmcp_package_set() {
     let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let lock =
         fs::read_to_string(crate_root.join("../../Cargo.lock")).expect("read workspace lockfile");
-    let approved_source = format!("git+{REPOSITORY}?rev={COMMIT}#{COMMIT}");
+    let approved_source = format!("git+{REPOSITORY}?tag={TAG}#{COMMIT}");
     let auth_block = lock
         .split("[[package]]")
         .find(|block| block.contains("\nname = \"mecmcp-auth\"\n"))
@@ -203,6 +200,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         &approved_source,
         "git+https://example.invalid/mecmcp?tag=v0.0.0#0000000000000000000000000000000000000000",
         1,
+    );
+    assert_ne!(
+        wrong_source, lock,
+        "the different-source mutation must actually change the lockfile"
     );
     // Derived from VERSION rather than written out: hardcoding the version here
     // meant that when the pin moved, `replacen` silently matched nothing, the

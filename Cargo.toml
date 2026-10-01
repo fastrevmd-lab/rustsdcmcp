@@ -48,24 +48,15 @@ url = "2"
 uuid = { version = "1", features = ["v4"] }
 zeroize = "1"
 
-# TEMPORARY: pinned to a rev on mechubsec/mecmcp main, not a released tag.
-# mecmcp-redact (added by mecmcp#386, hardened by mecmcp#432) has not shipped
-# a tagged release yet -- the latest tag, v0.24.0, predates it. Cargo requires
-# every crate sourced from one git repo to resolve to the identical git ref,
-# so ALL mecmcp-* crates below are pinned to this same `rev`, not just the
-# one this server newly depends on -- pinning only mecmcp-redact to a later
-# rev while the rest stay on `tag = "v0.24.0"` would resolve two copies of
-# the mecmcp dependency graph (e.g. two incompatible `CallerCtx` types).
-# Replace `rev` with a released `tag` once that history ships one. Same rev
-# rustpanosmcp and rustjunosmcp pinned to for the same reason (MEC-14).
-mecmcp-audit = { version = "0.24.1", git = "https://github.com/mechubsec/mecmcp", rev = "2e157e0f09894e2a5309408523c0911425eebd20" }
-mecmcp-auth = { version = "0.24.1", git = "https://github.com/mechubsec/mecmcp", rev = "2e157e0f09894e2a5309408523c0911425eebd20" }
-mecmcp-changeset = { version = "0.24.1", git = "https://github.com/mechubsec/mecmcp", rev = "2e157e0f09894e2a5309408523c0911425eebd20" }
-mecmcp-redact = { version = "0.24.1", git = "https://github.com/mechubsec/mecmcp", rev = "2e157e0f09894e2a5309408523c0911425eebd20" }
-mecmcp-runtime = { version = "0.24.1", git = "https://github.com/mechubsec/mecmcp", rev = "2e157e0f09894e2a5309408523c0911425eebd20" }
-mecmcp-secret = { version = "0.24.1", git = "https://github.com/mechubsec/mecmcp", rev = "2e157e0f09894e2a5309408523c0911425eebd20" }
-mecmcp-server = { version = "0.24.1", git = "https://github.com/mechubsec/mecmcp", rev = "2e157e0f09894e2a5309408523c0911425eebd20" }
-mecmcp-transport = { version = "0.24.1", git = "https://github.com/mechubsec/mecmcp", rev = "2e157e0f09894e2a5309408523c0911425eebd20" }
+# mecmcp is consumed at an exact pinned version. Do not relax the tag.
+mecmcp-audit = { version = "0.25.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.25.0" }
+mecmcp-auth = { version = "0.25.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.25.0" }
+mecmcp-changeset = { version = "0.25.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.25.0" }
+mecmcp-redact = { version = "0.25.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.25.0" }
+mecmcp-runtime = { version = "0.25.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.25.0" }
+mecmcp-secret = { version = "0.25.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.25.0" }
+mecmcp-server = { version = "0.25.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.25.0" }
+mecmcp-transport = { version = "0.25.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.25.0" }
 
 [profile.release]
 lto = "thin"

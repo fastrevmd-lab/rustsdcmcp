@@ -3,8 +3,8 @@
 use mecmcp_audit::{Attribution, AuditScope};
 use mecmcp_auth::{CallerCtx, NoGrant};
 use mecmcp_server::{
-    ResultFormat, ResultLimits, audit_scope, authorize_call, caller_from_extensions,
-    filter_tools_for_scope, tool_error, tool_result,
+    OutputRedaction, ResultFormat, ResultLimits, audit_scope, authorize_call,
+    caller_from_extensions, filter_tools_for_scope, tool_error, tool_result,
 };
 use rmcp::{
     RoleServer, ServerHandler,
@@ -251,12 +251,34 @@ fn approver_actor_type(caller: Option<&CallerCtx<NoGrant>>) -> mecmcp_audit::Act
     attribution(caller, None).actor_type
 }
 
+/// `finish`'s sole caller is `finish_redacted`, which has already run every
+/// `Ok` value through `rustsdcmcp_core::redact_secrets` before this point —
+/// that pass guards `KEY_MATCH_EXEMPTIONS` (`continuation_token`,
+/// `nextPageToken`, session-logging flags) around the shared crate's generic
+/// denylist scan so those fields survive the scan intact, then restores the
+/// real key names. `mecmcp_server::tool_result`'s own `OutputRedaction::Apply`
+/// would run that same generic scan a second time with no knowledge of the
+/// guard, re-redacting `continuation_token` (breaking pagination, MEC-440 B1)
+/// and the session-logging fields (MEC-973 F1). `SkipForInternalRead` is the
+/// documented per-call opt-out for exactly this situation — the value is not
+/// unredacted, it was already redacted upstream with exemptions the generic
+/// pass cannot express.
 fn finish<T: Serialize>(mut audit: AuditScope, result: Result<T, SdcError>) -> CallToolResult {
     match &result {
         Ok(_) => audit.succeed(),
         Err(error) => audit.fail(error),
     }
-    tool_result(result, ResultFormat::PrettyJson, RESULT_LIMITS)
+    tool_result(
+        result,
+        ResultFormat::PrettyJson,
+        RESULT_LIMITS,
+        OutputRedaction::SkipForInternalRead {
+            tool: "rustsdcmcp::finish_redacted",
+            reason: "value already redacted by rustsdcmcp_core::redact_secrets, which guards \
+                     continuation_token/nextPageToken/session-logging fields that the generic \
+                     denylist scan would otherwise re-redact (MEC-440 B1, MEC-973 F1)",
+        },
+    )
 }
 
 /// `finish`, for reads whose upstream shape may carry credentials.
@@ -3542,6 +3564,22 @@ mod tests {
         let result: Result<Unserializable, SdcError> = Ok(Unserializable);
         let call_result = finish_redacted(audit, result);
         assert_eq!(call_result.is_error, Some(true));
+    }
+
+    /// `finish` must not re-run the shared denylist scan over a value
+    /// `redact_secrets` already processed: the paging cursor has to survive
+    /// (MEC-440 B1) while a real secret is still redacted.
+    #[test]
+    fn finish_redacted_keeps_paging_cursor_and_redacts_secret() {
+        let audit = AuditScope::new(Attribution::stdio(), "list_sdc_devices", "read", vec![]);
+        let result: Result<serde_json::Value, SdcError> = Ok(serde_json::json!({
+            "continuation_token": "cursor-abc123",
+            "items": [{"uuid": "d1", "password": "hunter2-secret"}],
+        }));
+        let serialized = serde_json::to_string(&finish_redacted(audit, result))
+            .expect("CallToolResult serializes");
+        assert!(serialized.contains("cursor-abc123"), "{serialized}");
+        assert!(!serialized.contains("hunter2-secret"), "{serialized}");
     }
 
     fn caller(targets: ScopeSet, tools: ScopeSet) -> CallerCtx<NoGrant> {

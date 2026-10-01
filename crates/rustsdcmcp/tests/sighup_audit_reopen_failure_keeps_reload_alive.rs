@@ -31,6 +31,7 @@ async fn sighup_audit_reopen_failure_keeps_token_reload_alive() {
         audit_log_file: Some(audit_path.clone()),
         redaction: None,
         journald: false,
+        otel: None,
     })
     .expect("initializing audit tracing")
     .expect("a file sink was configured, so init_tracing must return one");

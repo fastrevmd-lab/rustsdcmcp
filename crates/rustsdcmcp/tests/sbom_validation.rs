@@ -42,7 +42,7 @@ fn mecmcp_components() -> String {
         "mecmcp-transport",
     ]
     .iter()
-    .map(|n| format!(r#"{{"name":"{n}","version":"0.24.1"}}"#))
+    .map(|n| format!(r#"{{"name":"{n}","version":"0.25.0"}}"#))
     .collect::<Vec<_>>()
     .join(",")
 }

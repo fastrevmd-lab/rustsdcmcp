@@ -18,7 +18,7 @@ test "${#archives[@]}" -eq 1
 
 Current source pins all seven shared `mecmcp` crates — `mecmcp-audit`,
 `mecmcp-auth`, `mecmcp-changeset`, `mecmcp-redact`, `mecmcp-runtime`,
-`mecmcp-server`, and `mecmcp-transport` — to `2e157e0f09894e2a5309408523c0911425eebd20`.
+`mecmcp-server`, and `mecmcp-transport` — to `v0.25.0`.
 The immutable acceptance record for the
 original lab deployment, built before any of the tagged releases, is
 [`lab-deployment-606.md`](lab-deployment-606.md).
