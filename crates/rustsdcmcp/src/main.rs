@@ -221,6 +221,40 @@ fn ensure_audit_hmac_key(path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+/// Refuse `--otel-endpoint` rather than silently dropping the export this
+/// binary cannot send.
+///
+/// This binary does not build `mecmcp-audit`'s `otel` feature, so
+/// `init_tracing`'s `AuditConfig::otel` is always `None` below regardless of
+/// what the flag says. Starting up anyway would contradict the flag's own
+/// `--help` text, which promises the export happens.
+fn reject_unsupported_otel_endpoint(otel_endpoint: Option<&str>) -> Result<()> {
+    if otel_endpoint.is_some() {
+        anyhow::bail!(
+            "--otel-endpoint requires a build of rustsdcmcp with mecmcp-audit's `otel` feature, \
+             which this binary does not enable"
+        );
+    }
+    Ok(())
+}
+
+/// Load `--approval-digest-key-file`, if set.
+///
+/// `None` keeps the change-set coordinator on the unkeyed v5 approval digest
+/// (today's default). A bad path must fail startup rather than being
+/// swallowed: an operator who set this flag believes approvals are keyed, and
+/// silently falling back to unkeyed on a load error would make that belief
+/// false.
+fn load_approval_digest_key(
+    path: Option<&Path>,
+) -> Result<Option<mecmcp_changeset::ApprovalDigestKey>> {
+    path.map(|path| {
+        mecmcp_changeset::ApprovalDigestKey::load_from_file(path)
+            .with_context(|| format!("loading --approval-digest-key-file {}", path.display()))
+    })
+    .transpose()
+}
+
 /// Bearer-token boundary selected for the Streamable HTTP listener.
 #[derive(Debug, PartialEq, Eq)]
 enum AuthMode {
@@ -629,6 +663,10 @@ async fn main() -> Result<()> {
             .map_err(|error| anyhow::anyhow!("invalid --audit-redact: {error}"))?,
         )
     };
+    // This binary does not build mecmcp-audit's `otel` feature, so exporting
+    // is not possible; refusing to start is the fail-closed answer, not
+    // silently hardcoding `otel: None` below regardless of the flag.
+    reject_unsupported_otel_endpoint(args.otel_endpoint.as_deref())?;
     let audit_sink = mecmcp_audit::init_tracing(&mecmcp_audit::AuditConfig {
         format: mecmcp_audit::AuditFormat::parse(&args.audit_format),
         audit_log_file: args.audit_log_file.clone(),
@@ -741,6 +779,8 @@ async fn main() -> Result<()> {
         Err(error) => anyhow::bail!("SSDF evidence configuration: {error}"),
     };
 
+    let approval_digest_key = load_approval_digest_key(args.approval_digest_key_file.as_deref())?;
+
     let changes = Arc::new(ChangeManager::load(
         client.clone(),
         config.tenant.clone(),
@@ -751,6 +791,7 @@ async fn main() -> Result<()> {
         evidence
             .as_ref()
             .map(mecmcp_audit::EvidenceService::recorder),
+        approval_digest_key,
     )?);
     let handler = SdcHandler::new(Arc::<str>::from(config.tenant.as_str()), client, changes);
 
@@ -1346,5 +1387,90 @@ mod audit_hmac_key_tests {
         let a = std::fs::read(&path_a).unwrap();
         let b = std::fs::read(&path_b).unwrap();
         assert_ne!(a, b, "two generated keys must not collide");
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod approval_digest_key_tests {
+    use super::load_approval_digest_key;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// No `--approval-digest-key-file` keeps the coordinator unkeyed, same as
+    /// today.
+    #[test]
+    fn no_approval_digest_key_file_is_fine() {
+        assert!(
+            load_approval_digest_key(None)
+                .expect("no path is not an error")
+                .is_none()
+        );
+    }
+
+    /// A valid key file is loaded, not silently dropped: `--approval-digest-key-file`
+    /// used to be accepted by clap and then never read anywhere.
+    #[test]
+    fn a_valid_approval_digest_key_file_is_loaded() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("key");
+        std::fs::write(&path, b"a-sufficiently-long-test-key-value").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let key = load_approval_digest_key(Some(&path))
+            .expect("a valid key file must load")
+            .expect("Some(path) must produce Some(key)");
+        assert_eq!(&*key, b"a-sufficiently-long-test-key-value");
+    }
+
+    /// A key file that fails `mecmcp-changeset`'s checks (here: too short)
+    /// must fail startup, not fall back to running unkeyed.
+    #[test]
+    fn a_too_short_approval_digest_key_file_fails_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("key");
+        std::fs::write(&path, b"short").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let error = load_approval_digest_key(Some(&path))
+            .expect_err("a too-short key file must be refused, not silently skipped");
+        assert!(
+            error.to_string().contains("approval-digest-key-file"),
+            "{error}"
+        );
+    }
+
+    /// A missing key file must fail startup rather than silently starting
+    /// unkeyed -- the operator asked for a keyed digest and typo'd the path.
+    #[test]
+    fn a_missing_approval_digest_key_file_fails_closed() {
+        let error = load_approval_digest_key(Some(std::path::Path::new(
+            "/nonexistent/does-not-exist/key",
+        )))
+        .expect_err("a missing key file must be refused, not silently skipped");
+        assert!(
+            error.to_string().contains("approval-digest-key-file"),
+            "{error}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod otel_endpoint_tests {
+    use super::reject_unsupported_otel_endpoint;
+
+    /// `--otel-endpoint` must refuse startup rather than silently dropping
+    /// the export this binary cannot send.
+    #[test]
+    fn otel_endpoint_set_refuses_to_start() {
+        let error = reject_unsupported_otel_endpoint(Some("http://127.0.0.1:4318"))
+            .expect_err("--otel-endpoint must be refused by this binary");
+        assert!(error.to_string().contains("--otel-endpoint"), "{error}");
+    }
+
+    /// No `--otel-endpoint` keeps today's behaviour: audit initializes with
+    /// `otel: None`.
+    #[test]
+    fn no_otel_endpoint_starts_normally() {
+        reject_unsupported_otel_endpoint(None).expect("no --otel-endpoint must not be refused");
     }
 }

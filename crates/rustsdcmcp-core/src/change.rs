@@ -9,9 +9,9 @@ use crate::{
 use async_trait::async_trait;
 use mecmcp_audit::Attribution;
 use mecmcp_changeset::{
-    ChangeSetOutput, ChangesetCoordinator, CommitOptions, CommitOutcome, DeviceTransaction,
-    OperationLimits, RollbackOutcome, RollbackRef, StagedRecovery, UnlockOutcome,
-    mutation_policy_signature,
+    ApprovalDigestKey, ChangeSetOutput, ChangesetCoordinator, CommitOptions, CommitOutcome,
+    DeviceTransaction, OperationLimits, RollbackOutcome, RollbackRef, StagedRecovery,
+    UnlockOutcome, mutation_policy_signature,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -288,6 +288,12 @@ impl ChangeManager {
     /// with `approval_waiver: "lab-mode"` and a waiver digest binding
     /// `(change_set_id, plan_digest, owner, approved_at)`, so a waived change
     /// set can never be mistaken for a genuine two-person approval.
+    ///
+    /// `approval_digest_key`, when set, both verifies any on-disk v6 (keyed)
+    /// approval digest at load time and is carried forward to sign every
+    /// approval this instance records afterwards. `None` keeps approvals on
+    /// the unkeyed v5 digest.
+    #[allow(clippy::too_many_arguments)]
     pub fn load(
         client: SdcClient,
         tenant: impl Into<String>,
@@ -296,6 +302,7 @@ impl ChangeManager {
         approval_ttl: Duration,
         lab_mode: bool,
         evidence: Option<Arc<mecmcp_audit::recorder::EvidenceRecorder>>,
+        approval_digest_key: Option<ApprovalDigestKey>,
     ) -> Result<Self, SdcError> {
         let tenant = tenant.into();
         let endpoint = endpoint.into();
@@ -309,12 +316,13 @@ impl ChangeManager {
             mutation_policy_signature(format!("sdc-license-write-v1:{tenant}:{endpoint}"));
         let device_sync_signature =
             mutation_policy_signature(format!("sdc-device-sync-v1:{tenant}:{endpoint}"));
-        let mut coordinator = ChangesetCoordinator::load_with_recovery(
+        let mut coordinator = ChangesetCoordinator::load_with_recovery_and_key(
             state_path,
             OperationLimits::default(),
             approval_ttl,
             lab_mode,
             StagedRecovery::Discard,
+            approval_digest_key,
         )
         .map_err(|error| SdcError::ChangeControl(error.to_string()))?;
         if let Some(recorder) = evidence {
@@ -1910,6 +1918,7 @@ mod tests {
             Duration::from_secs(60),
             true,
             None,
+            None,
         )
         .expect("change manager");
         let cancellation = CancellationToken::new();
@@ -2022,6 +2031,7 @@ mod tests {
             Duration::from_secs(60),
             false,
             None,
+            None,
         )
         .expect("change manager");
         let cancellation = CancellationToken::new();
@@ -2091,6 +2101,102 @@ mod tests {
             }
         ));
         assert_eq!(calls.deploys.load(Ordering::SeqCst), 1);
+        server.abort();
+    }
+
+    /// `approval_digest_key` passed through `ChangeManager::load` must not be
+    /// silently ignored: a coordinator built with a key must actually produce
+    /// the keyed v6 approval digest, not the unkeyed v5 one a caller who
+    /// thinks the flag protects them would otherwise get.
+    #[tokio::test]
+    async fn an_approval_digest_key_produces_a_v6_digest() {
+        let calls = Arc::new(Calls::default());
+        let app = Router::new()
+            .route("/api/v1/policies/preview", post(preview))
+            .route(
+                "/api/v1/policies/preview/{id}",
+                get(|| async {
+                    Json(json!({
+                        "preview_id": "preview-1",
+                        "status": "COMPLETED",
+                        "device_deployment_status": [],
+                        "message": ""
+                    }))
+                }),
+            )
+            .with_state(calls.clone());
+        let (base_url, server) = serve(app).await;
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client =
+            SdcClient::from_test_parts(base_url.clone(), "test-secret".to_owned(), 64 * 1024, 100);
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state_path = dir.path().join("changeset-state.json");
+        let key = b"a-sufficiently-long-test-key".as_slice();
+
+        let manager = ChangeManager::load(
+            client,
+            "tenant-a",
+            base_url.to_string(),
+            Some(state_path.as_path()),
+            Duration::from_secs(60),
+            false,
+            None,
+            Some(mecmcp_changeset::ApprovalDigestKey::new(key)),
+        )
+        .expect("change manager with a configured key");
+        let cancellation = CancellationToken::new();
+
+        let prepared = manager
+            .prepare(
+                "alice".to_owned(),
+                vec![PolicyOperation {
+                    policy_id: "policy-1".to_owned(),
+                    policy_type: PolicyType::Firewall,
+                    deploy_targets: vec![Target::device("device-1")],
+                    undeploy_targets: Vec::new(),
+                }],
+                &cancellation,
+            )
+            .await
+            .expect("prepare");
+
+        manager
+            .approve(
+                prepared.change_set.change_set_id.clone(),
+                "bob".to_owned(),
+                prepared.change_set.digest.clone(),
+                mecmcp_audit::ActorType::Human,
+            )
+            .await
+            .expect("independent human approval");
+
+        let state = mecmcp_changeset::persistence::read_state_with_key(
+            &state_path,
+            OperationLimits::default().max_state_bytes,
+            Some(key),
+        )
+        .expect("read back with the same key");
+        let approval = state.change_sets[&prepared.change_set.change_set_id]
+            .approval
+            .as_ref()
+            .expect("approval");
+        assert_eq!(
+            approval.digest_version, 6,
+            "a key passed through ChangeManager::load must produce a v6 (keyed) digest, \
+             not the unkeyed v5 one -- otherwise --approval-digest-key-file does nothing"
+        );
+
+        let unkeyed_read = mecmcp_changeset::persistence::read_state_with_key(
+            &state_path,
+            OperationLimits::default().max_state_bytes,
+            None,
+        );
+        assert!(
+            unkeyed_read.is_err(),
+            "a v6 digest produced through ChangeManager::load must not verify without the key"
+        );
+
         server.abort();
     }
 
@@ -2375,6 +2481,7 @@ mod tests {
             Duration::from_secs(60),
             false,
             None,
+            None,
         )
         .expect("change manager");
         let prepared = manager
@@ -2445,6 +2552,7 @@ mod tests {
             Duration::from_secs(60),
             false,
             None,
+            None,
         )
         .expect("change manager");
 
@@ -2513,6 +2621,7 @@ mod tests {
             None,
             Duration::from_secs(60),
             false,
+            None,
             None,
         )
         .expect("change manager");
@@ -2619,6 +2728,7 @@ mod tests {
             Duration::from_secs(60),
             false,
             None,
+            None,
         )
         .expect("change manager");
         let cancellation = CancellationToken::new();
@@ -2696,6 +2806,7 @@ mod tests {
             None,
             Duration::from_secs(60),
             false,
+            None,
             None,
         )
         .expect("change manager");
@@ -2789,6 +2900,7 @@ mod tests {
             Duration::from_secs(60),
             true,
             None,
+            None,
         )
         .expect("change manager");
         let cancellation = CancellationToken::new();
@@ -2854,6 +2966,7 @@ mod tests {
             None,
             Duration::from_secs(60),
             false,
+            None,
             None,
         )
         .expect("change manager");
