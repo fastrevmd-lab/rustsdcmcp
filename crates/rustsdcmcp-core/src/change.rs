@@ -2104,10 +2104,8 @@ mod tests {
         server.abort();
     }
 
-    /// `approval_digest_key` passed through `ChangeManager::load` must not be
-    /// silently ignored: a coordinator built with a key must actually produce
-    /// the keyed v6 approval digest, not the unkeyed v5 one a caller who
-    /// thinks the flag protects them would otherwise get.
+    /// A coordinator built with `approval_digest_key` set must produce the
+    /// keyed v6 approval digest, not the unkeyed v5 one.
     #[tokio::test]
     async fn an_approval_digest_key_produces_a_v6_digest() {
         let calls = Arc::new(Calls::default());
@@ -2184,7 +2182,7 @@ mod tests {
         assert_eq!(
             approval.digest_version, 6,
             "a key passed through ChangeManager::load must produce a v6 (keyed) digest, \
-             not the unkeyed v5 one -- otherwise --approval-digest-key-file does nothing"
+             not the unkeyed v5 one"
         );
 
         let unkeyed_read = mecmcp_changeset::persistence::read_state_with_key(

@@ -664,8 +664,7 @@ async fn main() -> Result<()> {
         )
     };
     // This binary does not build mecmcp-audit's `otel` feature, so exporting
-    // is not possible; refusing to start is the fail-closed answer, not
-    // silently hardcoding `otel: None` below regardless of the flag.
+    // is not possible; refusing to start is the fail-closed answer here.
     reject_unsupported_otel_endpoint(args.otel_endpoint.as_deref())?;
     let audit_sink = mecmcp_audit::init_tracing(&mecmcp_audit::AuditConfig {
         format: mecmcp_audit::AuditFormat::parse(&args.audit_format),
@@ -1407,8 +1406,7 @@ mod approval_digest_key_tests {
         );
     }
 
-    /// A valid key file is loaded, not silently dropped: `--approval-digest-key-file`
-    /// used to be accepted by clap and then never read anywhere.
+    /// A valid key file is loaded and returned.
     #[test]
     fn a_valid_approval_digest_key_file_is_loaded() {
         let dir = tempfile::tempdir().unwrap();
