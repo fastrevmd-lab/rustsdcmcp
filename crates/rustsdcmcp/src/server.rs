@@ -3566,6 +3566,22 @@ mod tests {
         assert_eq!(call_result.is_error, Some(true));
     }
 
+    /// `finish` must not re-run the shared denylist scan over a value
+    /// `redact_secrets` already processed: the paging cursor has to survive
+    /// (MEC-440 B1) while a real secret is still redacted.
+    #[test]
+    fn finish_redacted_keeps_paging_cursor_and_redacts_secret() {
+        let audit = AuditScope::new(Attribution::stdio(), "list_sdc_devices", "read", vec![]);
+        let result: Result<serde_json::Value, SdcError> = Ok(serde_json::json!({
+            "continuation_token": "cursor-abc123",
+            "items": [{"uuid": "d1", "password": "hunter2-secret"}],
+        }));
+        let serialized = serde_json::to_string(&finish_redacted(audit, result))
+            .expect("CallToolResult serializes");
+        assert!(serialized.contains("cursor-abc123"), "{serialized}");
+        assert!(!serialized.contains("hunter2-secret"), "{serialized}");
+    }
+
     fn caller(targets: ScopeSet, tools: ScopeSet) -> CallerCtx<NoGrant> {
         CallerCtx {
             token_name: "alice".to_owned(),
