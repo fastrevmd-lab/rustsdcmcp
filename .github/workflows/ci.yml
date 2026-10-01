@@ -81,7 +81,7 @@ jobs:
           echo '{"version":1,"tokens":[]}' > "$state_dir/tokens.json"
           # UID 65532 (the image's nonroot user) must be able to write the key
           # file into the mounted state volume.
-          chown -R 65532:65532 "$state_dir" "$etc_dir"
+          sudo chown -R 65532:65532 "$state_dir" "$etc_dir"
           # The real credential check against the live SDC API is expected to
           # fail here (no network, placeholder token) -- the key file is
           # provisioned before that check runs, so its presence afterward is
