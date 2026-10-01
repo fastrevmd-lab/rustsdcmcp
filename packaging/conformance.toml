@@ -13,7 +13,7 @@ skip_build_env = "SDCMCP_PACKAGE_SKIP_BUILD"
 
 units = ["packaging/systemd/rustsdcmcp.service"]
 
-# Both confirmed in CI (docker-build job) to survive an operator --host
-# override: Docker replaces CMD wholesale but appends to ENTRYPOINT, and both
-# flags live in ENTRYPOINT.
-must_survive_override = ["--device-mapping", "--tokens-file"]
+# All three confirmed in CI (docker-build job) to survive an operator --host
+# override: Docker replaces CMD wholesale but appends to ENTRYPOINT, and all
+# three flags live in ENTRYPOINT.
+must_survive_override = ["--device-mapping", "--tokens-file", "--audit-hmac-key-file"]

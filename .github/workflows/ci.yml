@@ -70,7 +70,37 @@ jobs:
 
           echo "$argv" | grep -q -- '/etc/rustsdcmcp/sdc.json' || { echo "FAIL: --device-mapping path missing from argv with --host override"; exit 1; }
           echo "$argv" | grep -q -- '/var/lib/rustsdcmcp/tokens.json' || { echo "FAIL: --tokens-file path missing from argv with --host override"; exit 1; }
+          echo "$argv" | grep -q -- '/var/lib/rustsdcmcp/audit-hmac.key' || { echo "FAIL: --audit-hmac-key-file path missing from argv with --host override"; exit 1; }
           echo "PASS: config paths survive --host override"
+      - name: Verify the audit HMAC key is generated on first run (mecmcp#376 / MEC-978)
+        run: |
+          state_dir=$(mktemp -d)
+          etc_dir=$(mktemp -d)
+          cp examples/sdc.example.json "$etc_dir/sdc.json"
+          echo '{"version":1,"tokens":[]}' > "$state_dir/tokens.json"
+          # UID 65532 (the image's nonroot user) must be able to write the key
+          # file into the mounted state volume.
+          sudo chown -R 65532:65532 "$state_dir" "$etc_dir"
+          # validate_endpoint() pins the config's host to
+          # api.sdcloud.juniperclouds.net, so the endpoint can't be swapped
+          # for a fake host without failing config validation before the key
+          # is ever written. Instead keep the real host and black-hole it via
+          # --add-host so the credential check against the live SDC API fails
+          # fast (no network, placeholder token) -- the key file is
+          # provisioned before that check runs, so its presence afterward is
+          # what this asserts, not a clean startup.
+          docker run --rm \
+            --add-host api.sdcloud.juniperclouds.net:127.0.0.1 \
+            -e SDC_API_TOKEN=placeholder \
+            -v "$etc_dir:/etc/rustsdcmcp:ro" \
+            -v "$state_dir:/var/lib/rustsdcmcp" \
+            --user 65532:65532 \
+            rustsdcmcp:ci || true
+          # state_dir is owned by 65532:65532 mode 0700 (chowned above so the
+          # container's nonroot user could write into it), so the runner user
+          # needs sudo to stat back into it.
+          sudo test -s "$state_dir/audit-hmac.key" || { echo "FAIL: audit-hmac.key was not generated"; exit 1; }
+          echo "PASS: audit-hmac.key generated on first run"
 
   packaging:
     name: Package

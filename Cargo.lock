@@ -1929,6 +1929,7 @@ dependencies = [
  "mecmcp-server",
  "mecmcp-transport",
  "quote",
+ "rand 0.10.2",
  "reqwest",
  "rmcp",
  "rustix",
