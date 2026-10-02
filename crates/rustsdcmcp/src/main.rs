@@ -515,14 +515,14 @@ fn validate_sbom_file(package_dir: &Path) -> Result<()> {
 
     // Check mecmcp-* components
     let expected_mecmcp_components = [
-        ("mecmcp-audit", "0.25.0"),
-        ("mecmcp-auth", "0.25.0"),
-        ("mecmcp-changeset", "0.25.0"),
-        ("mecmcp-redact", "0.25.0"),
-        ("mecmcp-runtime", "0.25.0"),
-        ("mecmcp-secret", "0.25.0"),
-        ("mecmcp-server", "0.25.0"),
-        ("mecmcp-transport", "0.25.0"),
+        ("mecmcp-audit", "0.26.0"),
+        ("mecmcp-auth", "0.26.0"),
+        ("mecmcp-changeset", "0.26.0"),
+        ("mecmcp-redact", "0.26.0"),
+        ("mecmcp-runtime", "0.26.0"),
+        ("mecmcp-secret", "0.26.0"),
+        ("mecmcp-server", "0.26.0"),
+        ("mecmcp-transport", "0.26.0"),
     ];
 
     let mut found_mecmcp: Vec<(String, String)> = Vec::new();
