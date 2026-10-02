@@ -253,16 +253,16 @@ fn approver_actor_type(caller: Option<&CallerCtx<NoGrant>>) -> mecmcp_audit::Act
 
 /// `finish`'s sole caller is `finish_redacted`, which has already run every
 /// `Ok` value through `rustsdcmcp_core::redact_secrets` before this point —
-/// that pass guards `KEY_MATCH_EXEMPTIONS` (`continuation_token`,
-/// `nextPageToken`, session-logging flags) around the shared crate's generic
-/// denylist scan so those fields survive the scan intact, then restores the
-/// real key names. `mecmcp_server::tool_result`'s own `OutputRedaction::Apply`
-/// would run that same generic scan a second time with no knowledge of the
-/// guard, re-redacting `continuation_token` (breaking pagination, MEC-440 B1)
-/// and the session-logging fields (MEC-973 F1). `SkipForInternalRead` is the
-/// documented per-call opt-out for exactly this situation — the value is not
-/// unredacted, it was already redacted upstream with exemptions the generic
-/// pass cannot express.
+/// that pass applies SDC's `mecmcp_redact::Profile` key exemptions
+/// (`continuation_token`, `nextPageToken`, session-logging flags) around the
+/// shared crate's generic denylist scan, so those fields survive the scan
+/// intact under their real names. `mecmcp_server::tool_result`'s own
+/// `OutputRedaction::Apply` would run that same generic scan a second time
+/// with no knowledge of the profile, re-redacting `continuation_token`
+/// (breaking pagination, MEC-440 B1) and the session-logging fields (MEC-973
+/// F1). `SkipForInternalRead` is the documented per-call opt-out for exactly
+/// this situation — the value is not unredacted, it was already redacted
+/// upstream with exemptions the generic pass cannot express.
 fn finish<T: Serialize>(mut audit: AuditScope, result: Result<T, SdcError>) -> CallToolResult {
     match &result {
         Ok(_) => audit.succeed(),

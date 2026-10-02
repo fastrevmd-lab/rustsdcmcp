@@ -10,27 +10,25 @@
 //! mechub MCP server uses so a new denylist entry or value shape lands once,
 //! not per server (MEC-345's shared-crate migration; MEC-14 H1b).
 //!
-//! Two things stay local, because they are SDC-specific knowledge the shared
-//! crate deliberately does not have (see its `projection` module docs: "the
-//! actual field lists for UniFi and SDC resources are declared by those
-//! servers, not here"):
+//! Two things are real SDC-specific policy the generic scan cannot infer on
+//! its own, declared here as a [`mecmcp_redact::Profile`] (MEC-1244) and
+//! applied through [`mecmcp_redact::redact_json_value_with_profile`]:
 //!
 //! - `site_config` and `cpe_config` are withheld **as a whole**, not
 //!   key-scanned. They are rendered device configuration bodies in a format
 //!   SDC does not document, and SDC-generated IPsec config carries the IKE
-//!   pre-shared key inline; there is no guarantee the shared crate's
-//!   line-oriented scan recognizes every secret shape SDC's CPE templates can
-//!   produce, so the whole body is dropped rather than trusted to a
-//!   best-effort scan. This runs *before* the shared-crate pass.
-//! - [`KEY_MATCH_EXEMPTIONS`] exempts specific upstream field names that
-//!   collide with a shared-crate denylist substring but are not secrets: our
-//!   own opaque paging cursors (`continuation_token`, and the upstream
-//!   `nextPageToken` it mirrors — redacting them breaks paging, MEC-440 B1),
-//!   and a set of SDC `session*`/`*session*` fields that are not credentials
-//!   (session-logging flags, session counters, an SSL session cache toggle —
-//!   over-redacting them can hide a policy rule's real logging state from the
-//!   model reviewing a write, MEC-973 F1). Protected before the shared-crate
-//!   pass, restored after.
+//!   pre-shared key inline; there is no guarantee the generic line-oriented
+//!   scan recognizes every secret shape SDC's CPE templates can produce, so
+//!   the whole body is dropped rather than trusted to a best-effort scan.
+//!   This runs *before* the generic scan.
+//! - [`KEY_EXEMPTIONS`] exempts specific upstream field names that collide
+//!   with the denylist substring but are not secrets: our own opaque paging
+//!   cursors (`continuation_token`, and the upstream `nextPageToken` it
+//!   mirrors — redacting them breaks paging, MEC-440 B1), and a set of SDC
+//!   `session*`/`*session*` fields that are not credentials (session-logging
+//!   flags, session counters, an SSL session cache toggle — over-redacting
+//!   them can hide a policy rule's real logging state from the model
+//!   reviewing a write, MEC-973 F1).
 //!
 //! ## Redaction policy
 //!
@@ -44,24 +42,14 @@
 //! the stored action, the plan digest and the change-set id are untouched, so
 //! approve/apply work unchanged.
 
+use mecmcp_redact::Profile;
 use serde_json::Value;
 
 /// Marker substituted for a redacted value. Re-exported so callers building
 /// their own fixtures can assert against it without duplicating the string.
 pub const REDACTED: &str = "[REDACTED]";
 
-/// Upstream field names withheld as a whole rather than key/value scanned.
-///
-/// `site_config` and `cpe_config` are not themselves credentials — they are
-/// rendered device configuration bodies, and SDC-generated IPsec config
-/// carries the IKE pre-shared key, so both are withheld as a whole rather
-/// than trusted to the shared crate's line scan.
-///
-/// Each key is normalized (lowercased, `_` and `-` removed) before
-/// comparison, so `siteConfig` and `site-config` match too.
-const WHOLESALE_REDACT_KEYS: &[&str] = &["siteconfig", "cpeconfig"];
-
-/// Upstream field names that match a shared-crate denylist substring by
+/// Upstream field names that match the shared crate's denylist substring by
 /// coincidence, not because they carry a secret. Exact match after
 /// normalization, at any depth. Every SDC OpenAPI property name the shared
 /// crate's denylist matches must be either an intentional secret or listed
@@ -78,7 +66,7 @@ const WHOLESALE_REDACT_KEYS: &[&str] = &["siteconfig", "cpeconfig"];
 ///   settings, not credentials. Over-redacting them can hide a policy rule's
 ///   real session-logging state from the model reviewing a write (MEC-973
 ///   F1).
-const KEY_MATCH_EXEMPTIONS: &[&str] = &[
+const KEY_EXEMPTIONS: &[&str] = &[
     "continuationtoken",
     "nextpagetoken",
     "sessioninitiatelog",
@@ -95,12 +83,19 @@ const KEY_MATCH_EXEMPTIONS: &[&str] = &[
     "maxsessions",
 ];
 
-/// Prefix used to hide an exempt key from the shared crate's denylist scan
-/// for the duration of that pass. Not expected in a normal upstream JSON key,
-/// so it cannot collide with a real field.
-const KEY_MATCH_GUARD_PREFIX: &str = "\u{0}mecmcp-key-guard\u{0}";
+/// SDC's declared extensions to the shared crate's generic denylist-and-shape
+/// scan: `site_config` and `cpe_config` withheld wholesale, and
+/// [`KEY_EXEMPTIONS`] carved out of the denylist. See the module docs for why
+/// each needs to be declared rather than handled generically.
+const PROFILE: Profile = Profile::new(&["siteconfig", "cpeconfig"], KEY_EXEMPTIONS);
 
 /// Normalize a key for comparison: lowercase and remove `_` and `-`.
+///
+/// Matches [`mecmcp_redact::Profile`]'s own normalization, so a key
+/// comparison made locally (in
+/// `spec_property_names_matching_the_denylist_are_accounted_for`) agrees with
+/// how the shared crate matches [`PROFILE`]'s entries.
+#[cfg(test)]
 fn normalize_key(key: &str) -> String {
     key.to_ascii_lowercase()
         .chars()
@@ -114,10 +109,7 @@ fn normalize_key(key: &str) -> String {
 /// one existed.
 #[must_use]
 pub fn redact_secrets(mut value: Value) -> Value {
-    redact_wholesale_fields(&mut value);
-    let exempted = guard_exempt_keys(&mut value);
-    mecmcp_redact::redact_json_value(&mut value);
-    unguard_exempt_keys(&mut value, &exempted);
+    mecmcp_redact::redact_json_value_with_profile(&mut value, &PROFILE);
     value
 }
 
@@ -171,96 +163,6 @@ pub fn redact_rma_state(mut value: Value) -> Value {
     value
 }
 
-/// Replace any [`WHOLESALE_REDACT_KEYS`] value with [`REDACTED`], at any
-/// depth, before the shared crate's key/value scan ever sees it.
-fn redact_wholesale_fields(value: &mut Value) {
-    match value {
-        Value::Object(map) => {
-            for (key, child) in map.iter_mut() {
-                if WHOLESALE_REDACT_KEYS.contains(&normalize_key(key).as_str()) {
-                    if !child.is_null() {
-                        *child = Value::String(REDACTED.to_owned());
-                    }
-                } else {
-                    redact_wholesale_fields(child);
-                }
-            }
-        }
-        Value::Array(items) => items.iter_mut().for_each(redact_wholesale_fields),
-        _ => {}
-    }
-}
-
-/// Rename every [`KEY_MATCH_EXEMPTIONS`] key to an opaque, counter-suffixed
-/// placeholder so the shared crate's substring denylist scan never sees the
-/// name it would otherwise match, and record the original names in traversal
-/// order so [`unguard_exempt_keys`] can restore them exactly.
-///
-/// The placeholder cannot embed the original key text (e.g. by prefixing it):
-/// `continuation_token` normalized is itself `continuationtoken`, which
-/// contains the denylisted substring `token`, so a prefix-only marker would
-/// still trip the scan it exists to dodge. A pure counter carries no such
-/// text.
-#[must_use]
-fn guard_exempt_keys(value: &mut Value) -> Vec<String> {
-    let mut originals = Vec::new();
-    guard_inner(value, &mut originals);
-    originals
-}
-
-fn guard_inner(value: &mut Value, originals: &mut Vec<String>) {
-    match value {
-        Value::Object(map) => {
-            let keys: Vec<String> = map.keys().cloned().collect();
-            for key in keys {
-                if KEY_MATCH_EXEMPTIONS.contains(&normalize_key(&key).as_str())
-                    && let Some(v) = map.remove(&key)
-                {
-                    let marker = format!("{KEY_MATCH_GUARD_PREFIX}{}", originals.len());
-                    originals.push(key);
-                    map.insert(marker, v);
-                }
-            }
-            for (_, child) in map.iter_mut() {
-                guard_inner(child, originals);
-            }
-        }
-        Value::Array(items) => items.iter_mut().for_each(|v| guard_inner(v, originals)),
-        _ => {}
-    }
-}
-
-/// Reverse [`guard_exempt_keys`], restoring the original key names from
-/// `originals` by the counter each placeholder carries.
-fn unguard_exempt_keys(value: &mut Value, originals: &[String]) {
-    match value {
-        Value::Object(map) => {
-            let keys: Vec<String> = map.keys().cloned().collect();
-            for key in keys {
-                let Some(index) = key
-                    .strip_prefix(KEY_MATCH_GUARD_PREFIX)
-                    .and_then(|suffix| suffix.parse::<usize>().ok())
-                else {
-                    continue;
-                };
-                let Some(original) = originals.get(index) else {
-                    continue;
-                };
-                if let Some(v) = map.remove(&key) {
-                    map.insert(original.clone(), v);
-                }
-            }
-            for (_, child) in map.iter_mut() {
-                unguard_exempt_keys(child, originals);
-            }
-        }
-        Value::Array(items) => items
-            .iter_mut()
-            .for_each(|v| unguard_exempt_keys(v, originals)),
-        _ => {}
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
@@ -268,7 +170,7 @@ mod tests {
         // Percy B1 (MEC-440): the compound `*token` match redacted #172's
         // ListPage.continuation_token, breaking paging past page 1. The
         // shared mecmcp-redact crate has the identical `token` substring on
-        // its denylist, so the guard/unguard round trip must still hold.
+        // its denylist, so the key exemption must still hold.
         let items: Vec<Value> = (0..2)
             .map(|i| serde_json::json!({ "id": i, "blob": "x".repeat(40 * 1024) }))
             .collect();
@@ -572,7 +474,7 @@ mod tests {
 
     /// Percy F1 (MEC-973): every SDC OpenAPI property name the shared crate's
     /// denylist matches must be either an intentional secret or on
-    /// [`KEY_MATCH_EXEMPTIONS`], so a spec refresh that adds a new
+    /// [`KEY_EXEMPTIONS`], so a spec refresh that adds a new
     /// denylist-colliding field name cannot silently over-redact it again.
     #[test]
     fn spec_property_names_matching_the_denylist_are_accounted_for() {
@@ -615,14 +517,24 @@ mod tests {
             let is_intentional_secret = INTENTIONAL_SECRETS
                 .iter()
                 .any(|secret| normalize_key(secret) == normalized);
-            let is_exempted = KEY_MATCH_EXEMPTIONS.contains(&normalized.as_str());
+            let is_exempted = KEY_EXEMPTIONS.contains(&normalized.as_str());
             assert!(
                 is_intentional_secret || is_exempted,
                 "spec property {name:?} is newly caught by the shared denylist; \
                  add it to INTENTIONAL_SECRETS in this test if it is a real \
-                 secret, or to KEY_MATCH_EXEMPTIONS in redact.rs if it is not"
+                 secret, or to KEY_EXEMPTIONS in redact.rs if it is not"
             );
         }
+    }
+
+    /// Percy's MEC-1244 design review (F4): a vendor profile's own test
+    /// suite must assert its exemption list doesn't carve out a whole
+    /// denylist term.
+    #[test]
+    fn profile_exemptions_do_not_carve_out_a_denylist_term() {
+        PROFILE
+            .check_exemptions()
+            .expect("no exemption should exactly match a denylist term");
     }
 
     /// Collect every key of every JSON object nested under a `"properties"`
