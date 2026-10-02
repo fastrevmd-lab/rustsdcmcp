@@ -12,6 +12,10 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
 ## Unreleased
 
 ### Changed
+- **Wholesale-redaction and denylist key-exemption rules now go through
+  `mecmcp-redact`'s `Profile` hooks instead of a local implementation.**
+  Behavior is unchanged; this is an internal consolidation onto the shared
+  crate's extension mechanism (MEC-1244).
 - **The pinned `mecmcp` release moved to `v0.26.0`.** Updates every file
   that pins or asserts the exact tag/commit: `Cargo.toml`/`Cargo.lock`,
   the dependency contract test, `docs/operations.md`, and the packaging
