@@ -12,6 +12,11 @@ layer was deleted in #36 on the move to mecmcp 0.7.2, and the ledger itself in
 ## Unreleased
 
 ### Changed
+- **The pinned `mecmcp` release moved to `v0.26.0`.** Updates every file
+  that pins or asserts the exact tag/commit: `Cargo.toml`/`Cargo.lock`,
+  the dependency contract test, `docs/operations.md`, and the packaging
+  scripts and CI checks that verify the BUILD-INFO `mecmcp_ref` and the
+  shipped SBOM's `mecmcp-*` component versions.
 - **The container image now pre-provisions its audit HMAC key.** The
   `rustsdcmcp` binary generates `--audit-hmac-key-file` on first run if it
   is absent or empty (mirroring `packaging/lxc/install.sh`'s own
