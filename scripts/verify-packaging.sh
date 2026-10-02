@@ -313,22 +313,22 @@ fi
 # a source-text match would pass while the manifest said something else, and it
 # would forbid single-sourcing the ref into the generated package README.
 mapfile -t builder_mecmcp_refs < <(grep -oP '^mecmcp-\S+ = \{.*\b(?:tag|rev) = "\K[^"]+' Cargo.toml | sort -u)
-[[ ${#builder_mecmcp_refs[@]} -eq 1 && ${builder_mecmcp_refs[0]} == 'v0.25.0' ]] \
+[[ ${#builder_mecmcp_refs[@]} -eq 1 && ${builder_mecmcp_refs[0]} == 'v0.26.0' ]] \
     || fail "Cargo.toml must pin exactly one approved mecmcp tag/rev, found: ${builder_mecmcp_refs[*]-none}"
 # The operations guide is packaged by build-package.sh:110 and must stay
 # consistent with the manifest and the package provenance. This is the eleventh
 # file that pins the mecmcp tag exactly.
 # shellcheck disable=SC2016  # backticks are literal grep pattern, not expansion
-grep -Fq '— to `v0.25.0`.' docs/operations.md \
+grep -Fq '— to `v0.26.0`.' docs/operations.md \
     || fail 'docs/operations.md must document the pinned mecmcp tag/rev'
 # shellcheck disable=SC2016  # literal source fragment, not an expansion
 grep -Fq 'mecmcp_ref=$mecmcp_ref' scripts/build-package.sh \
     || fail 'builder must emit the derived mecmcp BUILD-INFO key'
 require_logical_line \
-    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.25.0' \"\$build_info\" || die 'BUILD-INFO mecmcp ref is invalid'" \
+    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.26.0' \"\$build_info\" || die 'BUILD-INFO mecmcp ref is invalid'" \
     "$installer"
 require_logical_line \
-    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.25.0' \"\$build_info\" || {" \
+    "has_single_exact_key mecmcp_ref 'mecmcp_ref=v0.26.0' \"\$build_info\" || {" \
     packaging/tests/package-smoke.sh
 for build_info_consumer in "$installer" packaging/tests/package-smoke.sh; do
     # shellcheck disable=SC2016
@@ -340,7 +340,7 @@ for build_info_consumer in "$installer" packaging/tests/package-smoke.sh; do
         "$build_info_consumer"
 done
 require_logical_line \
-    "printf '%s\n' \"\$build_info\" | awk -F= -v expected='mecmcp_ref=v0.25.0' '\$1 == \"mecmcp_ref\" { count += 1; matches += (\$0 == expected) } END { exit !(count == 1 && matches == 1) }'" \
+    "printf '%s\n' \"\$build_info\" | awk -F= -v expected='mecmcp_ref=v0.26.0' '\$1 == \"mecmcp_ref\" { count += 1; matches += (\$0 == expected) } END { exit !(count == 1 && matches == 1) }'" \
     "$ci"
 sbom_validators=(
     scripts/build-package.sh
